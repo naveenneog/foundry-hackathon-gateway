@@ -1,0 +1,122 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 940 560" width="940" height="560" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#57606a"/>
+    </marker>
+    <marker id="arrowRed" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#cf222e"/>
+    </marker>
+    <style>
+      .t   { font-size: 13px; fill: #1f2328; }
+      .b   { font-size: 13px; fill: #1f2328; font-weight: 600; }
+      .s   { font-size: 11.5px; fill: #57606a; }
+      .m   { font-size: 11.5px; fill: #0550ae; font-family: Consolas, monospace; }
+      .h   { font-size: 14px; fill: #ffffff; font-weight: 600; }
+      .deny{ font-size: 11.5px; fill: #cf222e; font-family: Consolas, monospace; }
+      .box { fill: #ffffff; stroke: #d0d7de; stroke-width: 1.5; rx: 8; }
+      .ln  { stroke: #57606a; stroke-width: 1.6; fill: none; marker-end: url(#arrow); }
+      .lnr { stroke: #cf222e; stroke-width: 1.4; fill: none; marker-end: url(#arrowRed); stroke-dasharray: 4 3; }
+    </style>
+  </defs>
+
+  <rect width="940" height="560" fill="#f6f8fa"/>
+
+  <!-- Client -->
+  <rect x="40" y="40" width="230" height="96" class="box"/>
+  <rect x="40" y="40" width="230" height="30" fill="#24292f" rx="8"/>
+  <rect x="40" y="60" width="230" height="10" fill="#24292f"/>
+  <text x="56" y="61" class="h">Participant</text>
+  <text x="56" y="92" class="t">opencode · OpenAI SDK · curl</text>
+  <text x="56" y="112" class="m">OPENAI_BASE_URL</text>
+  <text x="56" y="128" class="m">OPENAI_API_KEY = &lt;signed JWT&gt;</text>
+
+  <path d="M 270 88 L 350 88" class="ln"/>
+  <text x="310" y="80" class="s" text-anchor="middle">Bearer</text>
+
+  <!-- Gateway -->
+  <rect x="350" y="40" width="410" height="330" class="box"/>
+  <rect x="350" y="40" width="410" height="30" fill="#0969da" rx="8"/>
+  <rect x="350" y="60" width="410" height="10" fill="#0969da"/>
+  <text x="366" y="61" class="h">Azure API Management — AI gateway</text>
+
+  <text x="366" y="94"  class="b">1</text><text x="386" y="94"  class="t">validate-jwt</text>
+  <text x="560" y="94"  class="s">signature · nbf · exp</text>
+  <text x="700" y="94"  class="deny">401</text>
+
+  <text x="366" y="120" class="b">2</text><text x="386" y="120" class="t">revocation denylist</text>
+  <text x="560" y="120" class="s">jti</text>
+  <text x="700" y="120" class="deny">403</text>
+
+  <text x="366" y="146" class="b">3</text><text x="386" y="146" class="t">model allowlist</text>
+  <text x="560" y="146" class="s">signed claim</text>
+  <text x="700" y="146" class="deny">403</text>
+
+  <text x="366" y="172" class="b">4</text><text x="386" y="172" class="t">one-time budget</text>
+  <text x="560" y="172" class="s">does not reset</text>
+  <text x="700" y="172" class="deny">403</text>
+
+  <text x="366" y="198" class="b">5</text><text x="386" y="198" class="t">llm-token-limit</text>
+  <text x="560" y="198" class="s">tokens / minute</text>
+  <text x="700" y="198" class="deny">429</text>
+
+  <text x="366" y="224" class="b">6</text><text x="386" y="224" class="t">rate-limit-by-key</text>
+  <text x="560" y="224" class="s">requests / minute</text>
+  <text x="700" y="224" class="deny">429</text>
+
+  <text x="366" y="250" class="b">7</text><text x="386" y="250" class="t">llm-emit-token-metric</text>
+  <text x="560" y="250" class="s">per participant</text>
+
+  <text x="366" y="276" class="b">8</text><text x="386" y="276" class="t">alias → deployment</text>
+  <text x="560" y="276" class="s">flash · pro</text>
+
+  <line x1="366" y1="292" x2="744" y2="292" stroke="#d0d7de" stroke-width="1"/>
+
+  <text x="366" y="316" class="b">9</text><text x="386" y="316" class="t">managed identity swap</text>
+  <text x="386" y="336" class="s">participant token discarded; gateway calls Foundry as itself</text>
+  <text x="386" y="356" class="s">audience: </text><text x="450" y="356" class="m">https://ai.azure.com</text>
+
+  <path d="M 555 370 L 555 424" class="ln"/>
+
+  <!-- Foundry -->
+  <rect x="350" y="424" width="410" height="96" class="box"/>
+  <rect x="350" y="424" width="410" height="30" fill="#8250df" rx="8"/>
+  <rect x="350" y="444" width="410" height="10" fill="#8250df"/>
+  <text x="366" y="445" class="h">Microsoft Foundry</text>
+  <text x="366" y="478" class="t">deepseek-v4-flash</text>
+  <text x="560" y="478" class="s">DeepSeek-V4-Flash-0731</text>
+  <text x="366" y="502" class="t">deepseek-v4-pro</text>
+  <text x="560" y="502" class="s">DeepSeek-V4-Pro</text>
+
+  <!-- Denials return to the caller without ever reaching a model -->
+  <path d="M 760 172 C 830 172 830 88 772 88" class="lnr"/>
+  <text x="838" y="212" class="s" text-anchor="middle">denied at the</text>
+  <text x="838" y="228" class="s" text-anchor="middle">gateway — no</text>
+  <text x="838" y="244" class="s" text-anchor="middle">model cost</text>
+
+  <!-- Admin -->
+  <rect x="40" y="180" width="230" height="190" class="box"/>
+  <rect x="40" y="180" width="230" height="30" fill="#1a7f37" rx="8"/>
+  <rect x="40" y="200" width="230" height="10" fill="#1a7f37"/>
+  <text x="56" y="201" class="h">admin.ps1</text>
+  <text x="56" y="232" class="t">Pin models</text>
+  <text x="56" y="254" class="t">Issue key — offline, instant</text>
+  <text x="56" y="276" class="t">Set window + budget</text>
+  <text x="56" y="298" class="t">Revoke</text>
+  <text x="56" y="320" class="t">Show consumption</text>
+  <text x="56" y="348" class="s">Signs with the HS256 secret</text>
+
+  <path d="M 270 250 L 350 172" class="ln"/>
+  <text x="276" y="238" class="s">mints</text>
+
+  <!-- Observability -->
+  <rect x="40" y="424" width="230" height="96" class="box"/>
+  <rect x="40" y="424" width="230" height="30" fill="#9a6700" rx="8"/>
+  <rect x="40" y="444" width="230" height="10" fill="#9a6700"/>
+  <text x="56" y="445" class="h">Observability</text>
+  <text x="56" y="478" class="t">Application Insights</text>
+  <text x="56" y="502" class="t">Log Analytics</text>
+  <path d="M 350 250 L 300 250 L 300 424" class="ln"/>
+  <text x="300" y="404" class="s" text-anchor="end">metrics </text>
+
+  <text x="470" y="546" class="s">No model credential exists on any participant machine.</text>
+</svg>

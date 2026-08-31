@@ -52,6 +52,16 @@ function Invoke-Gateway {
     }
 }
 
+# Response headers come back as string[]; take the first value so assertions compare scalars
+# rather than rendering as "System.Object[]".
+function Get-Header {
+    param($Response, $Name)
+    $v = $Response.Headers[$Name]
+    if ($null -eq $v) { return $null }
+    if ($v -is [array]) { return [string]$v[0] }
+    return [string]$v
+}
+
 function Assert-Control {
     param($Name, $Expected, $Actual, $Detail)
     if ($Expected -contains $Actual) {
@@ -140,11 +150,11 @@ Assert-Control 'one-time budget exhausts (403)' @(403) $r.Status $r.Body
 Assert-Control 'exhausted budget is not retryable' @($true) ($r.Status -ne 429) "status=$($r.Status)"
 
 # 9c. No Retry-After. The OpenAI SDK sleeps for its exact value, so a large one hangs the client.
-$retryAfter = $r.Headers['Retry-After']
+$retryAfter = Get-Header $r 'Retry-After'
 Assert-Control 'exhausted budget sets no Retry-After' @($true) ($null -eq $retryAfter) "Retry-After=$retryAfter"
 
 # 9d. x-budget-remaining: 0 is what tells a participant this is spend, not a broken key.
-$remaining = $r.Headers['x-budget-remaining']
+$remaining = Get-Header $r 'x-budget-remaining'
 Assert-Control 'exhausted budget reports 0 remaining' @($true) ($remaining -eq '0') "x-budget-remaining=$remaining"
 
 # 9e. The body must be unambiguous, since 403 alone can read as an auth failure.

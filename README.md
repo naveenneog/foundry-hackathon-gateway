@@ -1,199 +1,140 @@
 # Foundry Hackathon Gateway
 
 Hand out **time-bound, spend-capped API keys** for DeepSeek models on Microsoft Foundry, so
-hackathon participants can build real applications with **opencode** — and nobody holds a model
-credential or can overspend.
+hackathon participants can build real apps with **opencode** — and nobody holds a model credential
+or can overspend.
+
+One interactive script does everything.
 
 ```powershell
 ./admin.ps1
 ```
 
-One interactive script deploys the gateway, pins the models, issues keys, revokes them, and shows
-consumption.
-
-Sibling project: [`claude-code-foundry-gateway`](../../../claude-code-foundry-gateway) solves the
-*enterprise* case (Entra ID, per-developer tiers, indefinite access). This one solves the *event*
-case: key-based, disposable, hard-capped, self-expiring.
+![Admin console](docs/images/admin-menu.png)
 
 ---
 
 ## What a participant gets
 
-```
-OPENAI_BASE_URL=https://apim-hackgw1234.azure-api.net/v1
+Two environment variables. That is the whole setup.
+
+```bash
+OPENAI_BASE_URL=https://<your-gateway>.azure-api.net/v1
 OPENAI_API_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 ```
 
-That is it. Those two variables work in `opencode`, the OpenAI SDK, Aider, Continue, or anything
-else that speaks the OpenAI wire format.
+They work in `opencode`, the OpenAI SDK, Aider, Continue, `curl` — anything that speaks the OpenAI
+wire format.
 
-The key **is** the entitlement. It carries — signed, and therefore untamperable — which models it
-may call, when it becomes active, when it dies, and how many tokens it may spend.
+The key **is** the entitlement. It carries, signed and untamperable: which models it may call, when
+it starts working, when it dies, and how many tokens it may spend.
 
----
+### It really builds things
 
-## The controls
+A real `opencode` session through the gateway — tool calls and all:
 
-| Control | Mechanism | Participant sees |
-|---|---|---|
-| Model allowlist | signed `models` claim, checked in policy | **403** `model_not_permitted` |
-| Time window | JWT `nbf` / `exp`, enforced by `validate-jwt` | **401** — no automation needed |
-| One-time spend cap | cache counter + `token-quota` backstop | **403** `budget_exhausted` — **stops immediately** |
-| Burst protection | `llm-token-limit` tokens/minute | **429** + `Retry-After` (genuinely retryable) |
-| Runaway agent loop | `rate-limit-by-key` on request count | **429** |
-| Attribution | `llm-emit-token-metric` → App Insights | per-participant tokens |
-| No credential sprawl | gateway managed identity | nothing to leak |
-
-**All 15 controls verified against a live deployment** — see `scripts/Test-Governance.ps1`:
-
-```
-[PASS] valid key is served                -> 200
-[PASS] missing key rejected               -> 401
-[PASS] forged signature rejected          -> 401
-[PASS] expired key rejected               -> 401
-[PASS] not-yet-active key rejected        -> 401
-[PASS] model allowlist enforced           -> 403
-[PASS] unpinned model rejected            -> 403
-[PASS] tool calls accepted on pro         -> 200
-[PASS] tool calls accepted on flash       -> 200
-[PASS] one-time budget exhausts (403)     -> 403
-[PASS] exhausted budget is not retryable  -> True
-[PASS] exhausted budget sets no Retry-After -> True
-[PASS] exhausted budget reports 0 remaining -> True
-[PASS] exhausted budget body says so      -> True
-[PASS] budget headers returned            -> True
-
-15 passed, 0 failed
-```
-
-And a real `opencode` session built something through it:
-
-```
-> build · flash
-I'll create the hello.py file with the add function.
-← Write hello.py
-Wrote file successfully.
-→ Read hello.py
-Created and confirmed `hello.py` with `add(a, b)` that returns `a + b`.
-```
-
-> **Why a spent budget is 403 and not 429.** 429 is the intuitive choice, but every
-> OpenAI-compatible client treats it as *retryable*: the OpenAI SDK retries it and **sleeps for the
-> exact `Retry-After` value**, and the Vercel AI SDK behind opencode backs off and retries. A
-> one-time budget never refills, so those retries can only fail — and a truthful `Retry-After`
-> (seconds until the key expires) would hang an obedient client for hours. 403 is not retried by
-> either SDK, so the agent stops the instant the budget is gone. See
-> [ADR-0004](docs/adr/0004-budget-exhausted-status.md).
-
-Live budget is returned on every response:
-
-```
-x-budget-used: 41233
-x-budget-total: 2000000
-x-budget-remaining: 1958767
-```
-
----
-
-## The two models
-
-| Alias | Foundry deployment | Model | Tool calling | Use for |
-|---|---|---|---|---|
-| `flash` | `deepseek-v4-flash` | `DeepSeek-V4-Flash-0731` | ✅ | **Default.** Agent loop, file edits, terminal work. Faster and cheaper per turn. |
-| `pro` | `deepseek-v4-pro` | `DeepSeek-V4-Pro` | ✅ | Hard reasoning. Slower and pricier per turn. |
-
-> Microsoft Learn states `DeepSeek-V4-Pro` *"doesn't support tool calling"*. **Live testing on
-> 2026-08-31 disproved that** — it returns well-formed `tool_calls`. An earlier revision of this
-> gateway hard-blocked tools on `pro` on the strength of the doc; that block was removed before
-> shipping. `scripts/Test-Governance.ps1` asserts tool calling on both models, so a genuine future
-> regression is caught by the harness rather than by a participant mid-build. See
-> [ADR-0003](docs/adr/0003-model-roles.md).
-
----
-
-## Why a JWT and not an APIM subscription key
-
-APIM validates a subscription key **before any inbound policy runs**. `opencode` sends
-`Authorization: Bearer <key>`, and no policy can rescue that — the request is already rejected.
-
-A signed JWT is the *native* transport for a `Bearer` credential, and it brings three things a
-subscription key cannot:
-
-- **`exp` gives time-bounding for free.** No timer job, no cleanup, no reaper. APIM's own
-  `expirationDate` field is [audit metadata that the platform never enforces](https://learn.microsoft.com/en-us/azure/api-management/api-management-subscriptions).
-- **`nbf` gives scheduled activation** in the same credential.
-- **Issuance is offline.** Minting 200 keys is a local operation taking under a second, with zero
-  Azure API calls. At an event, that matters.
-
-Full reasoning: [ADR-0002](docs/adr/0002-credential-transport.md).
+![opencode session through the gateway](docs/images/opencode-session.png)
 
 ---
 
 ## Quickstart
 
 ```powershell
-git clone <this repo>
+git clone https://github.com/naveenneog/foundry-hackathon-gateway
 cd foundry-hackathon-gateway
 az login
 
 ./admin.ps1
-#  1  Deploy / update the gateway      (~5 min, APIM v2 provisions in minutes)
-#  3  Deploy a DeepSeek model          (if you have not already)
+#  1  Deploy / update the gateway     (~5 min)
+#  3  Deploy a DeepSeek model         (if you have not already)
 #  4  Issue a participant key
 ```
 
-Option 4 writes `handouts/<team>/` containing a ready-to-paste `opencode.json` and a one-page card.
+Option 4 writes `handouts/<team>/` containing a ready-to-paste `opencode.json` and a one-page card
+for the participant.
 
-### Verify the controls actually fire
-
-```powershell
-./admin.ps1   # option 8
-```
-
-Mints deliberately broken keys — expired, forged, wrong model, exhausted — and asserts the gateway
-rejects each for the right reason. **A control that never fires is not a control.**
+**Requirements:** an Azure subscription, a Microsoft Foundry (`AIServices`) account, the Azure CLI,
+PowerShell 7+, and Node 20+.
 
 ---
 
-## Repository layout
+## The controls
+
+| Control | Participant sees |
+|---|---|
+| Model allowlist | **403** `model_not_permitted` |
+| Access window (start and expiry) | **401** — self-enforcing, no cleanup job |
+| One-time spend cap | **403** `budget_exhausted` — stops immediately |
+| Tokens per minute | **429** + `Retry-After` |
+| Requests per minute | **429** |
+| Per-participant attribution | `x-budget-used` header + App Insights |
+| No credential sprawl | nothing to leak — gateway uses its managed identity |
+
+Every response carries the live budget:
 
 ```
-admin.ps1                    interactive admin console — start here
-src/
-  entitlement.mjs            the access decision, as a pure tested function
-  keys.mjs                   HS256 key minting and verification (zero dependencies)
-infra/
-  main.bicep                 APIM, observability, API, policy, RBAC
-  foundry-role.bicep         Cognitive Services User for the gateway identity only
-  policy.xml                 the governance policy
-scripts/
-  mint.mjs                   thin shim so admin.ps1 never reimplements JWS
-  Test-Governance.ps1        proves each control fires
-tests/                       49 tests, including tamper and alg:none attacks
-docs/
-  CHARTER.md                 goals, non-goals, constraints
-  ROADMAP.md                 milestones and packets
-  UNKNOWNS.md                what we did not know, and how each was closed
-  adr/                       architecture decisions and their reasoning
+x-budget-used: 29157
+x-budget-total: 500000
+x-budget-remaining: 470843
 ```
 
-`src/entitlement.mjs` is the canonical statement of the access rules; `infra/policy.xml` is its
-transcription into APIM policy expressions. **If you change one, change both** — the tests guard
-the former, and `Test-Governance.ps1` guards the latter.
+### Verify the controls yourself
+
+`./admin.ps1` → option 8. It mints deliberately broken keys — expired, forged, wrong model,
+exhausted — and asserts the gateway rejects each for the right reason.
+
+![Governance controls verified](docs/images/governance-checks.png)
+
+A control that never fires is not a control.
+
+---
+
+## How it works
+
+![Architecture](docs/images/architecture.svg)
+
+A participant's key is a **signed JWT**, not an API Management subscription key. That choice buys
+three things:
+
+- **The time window enforces itself.** `exp` and `nbf` are validated on every request by
+  `validate-jwt`. No timer job, no reaper, nothing to forget. API Management's own
+  `expirationDate` field is [audit metadata the platform never acts on](https://learn.microsoft.com/en-us/azure/api-management/api-management-subscriptions).
+- **Issuing a key is offline.** Minting 200 keys takes under a second and zero Azure API calls.
+- **It is the native transport.** `opencode` sends `Authorization: Bearer <key>`, and API Management
+  validates a subscription key *before* any policy runs — so no policy can rescue that header.
+
+Full reasoning: [ADR-0002](docs/adr/0002-credential-transport.md).
+
+---
+
+## The two models
+
+| Alias | Foundry deployment | Best for |
+|---|---|---|
+| `flash` | `DeepSeek-V4-Flash-0731` | **Default.** Agent loop, file edits. Faster, cheaper. |
+| `pro` | `DeepSeek-V4-Pro` | Hard reasoning. Slower, pricier. |
+
+Both support tool calling, so both work in `opencode`.
+
+> Microsoft Learn states `DeepSeek-V4-Pro` *"doesn't support tool calling"*. Live testing on
+> 2026-08-31 disproved it — it returns well-formed `tool_calls`. An earlier version of this gateway
+> hard-blocked tools on `pro` on the strength of that doc; the block was removed before shipping.
+> The verification harness asserts tool calling on both models, so a genuine future regression is
+> caught by the harness rather than by a participant mid-build. See
+> [ADR-0003](docs/adr/0003-model-roles.md).
 
 ---
 
 ## Tuning
 
-Limits are APIM named values, so changing one is a config edit rather than a redeployment:
+Limits are API Management named values, so changing one is a config edit, not a redeployment:
 
 | Named value | Default | Meaning |
 |---|---|---|
-| `tpm-per-key` | 40,000 | tokens/minute ceiling per participant |
+| `tpm-per-key` | 40,000 | tokens/minute per participant |
 | `calls-per-minute` | 240 | request ceiling per participant |
 | `max-output-tokens` | 8,192 | hard cap on any single completion |
-| `model-flash` | `deepseek-v4-flash` | what `flash` resolves to |
-| `model-pro` | `DeepSeek-V4-Pro` | what `pro` resolves to |
+| `model-flash` / `model-pro` | — | what each alias resolves to |
 | `revoked-keys` | `,` | denylist, managed by `admin.ps1` |
 
 ```powershell
@@ -205,30 +146,64 @@ az apim nv update -g rg-hackathon-gateway --service-name <apim> `
 
 ---
 
-## Known limits
+## Cost
 
-- **Streaming drifts the counter.** APIM *estimates* tokens on streamed responses rather than
-  reading actual usage, so lifetime consumption is approximate. The `Yearly` `token-quota` runs
-  underneath as the authoritative cap. See `docs/UNKNOWNS.md` U5.
-- **The budget counter uses APIM's internal cache**, which is best-effort. An eviction could grant
-  one extra budget; the quota backstop bounds the damage. Move to external Redis if this outlives
-  a single event. See U6.
-- **JWTs cannot be revoked before `exp`** — that is the trade for offline issuance. The `jti`
-  denylist covers it, at the cost of one named-value update.
+| Item | Approx |
+|---|---|
+| API Management Basic v2, 1 unit | ~$250/month |
+| Log Analytics + Application Insights | ingestion-based, small at this volume |
+| DeepSeek tokens | pay-per-token, unchanged by the gateway |
 
----
-
-## Teardown
+The gateway bills whether or not anyone uses it. Tear it down when the event ends:
 
 ```powershell
 ./admin.ps1   # option 9
-```
-
-Then purge the soft-deleted APIM, or its globally unique name stays taken:
-
-```powershell
 az apim deletedservice purge --service-name <apim-name> --location <region>
 ```
+
+`purge` matters — a soft-deleted API Management instance keeps its globally unique name.
+
+---
+
+## Repository layout
+
+```
+admin.ps1                    interactive admin console — start here
+src/
+  entitlement.mjs            the access decision, as a pure tested function
+  keys.mjs                   HS256 key minting and verification (zero dependencies)
+infra/
+  main.bicep                 gateway, observability, API, policy, RBAC
+  policy.xml                 the governance policy
+scripts/
+  mint.mjs                   thin shim so admin.ps1 never reimplements JWS
+  Test-Governance.ps1        proves each control fires
+tests/                       70 tests, including tamper and alg:none attacks
+docs/adr/                    architecture decisions and their reasoning
+docs/UNKNOWNS.md             what we did not know, and how each was closed
+```
+
+`src/entitlement.mjs` is the canonical statement of the access rules; `infra/policy.xml` is its
+transcription into policy expressions. **Change one, change both** — the tests guard the former,
+`Test-Governance.ps1` guards the latter.
+
+```powershell
+npm test                                  # 70 tests
+node .ironclad/gate.mjs --stage packet    # full quality gate
+```
+
+---
+
+## Known limits
+
+- **Streaming drifts the counter.** API Management estimates tokens on streamed responses rather
+  than reading actual usage, so `x-budget-used` is approximate. The `token-quota` underneath is the
+  authoritative cap. See `docs/UNKNOWNS.md` U5.
+- **The budget counter uses the internal cache**, which is best-effort and not atomic under
+  concurrency. The quota backstop bounds the damage. Move to external Redis if this outlives one
+  event — roadmap P11.
+- **JWTs cannot be revoked before `exp`** — the trade for offline issuance. The `jti` denylist
+  covers it at the cost of one named-value update.
 
 ---
 

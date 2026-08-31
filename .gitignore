@@ -12,3 +12,6 @@ handouts/
 
 node_modules/
 *.log
+
+# raw terminal captures used to render docs/images
+.capture/

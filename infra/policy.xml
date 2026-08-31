@@ -144,23 +144,25 @@
             </when>
         </choose>
 
-        <!-- 5b. Guard rail from ADR-0003: DeepSeek-V4-Pro is a reasoning model and does not
-             support tool calling. Without this, opencode's agent loop fails opaquely against
-             `pro` and a participant loses their morning to it. Fail loudly and usefully. -->
+        <!-- 5b. Advisory only. Microsoft Learn states DeepSeek-V4-Pro "doesn't support tool
+             calling", and an earlier revision hard-blocked tool calls aimed at `pro` on that
+             basis. Live testing against DeepSeek-V4-Pro (2026-04-23) disproved it: the model
+             returns well-formed tool_calls. The block was removed rather than shipped, because
+             blocking a capability that works is worse than the confusion it was meant to avoid.
+
+             Pro remains a reasoning model — slower and pricier per turn than Flash — so we tag
+             the response with a hint instead of refusing it. See ADR-0003. -->
         <choose>
             <when condition="@{
                 if ((string)context.Variables["requestedModel"] != "pro") { return false; }
                 try { return context.Request.Body.As<JObject>(preserveContent: true)["tools"] != null; }
                 catch { return false; }
             }">
-                <return-response>
-                    <set-status code="400" reason="Bad Request" />
-                    <set-header name="Content-Type" exists-action="override">
-                        <value>application/json</value>
-                    </set-header>
-                    <set-body>{"error":{"code":"tools_not_supported","type":"invalid_request_error","message":"'pro' (DeepSeek-V4-Pro) is a reasoning model and does not support tool calling. Use 'flash' for agent work in opencode, and 'pro' for one-shot reasoning."}}</set-body>
-                </return-response>
+                <set-variable name="modelHint" value="pro-with-tools" />
             </when>
+            <otherwise>
+                <set-variable name="modelHint" value="none" />
+            </otherwise>
         </choose>
 
         <!-- 6. The one-time budget. APIM's token-quota always resets on a fixed window, so a
@@ -221,7 +223,7 @@
 
         <llm-token-limit
             counter-key="@((string)context.Variables["sub"] + ":lifetime")"
-            token-quota="@(context.Variables["budget"])"
+            token-quota="@((long)context.Variables["budget"])"
             token-quota-period="Yearly"
             estimate-prompt-tokens="false"
             remaining-quota-tokens-header-name="x-budget-remaining" />

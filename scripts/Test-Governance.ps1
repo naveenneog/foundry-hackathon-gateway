@@ -113,9 +113,19 @@ $ghost = @{ model = 'gpt-4o'; messages = @(@{ role = 'user'; content = 'hi' }); 
 $r = Invoke-Gateway -Token $good -Body $ghost
 Assert-Control 'unpinned model rejected' @(403) $r.Status
 
-# 8. Tool calling against the reasoning model (ADR-0003 guard rail)
-$r = Invoke-Gateway -Token $good -Body $withTools
-Assert-Control 'tools-on-pro rejected clearly' @(400) $r.Status $r.Body
+# 8. Tool calling works on BOTH models (ADR-0003, corrected by live testing).
+$toolsBody = @{
+    model = 'pro'
+    messages = @(@{ role = 'user'; content = 'What is the weather in Paris? Use the tool.' })
+    tools = @(@{ type = 'function'; function = @{ name = 'get_weather'; description = 'Get weather'; parameters = @{ type = 'object'; properties = @{ city = @{ type = 'string' } }; required = @('city') } } })
+    max_tokens = 200
+} | ConvertTo-Json -Depth 10
+$r = Invoke-Gateway -Token $good -Body $toolsBody
+Assert-Control 'tool calls accepted on pro' @(200) $r.Status $r.Body
+
+$toolsFlash = $toolsBody -replace '"model":\s*"pro"', '"model": "flash"'
+$r = Invoke-Gateway -Token $good -Body $toolsFlash
+Assert-Control 'tool calls accepted on flash' @(200) $r.Status $r.Body
 
 # 9. Budget exhaustion -> 403 so the client STOPS (ADR-0004)
 $tiny = New-TestKey -Subject "verify-budget-$(Get-Random)" -Models @('flash') -Budget 200 -StartOffsetHours 0 -EndOffsetHours 2

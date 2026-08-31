@@ -41,9 +41,41 @@ may call, when it becomes active, when it dies, and how many tokens it may spend
 | One-time spend cap | cache counter + `token-quota` backstop | **403** `budget_exhausted` — **stops immediately** |
 | Burst protection | `llm-token-limit` tokens/minute | **429** + `Retry-After` (genuinely retryable) |
 | Runaway agent loop | `rate-limit-by-key` on request count | **429** |
-| Tools against a reasoning model | explicit guard rail | **400** with a useful message |
 | Attribution | `llm-emit-token-metric` → App Insights | per-participant tokens |
 | No credential sprawl | gateway managed identity | nothing to leak |
+
+**All 15 controls verified against a live deployment** — see `scripts/Test-Governance.ps1`:
+
+```
+[PASS] valid key is served                -> 200
+[PASS] missing key rejected               -> 401
+[PASS] forged signature rejected          -> 401
+[PASS] expired key rejected               -> 401
+[PASS] not-yet-active key rejected        -> 401
+[PASS] model allowlist enforced           -> 403
+[PASS] unpinned model rejected            -> 403
+[PASS] tool calls accepted on pro         -> 200
+[PASS] tool calls accepted on flash       -> 200
+[PASS] one-time budget exhausts (403)     -> 403
+[PASS] exhausted budget is not retryable  -> True
+[PASS] exhausted budget sets no Retry-After -> True
+[PASS] exhausted budget reports 0 remaining -> True
+[PASS] exhausted budget body says so      -> True
+[PASS] budget headers returned            -> True
+
+15 passed, 0 failed
+```
+
+And a real `opencode` session built something through it:
+
+```
+> build · flash
+I'll create the hello.py file with the add function.
+← Write hello.py
+Wrote file successfully.
+→ Read hello.py
+Created and confirmed `hello.py` with `add(a, b)` that returns `a + b`.
+```
 
 > **Why a spent budget is 403 and not 429.** 429 is the intuitive choice, but every
 > OpenAI-compatible client treats it as *retryable*: the OpenAI SDK retries it and **sleeps for the
@@ -63,21 +95,19 @@ x-budget-remaining: 1958767
 
 ---
 
-## The two models — read this before running an event
+## The two models
 
-| Alias | Foundry deployment | Tool calling | Use for |
-|---|---|---|---|
-| `flash` | `deepseek-v4-flash` | ✅ **Yes** | **Building.** Agent loop, file edits, terminal work |
-| `pro` | `DeepSeek-V4-Pro` | ❌ **No** | Hard reasoning, one-shot questions |
+| Alias | Foundry deployment | Model | Tool calling | Use for |
+|---|---|---|---|---|
+| `flash` | `deepseek-v4-flash` | `DeepSeek-V4-Flash-0731` | ✅ | **Default.** Agent loop, file edits, terminal work. Faster and cheaper per turn. |
+| `pro` | `deepseek-v4-pro` | `DeepSeek-V4-Pro` | ✅ | Hard reasoning. Slower and pricier per turn. |
 
-`DeepSeek-V4-Pro` is a *reasoning* model and
-[does not support tool calling](https://learn.microsoft.com/en-us/azure/foundry/foundry-models/tutorials/get-started-deepseek-r1).
-`opencode`'s agent loop is built on tool calls, so **a participant given only `pro` cannot build
-anything.** The gateway therefore defaults new keys to `flash`, warns if you grant `pro` alone, and
-returns an explicit `400` if a tool-calling request is aimed at `pro` — rather than letting it fail
-opaquely and cost somebody their morning.
-
-See [ADR-0003](docs/adr/0003-model-roles.md).
+> Microsoft Learn states `DeepSeek-V4-Pro` *"doesn't support tool calling"*. **Live testing on
+> 2026-08-31 disproved that** — it returns well-formed `tool_calls`. An earlier revision of this
+> gateway hard-blocked tools on `pro` on the strength of the doc; that block was removed before
+> shipping. `scripts/Test-Governance.ps1` asserts tool calling on both models, so a genuine future
+> regression is caught by the harness rather than by a participant mid-build. See
+> [ADR-0003](docs/adr/0003-model-roles.md).
 
 ---
 

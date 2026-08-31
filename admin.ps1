@@ -189,10 +189,10 @@ function Invoke-Deploy {
 
     # Model pinning
     Write-Head 'Pin the models'
-    Write-Info 'flash = agent model. Supports tool calling. This is what opencode needs.'
-    Write-Info 'pro   = reasoning model. NO tool calling (see docs/adr/0003-model-roles.md).'
+    Write-Info 'flash = agent model (DeepSeek-V4-Flash-0731). Faster and cheaper per turn.'
+    Write-Info 'pro   = reasoning model (DeepSeek-V4-Pro). Both support tool calling.'
     $state.flashModel = Read-Default "Deployment name for 'flash'" ($state.flashModel ?? 'deepseek-v4-flash')
-    $state.proModel   = Read-Default "Deployment name for 'pro'"   ($state.proModel   ?? 'DeepSeek-V4-Pro')
+    $state.proModel   = Read-Default "Deployment name for 'pro'"   ($state.proModel   ?? 'deepseek-v4-pro')
 
     $secret = Get-SigningSecret
     if (-not $secret) {
@@ -312,23 +312,29 @@ function Invoke-DeployModel {
     Write-Head 'Deploy a DeepSeek model'
     if (-not $state.foundryAccount) { Write-Warn 'No Foundry account configured. Deploy the gateway first.'; return }
 
-    Write-Host '    [1] deepseek-v4-flash   agent model, tool calling, 1M context  (recommended)'
-    Write-Host '    [2] DeepSeek-V4-Pro     reasoning model, NO tool calling'
+    # Exact catalog names and versions, confirmed via `az cognitiveservices model list`.
+    # Casing matters: the model name is matched exactly. The deployment name is ours to choose.
+    Write-Host '    [1] DeepSeek-V4-Flash-0731  agent model, tool calling, 1M context  (recommended)'
+    Write-Host '    [2] DeepSeek-V4-Pro         reasoning model (tool calling also works)'
     $pick = Read-Default 'Which model' '1'
 
-    $model = if ($pick -eq '2') { 'DeepSeek-V4-Pro' } else { 'deepseek-v4-flash' }
-    $name  = Read-Default 'Deployment name' $model
-    $cap   = Read-Default 'Capacity (thousands of TPM)' '100'
+    if ($pick -eq '2') {
+        $model = 'DeepSeek-V4-Pro';        $version = '2026-04-23'; $default = 'deepseek-v4-pro'
+    } else {
+        $model = 'DeepSeek-V4-Flash-0731'; $version = '2026-07-31'; $default = 'deepseek-v4-flash'
+    }
+    $name = Read-Default 'Deployment name' $default
+    $cap  = Read-Default 'Capacity (thousands of TPM)' '100'
 
-    Write-Info "Deploying $model as '$name'..."
+    Write-Info "Deploying $model ($version) as '$name'..."
     az cognitiveservices account deployment create `
         -n $state.foundryAccount -g $state.foundryResourceGroup `
         --deployment-name $name `
-        --model-name $model --model-version '1' --model-format 'DeepSeek' `
+        --model-name $model --model-version $version --model-format 'DeepSeek' `
         --sku-capacity $cap --sku-name 'GlobalStandard' -o none
 
     if ($LASTEXITCODE -eq 0) { Write-Ok "Deployed '$name'." }
-    else { Write-Err 'Deployment failed. Check the model name and region availability.' }
+    else { Write-Err 'Deployment failed. Check region availability and quota.' }
 }
 
 # --------------------------------------------------------------------------------------------
@@ -364,7 +370,8 @@ function New-ParticipantKey {
 
     $label   = Read-Default 'Label (optional, e.g. a name)' ''
 
-    Write-Info 'Models: flash = agent + tools (opencode) | pro = reasoning only'
+    Write-Info 'Models: flash = agent, faster/cheaper | pro = reasoning, slower/pricier'
+    Write-Info 'Both support tool calling (verified live; the Learn docs claim pro does not).'
     $modelPick = Read-Default 'Grant which models? [1] flash  [2] flash+pro  [3] pro only' '1'
     $models = switch ($modelPick) {
         '2' { @('flash', 'pro') }
@@ -372,7 +379,7 @@ function New-ParticipantKey {
         default { @('flash') }
     }
     if ($models -notcontains 'flash') {
-        Write-Warn "This key has no 'flash'. opencode's agent loop needs tool calling, which 'pro' does not support."
+        Write-Warn "This key has no 'flash'. 'pro' works for agent loops but is slower and costs more per turn."
         if (-not (Confirm-Action 'Issue anyway?')) { return }
     }
 
@@ -495,13 +502,13 @@ Pick `hackathon-gateway/flash`.
 
 ## 3. Which model?
 
-| Alias   | Use it for                          | Tool calling |
-|---------|-------------------------------------|--------------|
-| flash   | Building. Agent loop, file edits.   | Yes          |
-| pro     | Hard reasoning, one-shot questions. | **No**       |
+| Alias   | Use it for                          | Notes           |
+|---------|-------------------------------------|-----------------|
+| flash   | Building. Agent loop, file edits.   | Faster, cheaper |
+| pro     | Hard reasoning, one-shot questions. | Slower, pricier |
 
-`opencode` needs tool calling to read and write files, so **use `flash`** for building.
-`pro` will refuse a request that carries tools, with a clear error.
+Both support tool calling, so both work in `opencode`. Use `flash` for building unless you
+specifically want the reasoner.
 
 ## Checking your remaining budget
 
@@ -519,7 +526,6 @@ Every response carries headers:
 | 403 | expired            | Your window has closed. Keys are not extended. |
 | 403 | model_not_permitted| That model is not on your key. |
 | 403 | revoked            | An organiser revoked this key. |
-| 400 | tools_not_supported| You aimed a tool call at ``pro``. Use ``flash``. |
 | 429 | (rate limit)       | Too fast — this one IS worth retrying. Your client backs off automatically. |
 | 401 | —                  | The key is invalid or malformed. Ask for a new one. |
 

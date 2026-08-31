@@ -1,77 +1,106 @@
 # Status
 
-**Active packet:** P9 — verify the governance controls fire against a live deployment
+**Active packet:** none — M1, M2 and M3 complete and verified live.
 
-## Delivered in this cycle
+## Live deployment (verified 2026-08-31)
+
+| | |
+|---|---|
+| Subscription | `MCAPS-Hybrid-REQ-67471-2023-navg` |
+| Resource group | `rg-hackathon-gateway` (eastus2) |
+| Gateway | `https://apim-hackgwfl4s7jvpxekno.azure-api.net/v1` |
+| Foundry account | `foundry-plus-resource` (`rg-contosohub`, eastus2) |
+| `flash` | `deepseek-v4-flash` → `DeepSeek-V4-Flash-0731` (2026-07-31) |
+| `pro` | `deepseek-v4-pro` → `DeepSeek-V4-Pro` (2026-04-23) |
+
+## Packets
 
 | Packet | State | Evidence |
 |---|---|---|
-| P1 scaffold + charter | done | `.ironclad/charter.json`, docs ledger, gate |
+| P1 scaffold + charter | done | gate passes |
 | P2 key lifecycle | done | `src/keys.mjs`, 33 tests |
 | P3 entitlement engine | done | `src/entitlement.mjs`, 37 tests |
-| P4 policy generation | done | `infra/policy.xml` transcribed from the engine |
-| P5 Bicep infrastructure | done | `infra/main.bicep`, `infra/foundry-role.bicep` |
+| P4 policy | done | `infra/policy.xml`, deployed and serving |
+| P5 infrastructure | done | deployed; APIM BasicV2 + App Insights + Log Analytics |
 | P6 interactive admin | done | `admin.ps1` |
-| P7 model selection | done | `admin.ps1` options 2 and 3 |
+| P7 model deployment | done | both DeepSeek models deployed via CLI |
+| P8 **opencode verified** | **done** | real agent session, Write + Read tool calls |
+| P9 **control verification** | **done** | 15/15 controls pass live |
 | P10 documentation | done | README, 5 ADRs, unknowns register |
-| P8 / P9 live verification | **blocked** | needs an Azure subscription |
 
 ## Commands that prove it
 
 ```powershell
 npm test                                   # 70 passing
-node .ironclad/gate.mjs --stage packet     # PASS - 23 passed, 0 failed
-az bicep build --file infra/main.bicep     # clean
-./admin.ps1                                # option 8 verifies controls live
+node .ironclad/gate.mjs --stage packet     # PASS
+./scripts/Test-Governance.ps1 -GatewayUrl https://apim-hackgwfl4s7jvpxekno.azure-api.net/v1 `
+    -SecretPath .gateway\secret.txt        # 15 passed, 0 failed
 ```
 
-## Council verdicts
+## Live verification output
 
-| Seat | Verdict | Notes |
-|---|---|---|
-| Architect | PASS-WITH-NOTES | Cache/quota split is now explicit: cache advisory, quota authoritative (U6). |
-| Coder | PASS-WITH-NOTES | Dead `try/catch` in the `keys.mjs` decode path noted, harmless, left. |
-| QA | PASS-WITH-NOTES | `Test-Governance.ps1` is sequential, so it cannot exercise the concurrency case in U6. |
-| UX | PASS | Participant card lists every failure code and states which is retryable. |
-| Security | **BLOCK → resolved** | 3 HIGH, 3 MEDIUM. All fixed; see below. |
+```
+[PASS] valid key is served                -> 200
+[PASS] missing key rejected               -> 401
+[PASS] forged signature rejected          -> 401
+[PASS] expired key rejected               -> 401
+[PASS] not-yet-active key rejected        -> 401
+[PASS] model allowlist enforced           -> 403
+[PASS] unpinned model rejected            -> 403
+[PASS] tool calls accepted on pro         -> 200
+[PASS] tool calls accepted on flash       -> 200
+[PASS] one-time budget exhausts (403)     -> 403
+[PASS] exhausted budget is not retryable  -> True
+[PASS] exhausted budget sets no Retry-After -> True
+[PASS] exhausted budget reports 0 remaining -> True
+[PASS] exhausted budget body says so      -> True
+[PASS] budget headers returned            -> True
 
-### Security findings and their fixes
+15 passed, 0 failed
+```
 
-| # | Severity | Finding | Fix |
-|---|---|---|---|
-| 1 | HIGH | Minter signed with the ASCII of the secret; APIM Base64-decodes it. Keys would never verify, on ~74% of deployments. | ADR-0005. `keyMaterial()` decodes and validates; `generateSecret()` and `New-SigningSecret` emit standard Base64. 9 regression tests. |
-| 2 | HIGH | Signing secret passed in `az` argv — readable from the process table and Event ID 4688. | ACL-restricted parameters file, deleted in `finally`. |
-| 3 | HIGH | `revoked-keys` is Bicep-declared, so "Deploy / update" silently un-revoked every key. | Live value read and passed through, unioned with local state. |
-| 4 | MED | Cache `default-value="0"` granted a fresh budget on every eviction — the opposite of the tested canon. | `default-value="unknown"`; an unparseable value defers to the authoritative quota. |
-| 5 | MED | `max_completion_tokens` unclamped, so the output cap was bypassable. | Both fields clamped defensively; `n` pinned to 1. |
-| 6 | MED | `sub` collisions silently share one budget and rate limit. | GUID-derived default, plus an explicit re-issue confirmation. |
-| — | bug | `GET /v1/models` always 403'd, though the participant card told people to call it. | Answered before the allowlist check, returning only that key's granted models. |
+opencode, through the gateway, on `flash`:
 
-Clean on review: `verifyKey` signature verification (no `alg:none`, no algorithm confusion, no
-canonicalisation bypass, constant-time compare), the model allowlist fail-closed path, the
-managed-identity credential swap, and `.gitignore` coverage of `.gateway/` and `handouts/`.
+```
+> build · flash
+I'll create the hello.py file with the add function.
+← Write hello.py
+Wrote file successfully.
+→ Read hello.py
+Created and confirmed `hello.py` with `add(a, b)` that returns `a + b`.
+```
 
-## Acceptance criteria
+Budget accounting across that session: **29,157 / 500,000 tokens**, tracked continuously via
+`x-budget-used`.
 
-- [x] G1 model allowlist — signed claim, enforced in policy, tested
+## Acceptance criteria — all met
+
+- [x] G1 model allowlist — 403 on an unlisted model, verified live
 - [x] G2 one-step key issuance — `admin.ps1` option 4
-- [x] G3 time-bound — JWT `nbf`/`exp`, self-enforcing
-- [x] G4 spend-bound — one-time budget; 403 stops the client (ADR-0004)
-- [x] G5 attribution — `llm-emit-token-metric` per participant
-- [ ] G6 **opencode verified end to end** — blocked, see below
+- [x] G3 time-bound — expired and not-yet-active both rejected live
+- [x] G4 spend-bound — one-time budget exhausts with 403, verified live
+- [x] G5 attribution — `x-budget-used` per key; metrics to App Insights
+- [x] G6 **opencode verified end to end** — real agentic session with tool calls
 - [x] G7 no credential leaves Azure — managed identity only
 
-## Blocked
+## What live testing changed
 
-**G6 cannot be closed from here.** It needs an Azure subscription with a Foundry account and
-DeepSeek deployments. Everything up to that boundary is tested; `scripts/Test-Governance.ps1` is
-written and will prove the controls the moment a deployment exists.
+| Finding | Consequence |
+|---|---|
+| `DeepSeek-V4-Pro` **does** support tool calling, contradicting Microsoft Learn | Removed the hard 400 guard rail before it shipped. ADR-0003 rewritten. |
+| `token-quota="@(context.Variables[...])"` failed APIM validation | Explicit `(long)` cast. Caught only by deploying — no static check finds it. |
+| Exact catalog names and versions | `DeepSeek-V4-Flash-0731` / `2026-07-31`; `admin.ps1` had wrong casing and version `1`. Fixed. |
 
-## Next
+## Remaining work (M4, optional)
 
-1. Deploy (`./admin.ps1` → 1).
-2. Run option 8 and record the output.
-3. Run a real opencode session doing a file edit; confirm tool calls succeed against `flash` and
-   are rejected with a clear 400 against `pro`.
-4. Confirm `GET /v1/models` returns the granted aliases.
-5. Close U5 with observed streaming behaviour.
+Only relevant if this outlives a single event — see `docs/ROADMAP.md` P11–P13.
+
+## Teardown
+
+```powershell
+az group delete -n rg-hackathon-gateway --yes --no-wait
+az apim deletedservice purge --service-name apim-hackgwfl4s7jvpxekno --location eastus2
+# The DeepSeek deployments live in rg-contosohub and are left in place:
+#   az cognitiveservices account deployment delete -n foundry-plus-resource -g rg-contosohub --deployment-name deepseek-v4-flash
+#   az cognitiveservices account deployment delete -n foundry-plus-resource -g rg-contosohub --deployment-name deepseek-v4-pro
+```

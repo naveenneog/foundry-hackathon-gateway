@@ -38,8 +38,8 @@ param apimCapacity int = 1
 @description('Foundry deployment name for the agent-capable model. This one supports tool calling and is what opencode needs.')
 param flashDeployment string = 'deepseek-v4-flash'
 
-@description('Foundry deployment name for the reasoning model. Does NOT support tool calling - see ADR-0003.')
-param proDeployment string = 'DeepSeek-V4-Pro'
+@description('Foundry deployment name for the reasoning model. Tool calling works despite the Learn docs claiming otherwise - see ADR-0003.')
+param proDeployment string = 'deepseek-v4-pro'
 
 @description('HS256 signing secret for participant keys. Generate with admin.ps1; never commit it.')
 @secure()

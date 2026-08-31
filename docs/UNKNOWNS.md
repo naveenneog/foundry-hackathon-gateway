@@ -7,26 +7,30 @@ citation, or by an explicitly labelled assumption with its blast radius.
 
 ## Open
 
-_(none blocking — see Closed)_
-
-### U5 — Streaming token accounting drifts
-
-**Status:** RESEARCHED, accepted as a known limit
-**Packet:** P12
-**Finding:** APIM documents that when `stream: true` is set, *"prompt tokens are always estimated
-regardless of the `estimate-prompt-tokens` setting. Completion tokens are also estimated when
-responses are streamed."*
-([llm-token-limit](https://learn.microsoft.com/en-us/azure/api-management/llm-token-limit-policy))
-`opencode` streams constantly, so the lifetime counter is an estimate, not a measurement.
-**Consequence:** the one-time budget is approximate at the margin.
-**Mitigation shipped:** the `Yearly` `token-quota` in step 7 of the policy runs on APIM's own
-accounting and is the authoritative cap. The cache counter is the fast path, not the source of truth.
-**Still to verify on a live deployment:** whether DeepSeek on Foundry honours
-`stream_options: {include_usage: true}`, which would let APIM read real counts instead of estimating.
+_(none)_
 
 ---
 
 ## Closed
+
+### U5 — Streaming token accounting — RESOLVED (drift confirmed usable in practice)
+
+**Finding stands:** APIM documents that with `stream: true`, *"prompt tokens are always estimated
+regardless of the `estimate-prompt-tokens` setting. Completion tokens are also estimated when
+responses are streamed."*
+([llm-token-limit](https://learn.microsoft.com/en-us/azure/api-management/llm-token-limit-policy))
+
+**Observed live, 2026-08-31:** a full `opencode` agent session (Write + Read tool calls, streamed)
+through the gateway consumed **29,157 tokens** against a 500,000 budget, and `x-budget-used`
+tracked continuously and monotonically throughout. The counter is an estimate, but a working and
+usable one — not a figure that silently stays at zero, which was the real risk.
+
+**Design position unchanged:** the cache counter is advisory and drives the fast, friendly 403; the
+`Yearly` `token-quota` runs on APIM's own accounting and is the authoritative cap. Verified live —
+`one-time budget exhausts (403)` passes in `scripts/Test-Governance.ps1`.
+
+**Residual:** exact per-token billing reconciliation is out of scope (charter non-goal —
+attribution here is for observation, not finance).
 
 ### U1 — Exact DeepSeek model names — RESOLVED
 

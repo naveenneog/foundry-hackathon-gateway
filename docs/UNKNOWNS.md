@@ -119,8 +119,22 @@ codes for the same condition depending on which path fired. ADR-0004 reverted th
 `403` — for independent reasons — and the two are now consistent by construction. No normalisation
 layer is needed.
 
-### U6 — Durable one-time budget storage — ASSUMED, risk accepted and bounded
+### U8 — Single-call overshoot on a small budget — MEASURED, bounded
 
+**Observed live, 2026-08-31:** a key with a 300-token budget returned `HTTP 200` with
+`x-budget-used: 3507` on its first call, then `403 budget_exhausted` on the next.
+
+**Cause, and why it is by design:** the budget is checked *before* a request. The request that
+crosses the line still completes; only subsequent ones are refused. Pre-emptively rejecting would
+require `estimate-prompt-tokens="true"`, which trades accuracy for a guess and rejects requests
+that would in fact have fitted.
+
+**The bound:** worst-case overshoot is one request — roughly `prompt + max-output-tokens`. The
+`max-output-tokens` clamp (default 8,192, applied to both `max_tokens` and `max_completion_tokens`)
+is what keeps this finite. Against a realistic budget of millions of tokens the overshoot is
+negligible; it is only material for very small budgets, which is exactly the case above.
+
+**Action:** documented in the README's known limits. No code change — the alternative is worse.
 **The cache counter is advisory. The `token-quota` is authoritative.** That split is deliberate and
 is what makes the assumption safe:
 

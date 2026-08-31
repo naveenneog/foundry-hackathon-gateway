@@ -116,8 +116,21 @@ Full reasoning: [ADR-0002](docs/adr/0002-credential-transport.md).
 
 Both support tool calling, so both work in `opencode`.
 
-> Microsoft Learn states `DeepSeek-V4-Pro` *"doesn't support tool calling"*. Live testing on
-> 2026-08-31 disproved it — it returns well-formed `tool_calls`. An earlier version of this gateway
+Verified live on 2026-08-31 — a single `opencode` run through the gateway used **Grep**, **Bash**,
+**Read** and **Write**:
+
+```
+> build · flash
+✱ Grep "TODO" in src · 2 matches
+$ (Get-ChildItem -Path src -File).Count
+3
+← Write REPORT.md
+Wrote file successfully.
+Done. Files with TODOs: src/alpha.py, src/gamma.py. Total files in src/: 3.
+```
+
+> Microsoft Learn states `DeepSeek-V4-Pro` *"doesn't support tool calling"*. Live testing
+> disproved it — it returns well-formed `tool_calls`. An earlier version of this gateway
 > hard-blocked tools on `pro` on the strength of that doc; the block was removed before shipping.
 > The verification harness asserts tool calling on both models, so a genuine future regression is
 > caught by the harness rather than by a participant mid-build. See
@@ -196,6 +209,11 @@ node .ironclad/gate.mjs --stage packet    # full quality gate
 
 ## Known limits
 
+- **A single call can overshoot a small budget.** The budget is checked *before* a request, so the
+  request that crosses the line still completes. Measured: a 300-token budget was overshot to 3,507
+  by one call. The overshoot is bounded by one request — roughly `prompt + max-output-tokens`
+  (default 8,192) — so it is negligible against a realistic budget and material only if you issue
+  very small ones. Subsequent calls are refused.
 - **Streaming drifts the counter.** API Management estimates tokens on streamed responses rather
   than reading actual usage, so `x-budget-used` is approximate. The `token-quota` underneath is the
   authoritative cap. See `docs/UNKNOWNS.md` U5.

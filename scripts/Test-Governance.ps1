@@ -42,23 +42,70 @@ function New-TestKey {
 
 function Invoke-Gateway {
     param($Token, $Body)
+    $uri = "$GatewayUrl/chat/completions"
+    $headers = @{ Authorization = "Bearer $Token"; 'Content-Type' = 'application/json' }
+
+    # -SkipHttpErrorCheck is PowerShell 7+ only, and this harness must also run on Windows
+    # PowerShell 5.1. Splat it in only where it exists: on 7+ a 4xx comes back as an ordinary
+    # response (the proven path), and on 5.1 it raises and we read the exception instead.
+    $params = @{
+        Uri = $uri; Method = 'Post'; Headers = $headers; Body = $Body
+        TimeoutSec = 120; UseBasicParsing = $true; ErrorAction = 'Stop'
+    }
+    if ($PSVersionTable.PSVersion.Major -ge 7) { $params['SkipHttpErrorCheck'] = $true }
+
+    # The catch is deliberately untyped: 5.1 throws WebException, 7+ throws
+    # HttpResponseException, and naming the 7-only type in a catch filter is itself a runtime
+    # error on 5.1 ("Unable to find type"). Inspect the exception rather than filtering on it.
     try {
-        $resp = Invoke-WebRequest -Uri "$GatewayUrl/chat/completions" -Method Post `
-            -Headers @{ Authorization = "Bearer $Token"; 'Content-Type' = 'application/json' } `
-            -Body $Body -SkipHttpErrorCheck -TimeoutSec 120
+        $resp = Invoke-WebRequest @params
         return @{ Status = [int]$resp.StatusCode; Body = $resp.Content; Headers = $resp.Headers }
     } catch {
-        return @{ Status = -1; Body = $_.Exception.Message; Headers = @{} }
+        $r = $null
+        try { $r = $_.Exception.Response } catch { }
+        if (-not $r) { return @{ Status = -1; Body = $_.Exception.Message; Headers = @{} } }
+
+        $status = -1
+        try { $status = [int]$r.StatusCode } catch { }
+
+        $body = ''
+        if ($_.ErrorDetails -and $_.ErrorDetails.Message) {
+            $body = $_.ErrorDetails.Message
+        } else {
+            try {
+                $reader = New-Object System.IO.StreamReader($r.GetResponseStream())
+                $body = $reader.ReadToEnd()
+                $reader.Close()
+            } catch { }
+        }
+        return @{ Status = $status; Body = $body; Headers = (ConvertTo-HeaderTable $r.Headers) }
     }
 }
 
-# Response headers come back as string[]; take the first value so assertions compare scalars
-# rather than rendering as "System.Object[]".
+# Header collections differ by host: 5.1 gives a WebHeaderCollection that enumerates key
+# strings, 7+ gives HttpResponseHeaders that enumerates KeyValuePairs and has no .Keys.
+# Flatten either into a plain hashtable of scalars.
+function ConvertTo-HeaderTable {
+    param($Headers)
+    $h = @{}
+    if ($null -eq $Headers) { return $h }
+    try {
+        foreach ($item in $Headers) {
+            if ($item -is [string]) { $h[$item] = [string]$Headers[$item] }
+            elseif ($null -ne $item.Key) { $h[$item.Key] = [string](@($item.Value)[0]) }
+        }
+    } catch { }
+    return $h
+}
+
+# Normalise a header value to a scalar so assertions compare values rather than rendering as
+# "System.Object[]".
 function Get-Header {
     param($Response, $Name)
-    $v = $Response.Headers[$Name]
+    $v = $null
+    try { $v = $Response.Headers[$Name] } catch { }
     if ($null -eq $v) { return $null }
-    if ($v -is [array]) { return [string]$v[0] }
+    if ($v -is [array]) { if ($v.Count -eq 0) { return $null }; return [string]$v[0] }
     return [string]$v
 }
 

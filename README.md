@@ -54,7 +54,21 @@ Option 4 writes `handouts/<team>/` containing a ready-to-paste `opencode.json` a
 for the participant.
 
 **Requirements:** an Azure subscription, a Microsoft Foundry (`AIServices`) account, the Azure CLI,
-PowerShell 7+, and Node 20+.
+Node 20+, and PowerShell — **Windows PowerShell 5.1 or PowerShell 7+ both work**.
+
+`admin.ps1` runs a preflight on startup and tells you exactly what is missing:
+
+```
+  Preflight
+  ---------
+  [ok] PowerShell 5.1.26100.8875 (Windows PowerShell - supported)
+  [ok] Azure CLI 2.86.0
+  [ok] Signed in as you@contoso.com
+       Subscription: Contoso Dev
+  [ok] Bicep CLI
+  [ok] Node v22.11.0
+  [ok] Key minting works
+```
 
 ---
 

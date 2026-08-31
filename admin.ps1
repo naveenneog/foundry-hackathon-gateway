@@ -32,6 +32,24 @@ $script:SecretPath = Join-Path $script:StateDir 'secret.txt'
 $script:KeysPath = Join-Path $script:StateDir 'issued-keys.json'
 
 # --------------------------------------------------------------------------------------------
+# Cross-version compatibility
+#
+# This script must PARSE on Windows PowerShell 5.1, which ships by default on Windows and is
+# what most people will double-click into. PowerShell 7-only syntax (?? , ?: , -Parallel) is a
+# PARSE-time error, so it cannot be guarded by a runtime version check - the script dies before
+# a single line executes. Keep this file free of it.
+# --------------------------------------------------------------------------------------------
+
+# Stands in for the ?? null-coalescing operator, which is PowerShell 7+ only.
+function Coalesce {
+    param([Parameter(ValueFromRemainingArguments = $true)]$Values)
+    foreach ($v in $Values) {
+        if ($null -ne $v -and "$v" -ne '') { return $v }
+    }
+    return $null
+}
+
+# --------------------------------------------------------------------------------------------
 # Presentation
 # --------------------------------------------------------------------------------------------
 
@@ -98,7 +116,10 @@ function Get-SigningSecret {
 function New-SigningSecret {
     Initialize-StateDir
     $bytes = New-Object byte[] 32
-    [System.Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
+    # RandomNumberGenerator.Create().GetBytes() exists on both .NET Framework (PS 5.1) and
+    # .NET (PS 7+). The static ::Fill() overload is .NET Core only and throws on 5.1.
+    $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    try { $rng.GetBytes($bytes) } finally { $rng.Dispose() }
 
     # STANDARD Base64, padded. Not base64url.
     #
@@ -144,19 +165,107 @@ function Save-IssuedKeys($Keys) {
 # --------------------------------------------------------------------------------------------
 
 function Test-Prerequisites {
-    $ok = $true
-    foreach ($t in @('az', 'node')) {
-        if (-not (Get-Command $t -ErrorAction SilentlyContinue)) {
-            Write-Err "$t is not on PATH."
-            $ok = $false
+    Write-Head 'Preflight'
+    $fail = 0
+    $warn = 0
+
+    # --- PowerShell ---
+    $psv = $PSVersionTable.PSVersion
+    if ($psv.Major -ge 7) {
+        Write-Ok "PowerShell $psv"
+    } else {
+        Write-Ok "PowerShell $psv (Windows PowerShell - supported)"
+        Write-Info 'PowerShell 7+ is faster and gives better error messages, but is not required.'
+        $warn++
+    }
+
+    # --- Azure CLI ---
+    $azCmd = Get-Command az -ErrorAction SilentlyContinue
+    if (-not $azCmd) {
+        Write-Err 'Azure CLI not found on PATH.'
+        Write-Info 'Install: https://aka.ms/installazurecliwindows   then reopen this terminal.'
+        $fail++
+    } else {
+        $azVer = $null
+        try { $azVer = (az version --output json 2>$null | ConvertFrom-Json).'azure-cli' } catch { }
+        Write-Ok "Azure CLI $(Coalesce $azVer 'present')"
+
+        # --- Signed in ---
+        $acct = $null
+        try { $acct = az account show --output json 2>$null | ConvertFrom-Json } catch { }
+        if (-not $acct) {
+            Write-Err 'Not signed in to Azure.'
+            Write-Info "Run: az login"
+            $fail++
+        } else {
+            Write-Ok "Signed in as $($acct.user.name)"
+            Write-Info "Subscription: $($acct.name)"
+        }
+
+        # --- Bicep, needed to deploy ---
+        $bicepOk = $false
+        try { $null = az bicep version 2>$null; $bicepOk = ($LASTEXITCODE -eq 0) } catch { }
+        if ($bicepOk) { Write-Ok 'Bicep CLI' }
+        else {
+            Write-Warn 'Bicep not installed. It is required for option 1 (deploy).'
+            Write-Info 'Install: az bicep install'
+            $warn++
         }
     }
-    if ($ok) {
-        $acct = az account show 2>$null | ConvertFrom-Json
-        if (-not $acct) { Write-Err "Not signed in. Run 'az login'."; $ok = $false }
-        else { Write-Ok "Signed in to '$($acct.name)'" }
+
+    # --- Node, used to mint keys ---
+    $nodeCmd = Get-Command node -ErrorAction SilentlyContinue
+    if (-not $nodeCmd) {
+        Write-Err 'Node.js not found on PATH. Required to mint participant keys.'
+        Write-Info 'Install Node 20 or later: https://nodejs.org'
+        $fail++
+    } else {
+        $nodeVer = (node --version 2>$null)
+        $major = 0
+        if ($nodeVer -match 'v(\d+)') { $major = [int]$Matches[1] }
+        if ($major -ge 20) {
+            Write-Ok "Node $nodeVer"
+        } else {
+            Write-Err "Node $nodeVer is too old. Version 20 or later is required."
+            $fail++
+        }
     }
-    return $ok
+
+    # --- The minting script must be present and working ---
+    $mint = Join-Path $script:Root 'scripts/mint.mjs'
+    if (-not (Test-Path $mint)) {
+        Write-Err "Missing scripts/mint.mjs - the repository looks incomplete."
+        $fail++
+    } elseif ($nodeCmd) {
+        # Round-trip a throwaway key so a broken Node install fails here rather than in front
+        # of a participant. The probe secret is generated on the spot and discarded — nothing
+        # credential-shaped is stored in this file.
+        $probeBytes = New-Object byte[] 32
+        $probeRng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+        try { $probeRng.GetBytes($probeBytes) } finally { $probeRng.Dispose() }
+
+        $probe = @{
+            secret    = [Convert]::ToBase64String($probeBytes)
+            subject   = 'preflight'
+            models    = @('flash')
+            budget    = 1
+            notBefore = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+            expiresAt = [DateTimeOffset]::UtcNow.AddMinutes(1).ToUnixTimeMilliseconds()
+        } | ConvertTo-Json -Compress
+        $out = $null
+        try { $out = $probe | node $mint 2>$null | ConvertFrom-Json } catch { }
+        if ($out -and $out.token) { Write-Ok 'Key minting works' }
+        else { Write-Err 'Key minting failed. Run "npm test" to diagnose.'; $fail++ }
+    }
+
+    Write-Host ''
+    if ($fail -gt 0) {
+        Write-Err "$fail blocking problem(s). Fix the above and re-run."
+        return $false
+    }
+    if ($warn -gt 0) { Write-Warn "$warn warning(s) - you can continue." }
+    else { Write-Ok 'All checks passed.' }
+    return $true
 }
 
 # --------------------------------------------------------------------------------------------
@@ -167,8 +276,8 @@ function Invoke-Deploy {
     $state = Get-State
     Write-Head 'Deploy the gateway'
 
-    $state.resourceGroup = Read-Default 'Resource group for the gateway' ($state.resourceGroup ?? 'rg-hackathon-gateway')
-    $state.location      = Read-Default 'Location' ($state.location ?? 'eastus2')
+    $state.resourceGroup = Read-Default 'Resource group for the gateway' (Coalesce $state.resourceGroup 'rg-hackathon-gateway')
+    $state.location      = Read-Default 'Location' (Coalesce $state.location 'eastus2')
 
     if (-not $state.foundryAccount) {
         Write-Info 'Looking for Foundry accounts...'
@@ -183,16 +292,16 @@ function Invoke-Deploy {
         }
     }
     $state.foundryAccount       = Read-Default 'Foundry account name' $state.foundryAccount
-    $state.foundryResourceGroup = Read-Default 'Foundry resource group' ($state.foundryResourceGroup ?? $state.resourceGroup)
+    $state.foundryResourceGroup = Read-Default 'Foundry resource group' (Coalesce $state.foundryResourceGroup $state.resourceGroup)
 
-    $email = Read-Default 'Publisher email (for APIM)' ($PublisherEmail ?? (az account show --query user.name -o tsv 2>$null))
+    $email = Read-Default 'Publisher email (for APIM)' (Coalesce $PublisherEmail (az account show --query user.name -o tsv 2>$null))
 
     # Model pinning
     Write-Head 'Pin the models'
     Write-Info 'flash = agent model (DeepSeek-V4-Flash-0731). Faster and cheaper per turn.'
     Write-Info 'pro   = reasoning model (DeepSeek-V4-Pro). Both support tool calling.'
-    $state.flashModel = Read-Default "Deployment name for 'flash'" ($state.flashModel ?? 'deepseek-v4-flash')
-    $state.proModel   = Read-Default "Deployment name for 'pro'"   ($state.proModel   ?? 'deepseek-v4-pro')
+    $state.flashModel = Read-Default "Deployment name for 'flash'" (Coalesce $state.flashModel 'deepseek-v4-flash')
+    $state.proModel   = Read-Default "Deployment name for 'pro'"   (Coalesce $state.proModel 'deepseek-v4-pro')
 
     $secret = Get-SigningSecret
     if (-not $secret) {

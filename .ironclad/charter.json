@@ -19,8 +19,8 @@
     "minTestRatio": 0.15,
     "fileSizeExceptions": [
       {
-        "why": "Single-file interactive operator console. Length is menu handlers plus a preflight, each independently readable with no shared state. Splitting it would require dot-sourcing, adding a missing-file failure mode to the one script an organiser runs under time pressure at an event.",
-        "maxLines": 900,
+        "why": "Interactive operator console: ten independent menu handlers with no shared state. The preflight (140 lines) was extracted to scripts/Preflight.ps1 rather than raising this further; splitting the handlers too would fragment the one script an organiser runs under time pressure. Bound tightened from 900 to 850 after that extraction.",
+        "maxLines": 850,
         "path": "admin.ps1"
       }
     ]

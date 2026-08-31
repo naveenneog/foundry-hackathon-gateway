@@ -1,3 +1,4 @@
+#Requires -Version 7.0
 <#
 .SYNOPSIS
     Interactive admin console for the Foundry Hackathon Gateway.
@@ -10,6 +11,9 @@
         ./admin.ps1
 
 .NOTES
+    Requires PowerShell 7.0 or later. Windows PowerShell 5.1 is NOT supported - see the
+    preflight message, or docs/adr/0006-powershell-7-requirement.md for why.
+
     The signing secret is the master credential. It is written to .gateway/secret.txt with
     restricted ACLs and is never printed, logged, or committed.
 #>
@@ -32,15 +36,12 @@ $script:SecretPath = Join-Path $script:StateDir 'secret.txt'
 $script:KeysPath = Join-Path $script:StateDir 'issued-keys.json'
 
 # --------------------------------------------------------------------------------------------
-# Cross-version compatibility
+# Helpers
 #
-# This script must PARSE on Windows PowerShell 5.1, which ships by default on Windows and is
-# what most people will double-click into. PowerShell 7-only syntax (?? , ?: , -Parallel) is a
-# PARSE-time error, so it cannot be guarded by a runtime version check - the script dies before
-# a single line executes. Keep this file free of it.
+# PowerShell 7.0+ is required (see the #Requires above and ADR-0006). Coalesce predates that
+# decision and is kept because it reads better than a chain of ?? for multi-value fallbacks.
 # --------------------------------------------------------------------------------------------
 
-# Stands in for the ?? null-coalescing operator, which is PowerShell 7+ only.
 function Coalesce {
     param([Parameter(ValueFromRemainingArguments = $true)]$Values)
     foreach ($v in $Values) {
@@ -149,124 +150,59 @@ function New-SigningSecret {
 }
 
 function Get-IssuedKeys {
-    if (Test-Path $script:KeysPath) {
-        return @(Get-Content $script:KeysPath -Raw | ConvertFrom-Json)
+    if (-not (Test-Path $script:KeysPath)) { return @() }
+    $raw = Get-Content $script:KeysPath -Raw
+    if ([string]::IsNullOrWhiteSpace($raw)) { return @() }
+
+    $parsed = $null
+    try { $parsed = $raw | ConvertFrom-Json } catch {
+        Write-Warn "issued-keys.json is not valid JSON; treating as empty."
+        return @()
     }
-    return @()
+
+    # Repair records written by an earlier version on Windows PowerShell 5.1, where
+    # `,$Keys | ConvertTo-Json` serialised the array WRAPPER rather than the array, producing
+    # {"value":[...],"Count":n}. Reading that back gave one object with no key fields, which
+    # broke both the key list and revocation.
+    if ($parsed -and -not ($parsed -is [array]) -and ($parsed.PSObject.Properties.Name -contains 'value')) {
+        $parsed = $parsed.value
+    }
+    return @($parsed)
 }
 
 function Save-IssuedKeys($Keys) {
     Initialize-StateDir
-    ,$Keys | ConvertTo-Json -Depth 6 | Set-Content $script:KeysPath -Encoding UTF8
+    # -InputObject rather than the pipeline, so the array is not unrolled. PowerShell 5.1 still
+    # emits a bare object for a single-element array, so force array form explicitly - the file
+    # must always be a JSON array or the next read misinterprets it.
+    $json = ConvertTo-Json -InputObject @($Keys) -Depth 6
+    if ($json -notmatch '^\s*\[') { $json = "[$json]" }
+    Set-Content -Path $script:KeysPath -Value $json -Encoding UTF8
+}
+
+# Dates in issued-keys.json are round-trip strings. Parse them culture-invariantly and never
+# throw: one malformed record must not take out the whole listing.
+function ConvertTo-Dto {
+    param($Value)
+    if ($null -eq $Value -or "$Value" -eq '') { return $null }
+    if ($Value -is [datetimeoffset]) { return $Value }
+    if ($Value -is [datetime]) { return [datetimeoffset]$Value }
+    $parsed = [datetimeoffset]::MinValue
+    $styles = [System.Globalization.DateTimeStyles]::AssumeUniversal -bor `
+              [System.Globalization.DateTimeStyles]::AdjustToUniversal
+    if ([datetimeoffset]::TryParse([string]$Value, [System.Globalization.CultureInfo]::InvariantCulture, $styles, [ref]$parsed)) {
+        return $parsed
+    }
+    return $null
 }
 
 # --------------------------------------------------------------------------------------------
 # Prerequisites
 # --------------------------------------------------------------------------------------------
 
-function Test-Prerequisites {
-    Write-Head 'Preflight'
-    $fail = 0
-    $warn = 0
-
-    # --- PowerShell ---
-    $psv = $PSVersionTable.PSVersion
-    if ($psv.Major -ge 7) {
-        Write-Ok "PowerShell $psv"
-    } else {
-        Write-Ok "PowerShell $psv (Windows PowerShell - supported)"
-        Write-Info 'PowerShell 7+ is faster and gives better error messages, but is not required.'
-        $warn++
-    }
-
-    # --- Azure CLI ---
-    $azCmd = Get-Command az -ErrorAction SilentlyContinue
-    if (-not $azCmd) {
-        Write-Err 'Azure CLI not found on PATH.'
-        Write-Info 'Install: https://aka.ms/installazurecliwindows   then reopen this terminal.'
-        $fail++
-    } else {
-        $azVer = $null
-        try { $azVer = (az version --output json 2>$null | ConvertFrom-Json).'azure-cli' } catch { }
-        Write-Ok "Azure CLI $(Coalesce $azVer 'present')"
-
-        # --- Signed in ---
-        $acct = $null
-        try { $acct = az account show --output json 2>$null | ConvertFrom-Json } catch { }
-        if (-not $acct) {
-            Write-Err 'Not signed in to Azure.'
-            Write-Info "Run: az login"
-            $fail++
-        } else {
-            Write-Ok "Signed in as $($acct.user.name)"
-            Write-Info "Subscription: $($acct.name)"
-        }
-
-        # --- Bicep, needed to deploy ---
-        $bicepOk = $false
-        try { $null = az bicep version 2>$null; $bicepOk = ($LASTEXITCODE -eq 0) } catch { }
-        if ($bicepOk) { Write-Ok 'Bicep CLI' }
-        else {
-            Write-Warn 'Bicep not installed. It is required for option 1 (deploy).'
-            Write-Info 'Install: az bicep install'
-            $warn++
-        }
-    }
-
-    # --- Node, used to mint keys ---
-    $nodeCmd = Get-Command node -ErrorAction SilentlyContinue
-    if (-not $nodeCmd) {
-        Write-Err 'Node.js not found on PATH. Required to mint participant keys.'
-        Write-Info 'Install Node 20 or later: https://nodejs.org'
-        $fail++
-    } else {
-        $nodeVer = (node --version 2>$null)
-        $major = 0
-        if ($nodeVer -match 'v(\d+)') { $major = [int]$Matches[1] }
-        if ($major -ge 20) {
-            Write-Ok "Node $nodeVer"
-        } else {
-            Write-Err "Node $nodeVer is too old. Version 20 or later is required."
-            $fail++
-        }
-    }
-
-    # --- The minting script must be present and working ---
-    $mint = Join-Path $script:Root 'scripts/mint.mjs'
-    if (-not (Test-Path $mint)) {
-        Write-Err "Missing scripts/mint.mjs - the repository looks incomplete."
-        $fail++
-    } elseif ($nodeCmd) {
-        # Round-trip a throwaway key so a broken Node install fails here rather than in front
-        # of a participant. The probe secret is generated on the spot and discarded — nothing
-        # credential-shaped is stored in this file.
-        $probeBytes = New-Object byte[] 32
-        $probeRng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
-        try { $probeRng.GetBytes($probeBytes) } finally { $probeRng.Dispose() }
-
-        $probe = @{
-            secret    = [Convert]::ToBase64String($probeBytes)
-            subject   = 'preflight'
-            models    = @('flash')
-            budget    = 1
-            notBefore = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
-            expiresAt = [DateTimeOffset]::UtcNow.AddMinutes(1).ToUnixTimeMilliseconds()
-        } | ConvertTo-Json -Compress
-        $out = $null
-        try { $out = $probe | node $mint 2>$null | ConvertFrom-Json } catch { }
-        if ($out -and $out.token) { Write-Ok 'Key minting works' }
-        else { Write-Err 'Key minting failed. Run "npm test" to diagnose.'; $fail++ }
-    }
-
-    Write-Host ''
-    if ($fail -gt 0) {
-        Write-Err "$fail blocking problem(s). Fix the above and re-run."
-        return $false
-    }
-    if ($warn -gt 0) { Write-Warn "$warn warning(s) - you can continue." }
-    else { Write-Ok 'All checks passed.' }
-    return $true
-}
+# Preflight lives in its own file to keep this one within its complexity budget. It is
+# dot-sourced, so it runs in this scope and can use the helpers defined above.
+. (Join-Path $PSScriptRoot 'scripts/Preflight.ps1')
 
 # --------------------------------------------------------------------------------------------
 # 1. Deploy
@@ -309,6 +245,65 @@ function Invoke-Deploy {
         Write-Ok "Generated a new signing secret -> $script:SecretPath (not printed, not committed)"
     } else {
         Write-Ok 'Reusing the existing signing secret.'
+    }
+
+    # ------------------------------------------------------------------------------------
+    # Validate the target BEFORE deploying.
+    #
+    # A gateway pointed at a Foundry account that lacks the pinned deployments deploys
+    # "successfully" and then returns DeploymentNotFound on every call - an opaque 404 that
+    # looks like a gateway bug. This has already happened once. Catch it here.
+    # ------------------------------------------------------------------------------------
+    Write-Head 'Checking the target Foundry account'
+
+    $acctOk = $true
+    $found = az cognitiveservices account show -n $state.foundryAccount -g $state.foundryResourceGroup -o json 2>$null | ConvertFrom-Json
+    if (-not $found) {
+        Write-Err "Foundry account '$($state.foundryAccount)' not found in resource group '$($state.foundryResourceGroup)'."
+        return
+    }
+    Write-Ok "$($state.foundryAccount) ($($found.location))"
+
+    $existing = @()
+    $raw = az cognitiveservices account deployment list -n $state.foundryAccount -g $state.foundryResourceGroup -o json 2>$null | ConvertFrom-Json
+    if ($raw) { $existing = @($raw | ForEach-Object { $_.name }) }
+
+    foreach ($pin in @(@{ alias = 'flash'; name = $state.flashModel }, @{ alias = 'pro'; name = $state.proModel })) {
+        if ($existing -contains $pin.name) {
+            Write-Ok "$($pin.alias) -> $($pin.name)"
+        } else {
+            Write-Err "$($pin.alias) -> '$($pin.name)' does NOT exist in $($state.foundryAccount)."
+            $acctOk = $false
+        }
+    }
+
+    if (-not $acctOk) {
+        Write-Host ''
+        if ($existing.Count -gt 0) {
+            Write-Info "Deployments that DO exist in this account:"
+            foreach ($e in $existing) { Write-Info "    $e" }
+        } else {
+            Write-Info 'This account has no model deployments at all.'
+        }
+        Write-Host ''
+        Write-Warn 'Deploying now would produce a gateway that returns 404 DeploymentNotFound on every call.'
+        Write-Info 'Use menu option 3 to deploy the DeepSeek models, or re-run option 1 and choose'
+        Write-Info 'a different Foundry account or deployment names.'
+        if (-not (Confirm-Action 'Deploy anyway?')) { Write-Info 'Cancelled.'; return }
+    }
+
+    # Warn if this would repoint an existing gateway at a different Foundry account - that
+    # breaks every key in flight and is almost never intended.
+    if ($state.apimName) {
+        $liveUrl = az apim api show -g $state.resourceGroup --service-name $state.apimName `
+            --api-id deepseek-gateway --query serviceUrl -o tsv 2>$null
+        if ($liveUrl -and $liveUrl -notmatch [regex]::Escape($found.properties.customSubDomainName)) {
+            Write-Host ''
+            Write-Warn "The deployed gateway currently points at:"
+            Write-Info "    $liveUrl"
+            Write-Warn "This deployment would repoint it at '$($found.properties.customSubDomainName)'."
+            if (-not (Confirm-Action 'Repoint it?')) { Write-Info 'Cancelled.'; return }
+        }
     }
 
     Write-Head 'Deploying'
@@ -653,13 +648,27 @@ function Show-Keys {
     if ($keys.Count -eq 0) { Write-Info 'None issued yet.'; return }
 
     $now = [DateTimeOffset]::UtcNow
-    Write-Host ("    {0,-14} {1,-12} {2,-12} {3,-22} {4}" -f 'PARTICIPANT', 'MODELS', 'BUDGET', 'EXPIRES (UTC)', 'STATE')
+    Write-Host ("    {0,-16} {1,-12} {2,-12} {3,-18} {4}" -f 'PARTICIPANT', 'MODELS', 'BUDGET', 'EXPIRES (UTC)', 'STATE')
     foreach ($k in $keys) {
-        $exp = [DateTimeOffset]::Parse($k.expiresAt)
-        $state = if ($k.revoked) { 'revoked' } elseif ($exp -lt $now) { 'expired' } else { 'active' }
-        $colour = switch ($state) { 'active' { 'Green' } 'expired' { 'DarkGray' } default { 'Red' } }
-        Write-Host ("    {0,-14} {1,-12} {2,-12} {3,-22} {4}" -f `
-            $k.subject, $k.models, ('{0:N0}' -f $k.budget), $exp.ToString('yyyy-MM-dd HH:mm'), $state) -ForegroundColor $colour
+        $exp = ConvertTo-Dto $k.expiresAt
+
+        if ($k.revoked) { $state = 'revoked' }
+        elseif ($null -eq $exp) { $state = 'unknown' }
+        elseif ($exp -lt $now) { $state = 'expired' }
+        else { $state = 'active' }
+
+        $colour = switch ($state) {
+            'active'  { 'Green' }
+            'expired' { 'DarkGray' }
+            'unknown' { 'Yellow' }
+            default   { 'Red' }
+        }
+        $expText = if ($null -eq $exp) { '?' } else { $exp.UtcDateTime.ToString('yyyy-MM-dd HH:mm') }
+        $budget = 0
+        if ($null -ne $k.budget) { try { $budget = [long]$k.budget } catch { } }
+
+        Write-Host ("    {0,-16} {1,-12} {2,-12} {3,-18} {4}" -f `
+            (Coalesce $k.subject '?'), (Coalesce $k.models '?'), ('{0:N0}' -f $budget), $expText, $state) -ForegroundColor $colour
     }
 }
 

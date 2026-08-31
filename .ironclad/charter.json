@@ -1,0 +1,61 @@
+{
+  "_readme": "The machine-checkable half of this project's contract. Enforced by .ironclad/gate.mjs. Loosening anything here requires an ADR stating why (anti-drift M1).",
+  "version": 1,
+  "name": "foundry-hackathon-gateway",
+  "strictness": "standard",
+  "commands": {
+    "test": "npm test",
+    "lint": null,
+    "typecheck": null,
+    "build": null,
+    "a11y": null,
+    "coverage": null
+  },
+  "quality": {
+    "maxFileLines": 700,
+    "maxTestFileLines": 800,
+    "maxDebtMarkers": 20,
+    "coverageFloor": null,
+    "minTestRatio": 0.15,
+    "fileSizeExceptions": []
+  },
+  "ledger": {
+    "requireRoadmap": true,
+    "requireStatus": true,
+    "requireChangelog": true,
+    "requireAdr": true,
+    "maxUncommittedFiles": 15,
+    "maxUncommittedLines": 500,
+    "maxCommitsWithoutAdr": 40,
+    "architectureSignificantPaths": [
+      "infra/**",
+      "src/entitlement.mjs",
+      "src/keys.mjs"
+    ]
+  },
+  "architecture": {
+    "boundaries": [
+      {
+        "from": "src/**",
+        "deny": [
+          "scripts/**"
+        ],
+        "why": "Core logic must stay free of CLI plumbing so it remains unit-testable."
+      }
+    ]
+  },
+  "security": {
+    "secretAllowlist": [
+      {
+        "path": "tests/**",
+        "why": "Test fixtures use obviously fake signing secrets, never real credentials."
+      }
+    ],
+    "auditDependencies": true
+  },
+  "tests": {
+    "skipAllowlist": []
+  },
+  "ignore": [],
+  "commandTimeoutMs": 900000
+}

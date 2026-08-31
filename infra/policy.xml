@@ -1,0 +1,340 @@
+<!--
+  Foundry Hackathon Gateway — governance policy.
+
+  Credential
+  ==========
+  Participants present a self-issued HS256 JWT as `Authorization: Bearer <token>`, which is the
+  native transport for every OpenAI-compatible client including opencode. See ADR-0002 for why
+  APIM subscription keys cannot be used here: APIM validates a subscription key BEFORE inbound
+  policy runs, so a policy cannot rescue a `Bearer`-prefixed key.
+
+  The token carries its own entitlement, signed:
+    sub     participant / team id  -> counter key for budget and attribution
+    nbf     activation instant     -> enforced by validate-jwt
+    exp     expiry instant         -> enforced by validate-jwt, no automation required
+    models  comma-delimited allowlist, tamper-proof because it is signed
+    budget  one-time token allowance
+    jti     unique id, for the revocation denylist
+
+  The canonical version of this logic is src/entitlement.mjs, which is exhaustively unit tested.
+  This file is its transcription into policy expressions. If you change one, change both.
+
+  Everything fails closed.
+-->
+<policies>
+    <inbound>
+        <base />
+
+        <!-- 1. Authenticity. validate-jwt requires and validates `exp` by default, so an expired
+             key dies here with no timer job and no cleanup. `nbf` gives scheduled activation in
+             the same credential. This is the whole time-bounding mechanism. -->
+        <validate-jwt
+            header-name="Authorization"
+            require-scheme="Bearer"
+            require-expiration-time="true"
+            require-signed-tokens="true"
+            clock-skew="60"
+            failed-validation-httpcode="401"
+            failed-validation-error-message="Your access key is invalid, not yet active, or has expired. Ask an organiser for a new key."
+            output-token-variable-name="jwt">
+            <issuer-signing-keys>
+                <key>{{signing-key}}</key>
+            </issuer-signing-keys>
+            <audiences>
+                <audience>hackathon-gateway</audience>
+            </audiences>
+            <issuers>
+                <issuer>foundry-hackathon-gateway</issuer>
+            </issuers>
+        </validate-jwt>
+
+        <!-- 2. Lift the entitlement out of the verified token. -->
+        <set-variable name="sub" value="@(((Jwt)context.Variables["jwt"]).Claims.GetValueOrDefault("sub", "unknown"))" />
+        <set-variable name="jti" value="@(((Jwt)context.Variables["jwt"]).Claims.GetValueOrDefault("jti", "none"))" />
+        <set-variable name="grantedModels" value="@(((Jwt)context.Variables["jwt"]).Claims.GetValueOrDefault("models", ""))" />
+        <set-variable name="budget" value="@{
+            var raw = ((Jwt)context.Variables["jwt"]).Claims.GetValueOrDefault("budget", "0");
+            long b; return long.TryParse(raw, out b) ? b : 0L;
+        }" />
+
+        <!-- 3. Revocation denylist. Sentinel commas make the match exact, so "k_a" cannot
+             revoke "k_aaa". Same trick as the sibling Claude gateway. -->
+        <choose>
+            <when condition="@(("{{revoked-keys}}").Contains("," + (string)context.Variables["jti"] + ","))">
+                <return-response>
+                    <set-status code="403" reason="Forbidden" />
+                    <set-header name="Content-Type" exists-action="override">
+                        <value>application/json</value>
+                    </set-header>
+                    <set-body>{"error":{"code":"revoked","type":"permission_error","message":"This key has been revoked. Ask an organiser if you think this is a mistake."}}</set-body>
+                </return-response>
+            </when>
+        </choose>
+
+        <!-- 3b. Model discovery. opencode and most OpenAI-compatible clients call /models on
+             startup; without this they show an empty picker. It must be answered BEFORE the
+             allowlist check below, which denies an empty `model` field — a GET /models has no
+             body, so it would otherwise 403 every time.
+
+             Answering it here also means a participant sees exactly what their own key grants,
+             rather than the full catalog. -->
+        <choose>
+            <when condition="@(context.Request.Method == "GET" && context.Request.Url.Path.EndsWith("/models"))">
+                <return-response>
+                    <set-status code="200" reason="OK" />
+                    <set-header name="Content-Type" exists-action="override">
+                        <value>application/json</value>
+                    </set-header>
+                    <set-body>@{
+                        var granted = ((string)context.Variables["grantedModels"])
+                            .Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
+                        var created = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+                        var data = new JArray();
+                        foreach (var m in granted) {
+                            data.Add(new JObject(
+                                new JProperty("id", m.Trim()),
+                                new JProperty("object", "model"),
+                                new JProperty("created", created),
+                                new JProperty("owned_by", "foundry-hackathon-gateway")
+                            ));
+                        }
+                        return new JObject(
+                            new JProperty("object", "list"),
+                            new JProperty("data", data)
+                        ).ToString();
+                    }</set-body>
+                </return-response>
+            </when>
+        </choose>
+
+        <!-- 4. Which model is being asked for? opencode sends it in the body; we also accept a
+             deployment id in the path for curl-style testing. -->
+        <set-variable name="requestedModel" value="@{
+            try {
+                var fromBody = context.Request.Body.As<JObject>(preserveContent: true)["model"]?.ToString();
+                if (!string.IsNullOrEmpty(fromBody)) { return fromBody.Trim().ToLowerInvariant(); }
+            } catch { }
+            return "";
+        }" />
+
+        <!-- 5. The model allowlist, from the signed claim. Exact match against a
+             comma-delimited list; no prefix matching. -->
+        <choose>
+            <when condition="@{
+                var wanted = (string)context.Variables["requestedModel"];
+                if (string.IsNullOrEmpty(wanted)) { return true; }
+                var granted = "," + ((string)context.Variables["grantedModels"]).ToLowerInvariant() + ",";
+                return !granted.Contains("," + wanted + ",");
+            }">
+                <return-response>
+                    <set-status code="403" reason="Forbidden" />
+                    <set-header name="Content-Type" exists-action="override">
+                        <value>application/json</value>
+                    </set-header>
+                    <set-body>@{
+                        return new JObject(
+                            new JProperty("error", new JObject(
+                                new JProperty("code", "model_not_permitted"),
+                                new JProperty("type", "permission_error"),
+                                new JProperty("message", "The model '" + (string)context.Variables["requestedModel"] + "' is not included in your key. Yours: " + (string)context.Variables["grantedModels"] + ".")
+                            ))
+                        ).ToString();
+                    }</set-body>
+                </return-response>
+            </when>
+        </choose>
+
+        <!-- 5b. Guard rail from ADR-0003: DeepSeek-V4-Pro is a reasoning model and does not
+             support tool calling. Without this, opencode's agent loop fails opaquely against
+             `pro` and a participant loses their morning to it. Fail loudly and usefully. -->
+        <choose>
+            <when condition="@{
+                if ((string)context.Variables["requestedModel"] != "pro") { return false; }
+                try { return context.Request.Body.As<JObject>(preserveContent: true)["tools"] != null; }
+                catch { return false; }
+            }">
+                <return-response>
+                    <set-status code="400" reason="Bad Request" />
+                    <set-header name="Content-Type" exists-action="override">
+                        <value>application/json</value>
+                    </set-header>
+                    <set-body>{"error":{"code":"tools_not_supported","type":"invalid_request_error","message":"'pro' (DeepSeek-V4-Pro) is a reasoning model and does not support tool calling. Use 'flash' for agent work in opencode, and 'pro' for one-shot reasoning."}}</set-body>
+                </return-response>
+            </when>
+        </choose>
+
+        <!-- 6. The one-time budget. APIM's token-quota always resets on a fixed window, so a
+             non-resetting lifetime cap has to be counted here. The counter is keyed on `sub` so
+             it survives key rotation.
+
+             Returns 403 with NO Retry-After, deliberately.
+
+             429 was tried and reverted. Every OpenAI-compatible client treats 429 as retryable:
+             the OpenAI SDK retries it and sleeps for the exact Retry-After value, and the Vercel
+             AI SDK behind opencode marks it isRetryable and backs off. A one-time budget never
+             refills, so those retries can only fail — and a truthful Retry-After (seconds until
+             the key expires) is large enough that an obedient client simply hangs for hours.
+
+             403 is not retried by either SDK. The agent stops immediately, which is the point.
+             The "looks like an auth failure" risk is handled in the body instead. See ADR-0004. -->
+        <cache-lookup-value
+            key="@("used-" + (string)context.Variables["sub"])"
+            variable-name="usedTokens"
+            default-value="unknown" />
+        <choose>
+            <when condition="@{
+                long used;
+                // An unparseable or absent value means the cache does not know. Do NOT treat
+                // that as zero (that would hand out a fresh budget on every eviction), and do
+                // NOT deny (that would brick a participant over a cache we do not control).
+                // Defer to the authoritative token-quota in step 7.
+                if (!long.TryParse((string)context.Variables["usedTokens"], out used)) { return false; }
+                return used >= (long)context.Variables["budget"];
+            }">
+                <return-response>
+                    <set-status code="403" reason="Forbidden" />
+                    <set-header name="Content-Type" exists-action="override">
+                        <value>application/json</value>
+                    </set-header>
+                    <!-- Zero remaining is what tells a participant this is a spent budget and
+                         not a broken key. -->
+                    <set-header name="x-budget-remaining" exists-action="override">
+                        <value>0</value>
+                    </set-header>
+                    <set-header name="x-budget-exhausted" exists-action="override">
+                        <value>true</value>
+                    </set-header>
+                    <set-body>{"error":{"code":"budget_exhausted","type":"insufficient_quota","message":"Your token budget is fully spent. This is NOT an invalid key - the budget is one-time and does not reset. Retrying will not help. Ask an organiser for a new key."}}</set-body>
+                </return-response>
+            </when>
+        </choose>
+
+        <!-- 7. Gateway-native limits. The per-minute limit smooths bursts; the Yearly quota is
+             the hard backstop that does not depend on the cache surviving. -->
+        <llm-token-limit
+            counter-key="@((string)context.Variables["sub"])"
+            tokens-per-minute="{{tpm-per-key}}"
+            estimate-prompt-tokens="false"
+            retry-after-header-name="Retry-After"
+            remaining-tokens-header-name="x-ratelimit-remaining-tokens"
+            tokens-consumed-variable-name="consumedTokens" />
+
+        <llm-token-limit
+            counter-key="@((string)context.Variables["sub"] + ":lifetime")"
+            token-quota="@(context.Variables["budget"])"
+            token-quota-period="Yearly"
+            estimate-prompt-tokens="false"
+            remaining-quota-tokens-header-name="x-budget-remaining" />
+
+        <!-- 8. Request-rate ceiling. Token budgets alone do not stop a runaway agent loop
+             making many small calls — opencode can generate a lot of them. -->
+        <rate-limit-by-key
+            calls="{{calls-per-minute}}"
+            renewal-period="60"
+            counter-key="@((string)context.Variables["sub"])"
+            retry-after-header-name="Retry-After" />
+
+        <!-- 9. Attribution. Azure Monitor allows at most 5 custom dimensions here. -->
+        <llm-emit-token-metric namespace="hackathongw">
+            <dimension name="Participant" value="@((string)context.Variables["sub"])" />
+            <dimension name="KeyId" value="@((string)context.Variables["jti"])" />
+            <dimension name="Model" value="@((string)context.Variables["requestedModel"])" />
+        </llm-emit-token-metric>
+
+        <!-- 10. Swap the participant's token for the gateway's own identity. The participant
+             token is deliberately not forwarded: Foundry trusts only the managed identity, so
+             no model credential exists on any participant machine.
+
+             The audience is https://ai.azure.com — NOT cognitiveservices.azure.com. The
+             /openai/v1 route rejects the older Cognitive Services audience with 401. -->
+        <authentication-managed-identity
+            resource="https://ai.azure.com"
+            output-token-variable-name="msi-token"
+            ignore-error="false" />
+        <set-header name="Authorization" exists-action="override">
+            <value>@("Bearer " + (string)context.Variables["msi-token"])</value>
+        </set-header>
+        <set-header name="api-key" exists-action="delete" />
+
+        <!-- 11. Map the friendly alias onto the real Foundry deployment name. Participants use
+             `flash` / `pro`; the backend needs the catalog id. Aliasing means we can repoint a
+             model without a single participant editing their config. -->
+        <set-body>@{
+            var body = context.Request.Body.As<JObject>(preserveContent: true);
+            var alias = ((string)context.Variables["requestedModel"]);
+            if (alias == "flash") { body["model"] = "{{model-flash}}"; }
+            else if (alias == "pro") { body["model"] = "{{model-pro}}"; }
+
+            // Cap completion length. A participant can otherwise drain their whole budget in a
+            // handful of calls, and at an event that is unrecoverable.
+            //
+            // BOTH fields must be clamped. `max_completion_tokens` is the current field on the
+            // OpenAI-compatible /openai/v1 surface and supersedes `max_tokens`; clamping only
+            // the legacy name leaves an unclamped path open, and for reasoning models the
+            // legacy name may be ignored entirely.
+            //
+            // Parsed defensively rather than cast: a null, a string, a float or an out-of-range
+            // value would throw on a direct (int) cast and surface as a 500.
+            var cap = int.Parse("{{max-output-tokens}}");
+            foreach (var field in new[] { "max_tokens", "max_completion_tokens" }) {
+                int requested;
+                if (body[field] == null
+                    || !int.TryParse(body[field].ToString(), out requested)
+                    || requested <= 0
+                    || requested > cap) {
+                    body[field] = cap;
+                }
+            }
+
+            // `n` multiplies the completion cost per request, so a large n defeats the clamp.
+            body["n"] = 1;
+
+            return body.ToString();
+        }</set-body>
+
+        <set-header name="x-gateway-participant" exists-action="override">
+            <value>@((string)context.Variables["sub"])</value>
+        </set-header>
+    </inbound>
+
+    <backend>
+        <!-- Agent turns are long and streamed. Do not buffer, and allow generous time. -->
+        <forward-request timeout="600" buffer-request-body="false" />
+    </backend>
+
+    <outbound>
+        <base />
+
+        <!-- 12. Accumulate lifetime consumption. tokens-consumed-variable-name holds the actual
+             count here in outbound. Duration is a year: the budget must not reset.
+             NOTE: on a streamed response APIM estimates rather than counts (UNKNOWNS U5), so
+             this figure drifts slightly. The Yearly quota in step 7 is the authoritative cap. -->
+        <set-variable name="newUsed" value="@{
+            long used; long.TryParse((string)context.Variables["usedTokens"], out used);
+            long spent = 0;
+            try { spent = Convert.ToInt64(context.Variables["consumedTokens"]); } catch { }
+            return (used + spent).ToString();
+        }" />
+        <cache-store-value
+            key="@("used-" + (string)context.Variables["sub"])"
+            value="@((string)context.Variables["newUsed"])"
+            duration="31536000" />
+
+        <set-header name="x-governed-by" exists-action="override">
+            <value>foundry-hackathon-gateway</value>
+        </set-header>
+        <set-header name="x-budget-used" exists-action="override">
+            <value>@((string)context.Variables["newUsed"])</value>
+        </set-header>
+        <set-header name="x-budget-total" exists-action="override">
+            <value>@(((long)context.Variables["budget"]).ToString())</value>
+        </set-header>
+    </outbound>
+
+    <on-error>
+        <base />
+        <set-header name="x-gateway-error" exists-action="override">
+            <value>@(context.LastError?.Reason ?? "unknown")</value>
+        </set-header>
+    </on-error>
+</policies>

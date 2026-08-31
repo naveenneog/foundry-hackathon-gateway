@@ -1,0 +1,40 @@
+name: ironclad
+
+# The gate, in CI — so a pull request cannot skip what the pre-commit hook enforces locally.
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  gate:
+    name: Ironclad gate (packet)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the ledger checks read commit history
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: ${{ hashFiles('package-lock.json') != '' && 'npm' || '' }}
+
+      - name: Install dependencies
+        if: hashFiles('package.json') != ''
+        run: npm ci --no-audit --no-fund || npm install --no-audit --no-fund
+
+      - name: Run the gate
+        run: node .ironclad/gate.mjs --stage packet
+
+      - name: Gate report (JSON)
+        if: always()
+        run: node .ironclad/gate.mjs --stage packet --no-run --json > ironclad-report.json || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ironclad-report
+          path: ironclad-report.json
+          if-no-files-found: ignore

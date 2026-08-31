@@ -1,0 +1,14 @@
+# Ironclad: secrets never enter git
+.env
+.env.*
+!.env.example
+
+# The signing secret can mint a key for any participant, with any budget, for any model.
+# It is the master credential for the whole event. It must never be committed.
+.gateway/
+
+# Participant handouts contain live keys, shown once and never stored server-side.
+handouts/
+
+node_modules/
+*.log

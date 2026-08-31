@@ -1,0 +1,16 @@
+{
+  "name": "foundry-hackathon-gateway",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Time-bound, spend-capped API keys for DeepSeek models in Microsoft Foundry, for opencode and other OpenAI-compatible agent harnesses.",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test \"tests/**/*.test.mjs\"",
+    "test:watch": "node --test --watch \"tests/**/*.test.mjs\"",
+    "gate": "node .ironclad/gate.mjs --stage packet"
+  },
+  "license": "MIT"
+}

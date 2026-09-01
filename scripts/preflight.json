@@ -46,6 +46,13 @@
       "path": "opencode.json",
       "optional": true,
       "fix": "You copy this in Step 5. It is normal for this to be missing before you start."
+    },
+    {
+      "name": "opencode.json reads your key",
+      "type": "script",
+      "run": "node -e \"const c=require('./opencode.json');const p=Object.values(c.provider||{})[0]||{};if(!(p.options||{}).apiKey){console.error('opencode.json has no apiKey line');process.exit(1)}console.log('apiKey line present')\"",
+      "optional": true,
+      "fix": "Add \"apiKey\": \"{env:OPENAI_API_KEY}\" inside options in opencode.json. Without it opencode never sends your key and every call returns 401, even though curl works."
     }
   ]
 }

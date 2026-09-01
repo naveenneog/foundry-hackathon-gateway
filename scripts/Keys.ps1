@@ -90,6 +90,16 @@ function Read-KeySettings {
 
     $hours   = [int](Read-Default 'Valid for how many hours' '48')
     $startIn = [int](Read-Default 'Start in how many hours from now (0 = immediately)' '0')
+
+    # A window of minutes is almost always a typo, and it produces a key that dies while the
+    # participant is still reading the card. Confirm it deliberately.
+    if ($hours -lt 1) {
+        Write-Warn "A $hours-hour window means the key is dead almost immediately."
+        if (-not (Confirm-Action 'Really issue a key that short?')) { return $null }
+    } elseif ($hours -lt 4) {
+        Write-Warn "$hours hour(s) is short for an event. Participants often lose the first hour to setup."
+    }
+
     $budget  = [long](Read-Default 'Token budget per key (one-time, does not reset)' '2000000')
 
     $now = [DateTimeOffset]::UtcNow

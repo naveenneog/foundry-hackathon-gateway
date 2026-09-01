@@ -73,7 +73,7 @@ winget install --id Microsoft.PowerShell --source winget
   ---------
   [ok] PowerShell 7.6.5
   [ok] Azure CLI 2.86.0
-  [ok] Signed in as you@contoso.com
+  [ok] Signed in as <your-account>
        Subscription: Contoso Dev
   [ok] Bicep CLI
   [ok] Node v22.11.0
@@ -180,6 +180,29 @@ az apim nv update -g rg-hackathon-gateway --service-name <apim> `
 ```
 
 **Emergency stop:** rotating `signing-key` invalidates every outstanding key at once.
+
+### If two people run the event
+
+The signing secret lives in `.gateway/secret.txt`, which is **gitignored** — cloning the repo
+does not give you a working one. Keys minted with a different secret than the gateway holds are
+rejected with a bare `401`, and the gateway's message cannot tell you why.
+
+- **One organiser mints keys.** Simplest, and the default assumption.
+- **Or copy `.gateway/secret.txt`** to the second machine out of band. Treat it like a password —
+  it can mint a key for anyone, with any budget, for any model.
+- **Do not re-run option 1 on a second machine** without that file. It generates a new secret,
+  redeploys, and silently invalidates every key the first machine issued.
+
+`admin.ps1` catches this on startup and refuses to continue:
+
+```
+[x]  Signing secret does NOT match the deployed gateway.
+     Every key minted here would be rejected with 401.
+```
+
+Menu option **9 — Why is a key being rejected?** takes a key and names the actual cause
+(wrong secret, not yet active, expired, revoked, or a model the gateway has not pinned)
+instead of the gateway's one-size-fits-all message.
 
 ---
 

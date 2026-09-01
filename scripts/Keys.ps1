@@ -138,7 +138,10 @@ function New-ParticipantKey {
     Write-Host "   Participant : $subject"
     Write-Host "   Models      : $($cfg.models -join ', ')"
     Write-Host "   Budget      : $('{0:N0}' -f $cfg.budget) tokens (one-time)"
-    Write-Host "   Valid       : $(([DateTimeOffset]::FromUnixTimeMilliseconds($cfg.notBefore)).ToString('u')) -> $(([DateTimeOffset]::FromUnixTimeMilliseconds($cfg.expiresAt)).ToString('u'))"
+    $nbfDto = [DateTimeOffset]::FromUnixTimeMilliseconds($cfg.notBefore)
+    $expDto = [DateTimeOffset]::FromUnixTimeMilliseconds($cfg.expiresAt)
+    Write-Host "   Active from : $($nbfDto.ToLocalTime().ToString('yyyy-MM-dd HH:mm zzz'))  ($($nbfDto.UtcDateTime.ToString('HH:mm')) UTC)"
+    Write-Host "   Expires     : $($expDto.ToLocalTime().ToString('yyyy-MM-dd HH:mm zzz'))  ($($expDto.UtcDateTime.ToString('HH:mm')) UTC)"
     Write-Host "   Key id      : $($result.jti)"
     Write-Host ''
     Write-Host "   OPENAI_BASE_URL=$baseUrl" -ForegroundColor Yellow
@@ -222,7 +225,8 @@ function New-BulkKeys {
     Write-Host "  Models        : $($cfg.models -join ', ')"
     Write-Host "  Budget each   : $('{0:N0}' -f $cfg.budget) tokens"
     Write-Host "  Budget total  : $('{0:N0}' -f $totalBudget) tokens across all keys" -ForegroundColor Yellow
-    Write-Host "  Expires       : $(([DateTimeOffset]::FromUnixTimeMilliseconds($cfg.expiresAt)).ToString('u'))"
+    Write-Host "  Expires       : $(([DateTimeOffset]::FromUnixTimeMilliseconds($cfg.expiresAt)).ToLocalTime().ToString('yyyy-MM-dd HH:mm zzz'))"
+    Write-Host "                  $(([DateTimeOffset]::FromUnixTimeMilliseconds($cfg.expiresAt)).UtcDateTime.ToString('yyyy-MM-dd HH:mm')) UTC" -ForegroundColor DarkGray
     Write-Host ''
     if (-not (Confirm-Action "Issue $($subjects.Count) key(s)?")) { Write-Info 'Cancelled.'; return }
 
@@ -266,6 +270,60 @@ function New-BulkKeys {
 }
 
 # ------------------------------------------------------------------------------------------
+# Diagnose a rejected key
+# ------------------------------------------------------------------------------------------
+
+function Test-ParticipantKey {
+    $state  = Get-State
+    $secret = Get-SigningSecret
+    if (-not $secret) { Write-Err 'No signing secret on this machine. Deploy the gateway first.'; return }
+
+    Write-Head 'Why is this key being rejected?'
+    Write-Info 'The gateway returns one message for three different causes. Paste the key and'
+    Write-Info 'this will tell you which one it actually is. Nothing is sent anywhere.'
+    Write-Host ''
+
+    $token = Read-Host '  Paste the key'
+    if ([string]::IsNullOrWhiteSpace($token)) { Write-Info 'Cancelled.'; return }
+
+    # Diagnose against the map the GATEWAY currently has, not the local pins, so a pin that
+    # was never pushed shows up as the problem it is.
+    $map = ''
+    if ($state.apimName) {
+        $map = az apim nv show -g $state.resourceGroup --service-name $state.apimName `
+            --named-value-id model-map --query value -o tsv 2>$null
+    }
+    if (-not $map) { $map = ConvertTo-ModelMapString $state.models }
+
+    $revoked = @(Get-IssuedKeys | Where-Object { $_.revoked } | ForEach-Object { $_.jti })
+
+    $payload = @{ token = $token.Trim(); secret = $secret; modelMap = $map; revoked = $revoked } | ConvertTo-Json -Compress
+    $r = $payload | node (Join-Path $script:Root 'scripts/diagnose.mjs') | ConvertFrom-Json
+    if ($r.error) { Write-Err "Could not read the key: $($r.error)"; return }
+
+    Write-Host ''
+    if ($r.subject) { Write-Host "   Participant : $($r.subject)" }
+    if ($r.keyId)   { Write-Host "   Key id      : $($r.keyId)" }
+    if ($r.models)  { Write-Host "   Models      : $($r.models -join ', ')" }
+    if ($null -ne $r.budget) { Write-Host "   Budget      : $('{0:N0}' -f $r.budget) tokens" }
+    if ($r.expiresAtEpochMs) {
+        $exp = [DateTimeOffset]::FromUnixTimeMilliseconds([long]$r.expiresAtEpochMs)
+        Write-Host "   Expires     : $($exp.ToLocalTime().ToString('yyyy-MM-dd HH:mm zzz'))  ($($r.expiresAtUtc))"
+    }
+    Write-Host ''
+
+    if ($r.ok) {
+        Write-Ok $r.detail
+        Write-Info 'If the participant still sees 401, they are pointed at a different gateway,'
+        Write-Info 'or they did not paste the whole key.'
+    } else {
+        Write-Err "$($r.fault): $($r.detail)"
+        Write-Host ''
+        Write-Info "Fix: $($r.fix)"
+    }
+}
+
+# ------------------------------------------------------------------------------------------
 # Handouts
 # ------------------------------------------------------------------------------------------
 
@@ -275,7 +333,6 @@ function Write-Handout {
     $base = Coalesce $Root (Join-Path $script:Root 'handouts')
     $dir  = Join-Path $base $Subject
     New-Item -ItemType Directory -Path $dir -Force | Out-Null
-
     $modelEntries = [ordered]@{}
     foreach ($m in @($Models)) { $modelEntries[$m] = @{ name = $m } }
 
@@ -300,14 +357,21 @@ function Write-Handout {
     }
     $cfg | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $dir 'opencode.json') -Encoding UTF8
 
-    $expires = ([DateTimeOffset]::FromUnixTimeMilliseconds($ExpiresAt)).ToString('u')
+    $expDto  = [DateTimeOffset]::FromUnixTimeMilliseconds($ExpiresAt)
+    $expUtc   = $expDto.UtcDateTime.ToString('yyyy-MM-dd HH:mm') + ' UTC'
+    $expLocal = $expDto.ToLocalTime().ToString('yyyy-MM-dd HH:mm zzz')
     $modelRows = (@($Models) | ForEach-Object { "| ``$_`` |" }) -join "`n"
 
     $card = @"
 # Your gateway key - $Subject
 
 Budget: $('{0:N0}' -f $Budget) tokens (one-time - it does not reset)
-Expires: $expires
+
+Expires: **$expLocal**
+Same moment in UTC: $expUtc
+
+The gateway decides expiry using its own clock, not yours. Changing your computer's clock
+or timezone does not extend the key, and a wrong clock on your machine does not break it.
 
 ## 1. Set your environment
 

@@ -423,7 +423,9 @@ function Show-Keys {
     if ($keys.Count -eq 0) { Write-Info 'None issued yet.'; return }
 
     $now = [DateTimeOffset]::UtcNow
-    Write-Host ("    {0,-16} {1,-12} {2,-12} {3,-18} {4}" -f 'PARTICIPANT', 'MODELS', 'BUDGET', 'EXPIRES (UTC)', 'STATE')
+    $tz = [TimeZoneInfo]::Local.StandardName
+    Write-Host "  Times shown in local time ($tz). The gateway enforces them in UTC." -ForegroundColor DarkGray
+    Write-Host ("    {0,-16} {1,-12} {2,-12} {3,-20} {4}" -f 'PARTICIPANT', 'MODELS', 'BUDGET', 'EXPIRES (local)', 'STATE')
     foreach ($k in $keys) {
         $exp = ConvertTo-Dto $k.expiresAt
 
@@ -438,7 +440,8 @@ function Show-Keys {
             'unknown' { 'Yellow' }
             default   { 'Red' }
         }
-        $expText = if ($null -eq $exp) { '?' } else { $exp.UtcDateTime.ToString('yyyy-MM-dd HH:mm') }
+        # Local time, because an organiser reads this against the clock on the wall.
+        $expText = if ($null -eq $exp) { '?' } else { $exp.ToLocalTime().ToString('yyyy-MM-dd HH:mm') }
         $budget = 0
         if ($null -ne $k.budget) { try { $budget = [long]$k.budget } catch { } }
 
@@ -550,9 +553,10 @@ function Show-Menu {
     Write-Host '    6  Issue keys in BULK'
     Write-Host '    7  List issued keys'
     Write-Host '    8  Revoke a key'
-    Write-Host '    9  Show consumption'
-    Write-Host '   10  Verify the controls'
-    Write-Host '   11  Tear down'
+    Write-Host '    9  Why is a key being rejected?'
+    Write-Host '   10  Show consumption'
+    Write-Host '   11  Verify the controls'
+    Write-Host '   12  Tear down'
     Write-Host '    0  Exit'
     Write-Host ''
 }
@@ -580,9 +584,10 @@ while ($true) {
         '6'  { New-BulkKeys }
         '7'  { Show-Keys }
         '8'  { Revoke-Key }
-        '9'  { Show-Usage }
-        '10' { Invoke-Verify }
-        '11' { Remove-Gateway }
+        '9'  { Test-ParticipantKey }
+        '10' { Show-Usage }
+        '11' { Invoke-Verify }
+        '12' { Remove-Gateway }
         '0'  { Write-Host ''; exit 0 }
         default { Write-Warn 'Pick a number from the menu.' }
     }

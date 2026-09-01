@@ -35,11 +35,8 @@ param apimSku string = 'BasicV2'
 @minValue(1)
 param apimCapacity int = 1
 
-@description('Foundry deployment name for the agent-capable model. This one supports tool calling and is what opencode needs.')
-param flashDeployment string = 'deepseek-v4-flash'
-
-@description('Foundry deployment name for the reasoning model. Tool calling works despite the Learn docs claiming otherwise - see ADR-0003.')
-param proDeployment string = 'deepseek-v4-pro'
+@description('Alias-to-deployment map, as alias=deployment;alias=deployment. Aliases are what participants put in the `model` field; deployment names must exist in the Foundry account. Adding a model later is a named-value edit, not a redeploy.')
+param modelMap string = 'flash=deepseek-v4-flash;pro=deepseek-v4-pro'
 
 @description('HS256 signing secret for participant keys. Generate with admin.ps1; never commit it.')
 @secure()
@@ -205,8 +202,7 @@ var plainNamedValues = [
   { key: 'tpm-per-key', value: string(tpmPerKey) }
   { key: 'calls-per-minute', value: string(callsPerMinute) }
   { key: 'max-output-tokens', value: string(maxOutputTokens) }
-  { key: 'model-flash', value: flashDeployment }
-  { key: 'model-pro', value: proDeployment }
+  { key: 'model-map', value: modelMap }
 ]
 
 resource apimNamedValues 'Microsoft.ApiManagement/service/namedValues@2024-05-01' = [
@@ -270,5 +266,4 @@ output apimName string = apim.name
 output gatewayUrl string = '${apim.properties.gatewayUrl}/${apiPath}'
 output apimPrincipalId string = apim.identity.principalId
 output appInsightsName string = appInsights.name
-output flashModel string = flashDeployment
-output proModel string = proDeployment
+output modelMap string = modelMap

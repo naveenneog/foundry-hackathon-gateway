@@ -90,7 +90,21 @@ function Initialize-StateDir {
 
 function Get-State {
     if (Test-Path $script:StatePath) {
-        return Get-Content $script:StatePath -Raw | ConvertFrom-Json
+        $s = Get-Content $script:StatePath -Raw | ConvertFrom-Json
+
+        # Migrate state written before ADR-0007, when exactly two models were supported.
+        if (-not ($s.PSObject.Properties.Name -contains 'models') -or $null -eq $s.models) {
+            $migrated = @()
+            if ($s.PSObject.Properties.Name -contains 'flashModel' -and $s.flashModel) {
+                $migrated += [pscustomobject]@{ alias = 'flash'; deployment = $s.flashModel }
+            }
+            if ($s.PSObject.Properties.Name -contains 'proModel' -and $s.proModel) {
+                $migrated += [pscustomobject]@{ alias = 'pro'; deployment = $s.proModel }
+            }
+            $s | Add-Member -NotePropertyName models -NotePropertyValue $migrated -Force
+        }
+        $s.models = @($s.models)
+        return $s
     }
     return [pscustomobject]@{
         resourceGroup        = $ResourceGroup
@@ -99,8 +113,11 @@ function Get-State {
         location             = $Location
         apimName             = $null
         gatewayUrl           = $null
-        flashModel           = 'deepseek-v4-flash'
-        proModel             = 'DeepSeek-V4-Pro'
+        # Alias -> deployment pins. Any number of models; see ADR-0007.
+        models               = @(
+            [pscustomobject]@{ alias = 'flash'; deployment = 'deepseek-v4-flash' }
+            [pscustomobject]@{ alias = 'pro';   deployment = 'deepseek-v4-pro' }
+        )
     }
 }
 
@@ -202,7 +219,7 @@ function ConvertTo-Dto {
 
 # Preflight lives in its own file to keep this one within its complexity budget. It is
 # dot-sourced, so it runs in this scope and can use the helpers defined above.
-. (Join-Path $PSScriptRoot 'scripts/Preflight.ps1')
+. (Join-Path $PSScriptRoot 'scripts/Admin-Preflight.ps1')
 
 # --------------------------------------------------------------------------------------------
 # 1. Deploy
@@ -232,12 +249,15 @@ function Invoke-Deploy {
 
     $email = Read-Default 'Publisher email (for APIM)' (Coalesce $PublisherEmail (az account show --query user.name -o tsv 2>$null))
 
-    # Model pinning
-    Write-Head 'Pin the models'
-    Write-Info 'flash = agent model (DeepSeek-V4-Flash-0731). Faster and cheaper per turn.'
-    Write-Info 'pro   = reasoning model (DeepSeek-V4-Pro). Both support tool calling.'
-    $state.flashModel = Read-Default "Deployment name for 'flash'" (Coalesce $state.flashModel 'deepseek-v4-flash')
-    $state.proModel   = Read-Default "Deployment name for 'pro'"   (Coalesce $state.proModel 'deepseek-v4-pro')
+    # Models are pinned separately (menu option 3) so that adding one later does not require a
+    # redeployment. The current pins are carried through to the deployment below.
+    Write-Head 'Models to pin'
+    if (@($state.models).Count -eq 0) {
+        Write-Warn 'No models pinned yet. Deploying with none means every request returns 403.'
+        Write-Info 'You can pin them after deploying with menu option 3.'
+    } else {
+        foreach ($m in $state.models) { Write-Info "    $($m.alias) -> $($m.deployment)" }
+    }
 
     $secret = Get-SigningSecret
     if (-not $secret) {
@@ -268,11 +288,11 @@ function Invoke-Deploy {
     $raw = az cognitiveservices account deployment list -n $state.foundryAccount -g $state.foundryResourceGroup -o json 2>$null | ConvertFrom-Json
     if ($raw) { $existing = @($raw | ForEach-Object { $_.name }) }
 
-    foreach ($pin in @(@{ alias = 'flash'; name = $state.flashModel }, @{ alias = 'pro'; name = $state.proModel })) {
-        if ($existing -contains $pin.name) {
-            Write-Ok "$($pin.alias) -> $($pin.name)"
+    foreach ($pin in @($state.models)) {
+        if ($existing -contains $pin.deployment) {
+            Write-Ok "$($pin.alias) -> $($pin.deployment)"
         } else {
-            Write-Err "$($pin.alias) -> '$($pin.name)' does NOT exist in $($state.foundryAccount)."
+            Write-Err "$($pin.alias) -> '$($pin.deployment)' does NOT exist in $($state.foundryAccount)."
             $acctOk = $false
         }
     }
@@ -344,8 +364,7 @@ function Invoke-Deploy {
                 foundryResourceGroup = @{ value = $state.foundryResourceGroup }
                 publisherEmail       = @{ value = $email }
                 signingKey           = @{ value = $secret }
-                flashDeployment      = @{ value = $state.flashModel }
-                proDeployment        = @{ value = $state.proModel }
+                modelMap             = @{ value = (ConvertTo-ModelMapString $state.models) }
                 revokedKeys          = @{ value = $revoked }
             }
         }
@@ -388,255 +407,11 @@ function Invoke-Deploy {
 # 2. Models
 # --------------------------------------------------------------------------------------------
 
-function Show-Models {
-    $state = Get-State
-    Write-Head 'Foundry deployments'
-    if (-not $state.foundryAccount) { Write-Warn 'No Foundry account configured. Deploy first.'; return }
+# Model pinning/deployment and key issuance live in their own files, dot-sourced so they run
+# in this scope. Keeps this file to the menu, shared state and deployment.
+. (Join-Path $PSScriptRoot 'scripts/Models.ps1')
+. (Join-Path $PSScriptRoot 'scripts/Keys.ps1')
 
-    $deployments = az cognitiveservices account deployment list `
-        -n $state.foundryAccount -g $state.foundryResourceGroup -o json 2>$null | ConvertFrom-Json
-
-    if (-not $deployments) { Write-Warn 'No deployments found.'; return }
-
-    foreach ($d in $deployments) {
-        $pinned = switch ($d.name) {
-            $state.flashModel { ' <- pinned as "flash"' }
-            $state.proModel   { ' <- pinned as "pro"' }
-            default           { '' }
-        }
-        Write-Host ("    {0,-32} {1}{2}" -f $d.name, $d.properties.model.name, $pinned)
-    }
-
-    Write-Host ''
-    Write-Info "Only 'flash' and 'pro' are reachable through the gateway. Everything else returns 403."
-}
-
-function Invoke-DeployModel {
-    $state = Get-State
-    Write-Head 'Deploy a DeepSeek model'
-    if (-not $state.foundryAccount) { Write-Warn 'No Foundry account configured. Deploy the gateway first.'; return }
-
-    # Exact catalog names and versions, confirmed via `az cognitiveservices model list`.
-    # Casing matters: the model name is matched exactly. The deployment name is ours to choose.
-    Write-Host '    [1] DeepSeek-V4-Flash-0731  agent model, tool calling, 1M context  (recommended)'
-    Write-Host '    [2] DeepSeek-V4-Pro         reasoning model (tool calling also works)'
-    $pick = Read-Default 'Which model' '1'
-
-    if ($pick -eq '2') {
-        $model = 'DeepSeek-V4-Pro';        $version = '2026-04-23'; $default = 'deepseek-v4-pro'
-    } else {
-        $model = 'DeepSeek-V4-Flash-0731'; $version = '2026-07-31'; $default = 'deepseek-v4-flash'
-    }
-    $name = Read-Default 'Deployment name' $default
-    $cap  = Read-Default 'Capacity (thousands of TPM)' '100'
-
-    Write-Info "Deploying $model ($version) as '$name'..."
-    az cognitiveservices account deployment create `
-        -n $state.foundryAccount -g $state.foundryResourceGroup `
-        --deployment-name $name `
-        --model-name $model --model-version $version --model-format 'DeepSeek' `
-        --sku-capacity $cap --sku-name 'GlobalStandard' -o none
-
-    if ($LASTEXITCODE -eq 0) { Write-Ok "Deployed '$name'." }
-    else { Write-Err 'Deployment failed. Check region availability and quota.' }
-}
-
-# --------------------------------------------------------------------------------------------
-# 3. Issue a key
-# --------------------------------------------------------------------------------------------
-
-function New-ParticipantKey {
-    $state  = Get-State
-    $secret = Get-SigningSecret
-    if (-not $secret) { Write-Err 'No signing secret. Deploy the gateway first.'; return }
-    if (-not $state.gatewayUrl) { Write-Warn 'Gateway URL unknown; the key will still work once deployed.' }
-
-    Write-Head 'Issue a participant key'
-
-    # `sub` is the tenancy boundary for ALL four counters: the budget cache, the TPM limit, the
-    # lifetime quota and the request-rate limit. Two keys with the same subject silently share
-    # one budget and rate-limit each other. Default from a wide space, and check collisions.
-    $suggested = "team-$([guid]::NewGuid().ToString('N').Substring(0,8))"
-    $subject = Read-Default 'Participant or team id' $suggested
-
-    $existing = @(Get-IssuedKeys | Where-Object { $_.subject -eq $subject -and -not $_.revoked })
-    if ($existing.Count -gt 0) {
-        Write-Warn "'$subject' already has $($existing.Count) active key(s)."
-        Write-Info 'Budget, rate limit and quota are all keyed on the subject, so a second key'
-        Write-Info 'SHARES the same allowance rather than getting its own.'
-        Write-Info 'That is correct when re-issuing a lost key; it is a bug otherwise.'
-        $intent = Read-Default 'Is this a deliberate re-issue for the same participant? (y/n)' 'n'
-        if ($intent -ne 'y') {
-            Write-Info 'Cancelled. Choose a different id.'
-            return
-        }
-    }
-
-    $label   = Read-Default 'Label (optional, e.g. a name)' ''
-
-    Write-Info 'Models: flash = agent, faster/cheaper | pro = reasoning, slower/pricier'
-    Write-Info 'Both support tool calling (verified live; the Learn docs claim pro does not).'
-    $modelPick = Read-Default 'Grant which models? [1] flash  [2] flash+pro  [3] pro only' '1'
-    $models = switch ($modelPick) {
-        '2' { @('flash', 'pro') }
-        '3' { @('pro') }
-        default { @('flash') }
-    }
-    if ($models -notcontains 'flash') {
-        Write-Warn "This key has no 'flash'. 'pro' works for agent loops but is slower and costs more per turn."
-        if (-not (Confirm-Action 'Issue anyway?')) { return }
-    }
-
-    $hours  = [int](Read-Default 'Valid for how many hours' '48')
-    $budget = [long](Read-Default 'Token budget (one-time, does not reset)' '2000000')
-    $startIn = [int](Read-Default 'Start in how many hours from now (0 = immediately)' '0')
-
-    $now       = [DateTimeOffset]::UtcNow
-    $notBefore = $now.AddHours($startIn).ToUnixTimeMilliseconds()
-    $expiresAt = $now.AddHours($startIn + $hours).ToUnixTimeMilliseconds()
-
-    # Mint via the tested Node module rather than reimplementing JWS in PowerShell.
-    $mintScript = Join-Path $script:Root 'scripts/mint.mjs'
-    $payload = @{
-        secret    = $secret
-        subject   = $subject
-        models    = $models
-        budget    = $budget
-        notBefore = $notBefore
-        expiresAt = $expiresAt
-        label     = $label
-    } | ConvertTo-Json -Compress
-
-    $result = $payload | node $mintScript | ConvertFrom-Json
-    if (-not $result.token) { Write-Err "Minting failed: $($result.error)"; return }
-
-    # Record metadata only. The token itself is deliberately NOT persisted.
-    $keys = @(Get-IssuedKeys)
-    $keys += [pscustomobject]@{
-        jti       = $result.jti
-        subject   = $subject
-        label     = $label
-        models    = $models -join ','
-        budget    = $budget
-        notBefore = ([DateTimeOffset]::FromUnixTimeMilliseconds($notBefore)).ToString('u')
-        expiresAt = ([DateTimeOffset]::FromUnixTimeMilliseconds($expiresAt)).ToString('u')
-        issuedAt  = $now.ToString('u')
-        revoked   = $false
-    }
-    Save-IssuedKeys $keys
-
-    $baseUrl = if ($state.gatewayUrl) { $state.gatewayUrl } else { 'https://<deploy-first>/v1' }
-
-    Write-Host ''
-    Write-Host '  ============================================================' -ForegroundColor Green
-    Write-Host '   PARTICIPANT KEY - shown once, copy it now' -ForegroundColor Green
-    Write-Host '  ============================================================' -ForegroundColor Green
-    Write-Host ''
-    Write-Host "   Participant : $subject"
-    Write-Host "   Models      : $($models -join ', ')"
-    Write-Host "   Budget      : $('{0:N0}' -f $budget) tokens (one-time)"
-    Write-Host "   Valid       : $(([DateTimeOffset]::FromUnixTimeMilliseconds($notBefore)).ToString('u')) -> $(([DateTimeOffset]::FromUnixTimeMilliseconds($expiresAt)).ToString('u'))"
-    Write-Host "   Key id      : $($result.jti)"
-    Write-Host ''
-    Write-Host "   OPENAI_BASE_URL=$baseUrl" -ForegroundColor Yellow
-    Write-Host "   OPENAI_API_KEY=$($result.token)" -ForegroundColor Yellow
-    Write-Host ''
-
-    $save = Read-Default 'Write an opencode.json + card for this participant? (y/n)' 'y'
-    if ($save -eq 'y') {
-        $dir = Join-Path $script:Root "handouts/$subject"
-        New-Item -ItemType Directory -Path $dir -Force | Out-Null
-        Write-OpencodeConfig -Dir $dir -BaseUrl $baseUrl -Models $models
-        Write-ParticipantCard -Dir $dir -Subject $subject -Token $result.token -BaseUrl $baseUrl `
-            -Models $models -Budget $budget -ExpiresAt $expiresAt
-        Write-Ok "Handout written to handouts/$subject/"
-    }
-}
-
-function Write-OpencodeConfig {
-    param($Dir, $BaseUrl, $Models)
-
-    $modelEntries = @{}
-    if ($Models -contains 'flash') { $modelEntries['flash'] = @{ name = 'DeepSeek V4 Flash (agent)' } }
-    if ($Models -contains 'pro')   { $modelEntries['pro']   = @{ name = 'DeepSeek V4 Pro (reasoning, no tools)' } }
-
-    $cfg = [ordered]@{
-        '$schema' = 'https://opencode.ai/config.json'
-        provider  = [ordered]@{
-            'hackathon-gateway' = [ordered]@{
-                npm     = '@ai-sdk/openai-compatible'
-                name    = 'Hackathon Gateway (DeepSeek on Foundry)'
-                options = [ordered]@{ baseURL = $BaseUrl }
-                models  = $modelEntries
-            }
-        }
-        model = 'hackathon-gateway/flash'
-    }
-    $cfg | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $Dir 'opencode.json') -Encoding UTF8
-}
-
-function Write-ParticipantCard {
-    param($Dir, $Subject, $Token, $BaseUrl, $Models, $Budget, $ExpiresAt)
-
-    $expires = ([DateTimeOffset]::FromUnixTimeMilliseconds($ExpiresAt)).ToString('u')
-    $card = @"
-# Your gateway key — $Subject
-
-Budget: $('{0:N0}' -f $Budget) tokens (one-time — it does not reset)
-Expires: $expires
-Models: $($Models -join ', ')
-
-## 1. Set your environment
-
-PowerShell:
-    `$env:OPENAI_BASE_URL = "$BaseUrl"
-    `$env:OPENAI_API_KEY  = "$Token"
-
-bash/zsh:
-    export OPENAI_BASE_URL="$BaseUrl"
-    export OPENAI_API_KEY="$Token"
-
-## 2. Use opencode
-
-Copy opencode.json into your project directory, then:
-
-    opencode
-
-Pick `hackathon-gateway/flash`.
-
-## 3. Which model?
-
-| Alias   | Use it for                          | Notes           |
-|---------|-------------------------------------|-----------------|
-| flash   | Building. Agent loop, file edits.   | Faster, cheaper |
-| pro     | Hard reasoning, one-shot questions. | Slower, pricier |
-
-Both support tool calling, so both work in `opencode`. Use `flash` for building unless you
-specifically want the reasoner.
-
-## Checking your remaining budget
-
-Every response carries headers:
-
-    x-budget-used       tokens consumed so far
-    x-budget-total      your total allowance
-    x-budget-remaining  what is left
-
-## When something fails
-
-| Status | Code | Meaning |
-|--------|------|---------|
-| 403 | budget_exhausted   | You spent your whole allowance. It does **not** reset — retrying will not help. This is NOT a broken key. |
-| 403 | expired            | Your window has closed. Keys are not extended. |
-| 403 | model_not_permitted| That model is not on your key. |
-| 403 | revoked            | An organiser revoked this key. |
-| 429 | (rate limit)       | Too fast — this one IS worth retrying. Your client backs off automatically. |
-| 401 | —                  | The key is invalid or malformed. Ask for a new one. |
-
-Only the 429 is retryable. Everything else is final, and your agent will stop rather than spin.
-"@
-    $card | Set-Content (Join-Path $Dir 'README.md') -Encoding UTF8
-}
 
 # --------------------------------------------------------------------------------------------
 # 4. List / 5. Revoke
@@ -756,20 +531,28 @@ function Show-Menu {
     Write-Host '  ============================================================' -ForegroundColor Cyan
     if ($state.gatewayUrl) {
         Write-Host "   Gateway : $($state.gatewayUrl)" -ForegroundColor DarkGray
-        Write-Host "   Models  : flash -> $($state.flashModel) | pro -> $($state.proModel)" -ForegroundColor DarkGray
+        $pins = @($state.models)
+        if ($pins.Count -eq 0) {
+            Write-Host '   Models  : none pinned - every request returns 403' -ForegroundColor Red
+        } else {
+            $summary = ($pins | ForEach-Object { "$($_.alias) -> $($_.deployment)" }) -join ' | '
+            Write-Host "   Models  : $summary" -ForegroundColor DarkGray
+        }
     } else {
         Write-Host '   Not deployed yet.' -ForegroundColor DarkGray
     }
     Write-Host ''
     Write-Host '    1  Deploy / update the gateway'
-    Write-Host '    2  Show Foundry deployments (and what is pinned)'
-    Write-Host '    3  Deploy a DeepSeek model'
-    Write-Host '    4  Issue a participant key'
-    Write-Host '    5  List issued keys'
-    Write-Host '    6  Revoke a key'
-    Write-Host '    7  Show consumption'
-    Write-Host '    8  Verify the controls'
-    Write-Host '    9  Tear down'
+    Write-Host '    2  Show models (pinned, and what exists in Foundry)'
+    Write-Host '    3  Pin / unpin models'
+    Write-Host '    4  Deploy a new model to Foundry'
+    Write-Host '    5  Issue a participant key'
+    Write-Host '    6  Issue keys in BULK'
+    Write-Host '    7  List issued keys'
+    Write-Host '    8  Revoke a key'
+    Write-Host '    9  Show consumption'
+    Write-Host '   10  Verify the controls'
+    Write-Host '   11  Tear down'
     Write-Host '    0  Exit'
     Write-Host ''
 }
@@ -789,16 +572,18 @@ while ($true) {
     Show-Menu
     $choice = Read-Host '  Choose'
     switch ($choice) {
-        '1' { Invoke-Deploy }
-        '2' { Show-Models }
-        '3' { Invoke-DeployModel }
-        '4' { New-ParticipantKey }
-        '5' { Show-Keys }
-        '6' { Revoke-Key }
-        '7' { Show-Usage }
-        '8' { Invoke-Verify }
-        '9' { Remove-Gateway }
-        '0' { Write-Host ''; exit 0 }
+        '1'  { Invoke-Deploy }
+        '2'  { Show-Models }
+        '3'  { Edit-ModelPins }
+        '4'  { Invoke-DeployModel }
+        '5'  { New-ParticipantKey }
+        '6'  { New-BulkKeys }
+        '7'  { Show-Keys }
+        '8'  { Revoke-Key }
+        '9'  { Show-Usage }
+        '10' { Invoke-Verify }
+        '11' { Remove-Gateway }
+        '0'  { Write-Host ''; exit 0 }
         default { Write-Warn 'Pick a number from the menu.' }
     }
     if ($NonInteractive) { break }

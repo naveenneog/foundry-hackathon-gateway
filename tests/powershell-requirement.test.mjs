@@ -19,7 +19,7 @@ import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
-const OPERATOR_SCRIPTS = ["admin.ps1", "scripts/Test-Governance.ps1"];
+const OPERATOR_SCRIPTS = ["admin.ps1", "scripts/Test-Governance.ps1", "scripts/Admin-Preflight.ps1"];
 const MIN_MAJOR = 7;
 
 describe("operator scripts declare their PowerShell requirement", () => {
@@ -58,9 +58,9 @@ describe("operator scripts declare their PowerShell requirement", () => {
 describe("the preflight enforces the requirement at runtime too", () => {
   // The preflight lives in its own file, dot-sourced by admin.ps1, to keep that file within
   // its complexity budget.
-  const preflight = fs.readFileSync(path.join(root, "scripts/Preflight.ps1"), "utf8");
+  const preflight = fs.readFileSync(path.join(root, "scripts/Admin-Preflight.ps1"), "utf8");
 
-  test("Preflight.ps1 hard-fails below PowerShell 7", () => {
+  test("Admin-Preflight.ps1 hard-fails below PowerShell 7", () => {
     assert.match(
       preflight,
       /\$psv\.Major\s+-lt\s+7/,
@@ -80,8 +80,8 @@ describe("the preflight enforces the requirement at runtime too", () => {
     const admin = fs.readFileSync(path.join(root, "admin.ps1"), "utf8");
     assert.match(
       admin,
-      /^\s*\.\s+\(Join-Path\s+\$PSScriptRoot\s+'scripts\/Preflight\.ps1'\)/m,
-      "admin.ps1 must dot-source scripts/Preflight.ps1, or the checks never run."
+      /^\s*\.\s+\(Join-Path\s+\$PSScriptRoot\s+'scripts\/Admin-Preflight\.ps1'\)/m,
+      "admin.ps1 must dot-source scripts/Admin-Preflight.ps1, or the checks never run."
     );
   });
 

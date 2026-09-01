@@ -165,6 +165,42 @@
             </otherwise>
         </choose>
 
+        <!-- 5c. Resolve the alias to a real deployment name, and refuse cleanly if the map has
+             no entry for it. Without this, an alias that is granted in the key but missing from
+             the map would be forwarded verbatim and come back as an opaque 404
+             DeploymentNotFound, which reads as a gateway fault rather than a config mistake. -->
+        <set-variable name="deployment" value="@{
+            var alias = (string)context.Variables["requestedModel"];
+            foreach (var entry in "{{model-map}}".Split(';')) {
+                var idx = entry.IndexOf('=');
+                if (idx <= 0) { continue; }
+                var key = entry.Substring(0, idx).Trim().ToLowerInvariant();
+                var val = entry.Substring(idx + 1).Trim();
+                // First definition wins, matching src/models.mjs parseModelMap.
+                if (key == alias && val.Length > 0) { return val; }
+            }
+            return "";
+        }" />
+        <choose>
+            <when condition="@(((string)context.Variables["deployment"]).Length == 0)">
+                <return-response>
+                    <set-status code="403" reason="Forbidden" />
+                    <set-header name="Content-Type" exists-action="override">
+                        <value>application/json</value>
+                    </set-header>
+                    <set-body>@{
+                        return new JObject(
+                            new JProperty("error", new JObject(
+                                new JProperty("code", "model_not_configured"),
+                                new JProperty("type", "invalid_request_error"),
+                                new JProperty("message", "The model '" + (string)context.Variables["requestedModel"] + "' is granted by your key but is not configured on this gateway. Tell an organiser - this is a gateway configuration problem, not a problem with your key.")
+                            ))
+                        ).ToString();
+                    }</set-body>
+                </return-response>
+            </when>
+        </choose>
+
         <!-- 6. The one-time budget. APIM's token-quota always resets on a fixed window, so a
              non-resetting lifetime cap has to be counted here. The counter is keyed on `sub` so
              it survives key rotation.
@@ -259,21 +295,30 @@
         <set-header name="api-key" exists-action="delete" />
 
         <!-- 11. Map the friendly alias onto the real Foundry deployment name. Participants use
-             `flash` / `pro`; the backend needs the catalog id. Aliasing means we can repoint a
-             model without a single participant editing their config. -->
+             short aliases; the backend needs the catalog id. Aliasing means we can repoint or
+             add a model without a single participant editing their config.
+
+             The map lives in ONE named value as `alias=deployment;alias=deployment`, parsed
+             here at runtime. It cannot be one named value per model: APIM substitutes
+             {{named-value}} at policy COMPILE time, so a policy cannot build {{model-}}+alias.
+             Holding every value in one named value is Microsoft's documented workaround.
+
+             Consequence worth knowing: adding a model is a named-value edit, no redeploy.
+
+             src/models.mjs is the canonical, unit-tested implementation of this parsing.
+             If you change one, change both. -->
         <set-body>@{
             var body = context.Request.Body.As<JObject>(preserveContent: true);
-            var alias = ((string)context.Variables["requestedModel"]);
-            if (alias == "flash") { body["model"] = "{{model-flash}}"; }
-            else if (alias == "pro") { body["model"] = "{{model-pro}}"; }
+
+            // Resolved and validated in step 5c, so it is always a real deployment name here.
+            body["model"] = (string)context.Variables["deployment"];
 
             // Cap completion length. A participant can otherwise drain their whole budget in a
             // handful of calls, and at an event that is unrecoverable.
             //
             // BOTH fields must be clamped. `max_completion_tokens` is the current field on the
             // OpenAI-compatible /openai/v1 surface and supersedes `max_tokens`; clamping only
-            // the legacy name leaves an unclamped path open, and for reasoning models the
-            // legacy name may be ignored entirely.
+            // the legacy name leaves an unclamped path open.
             //
             // Parsed defensively rather than cast: a null, a string, a float or an out-of-range
             // value would throw on a direct (int) cast and surface as a 500.

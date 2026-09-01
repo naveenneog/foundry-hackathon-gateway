@@ -1,0 +1,137 @@
+<!doctype html>
+<!--
+  Fixture used to generate the screenshots in docs/SETUP.md.
+
+  Every COMMAND and every RESPONSE here is real output captured from a live gateway.
+  Every SECRET is invented: the token, the gateway hostname and the team id are fake, and
+  the token is painted over in the image as well. Nothing here can call anything.
+
+  Regenerate the images with:
+    node scripts/shot.mjs --steps scripts/steps.json --out docs/img
+
+  Screens: install | seturl | setkey | checkkey | config | start | build | budget
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Gateway setup - screenshot fixture</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin:0; padding:28px; background:#f6f7f9;
+         font:16px/1.5 -apple-system,"Segoe UI",system-ui,sans-serif; color:#111827; }
+  .screen { display:none; }
+  .screen.on { display:block; }
+  .term { background:#0b1020; color:#d7e0f5; border-radius:12px; padding:20px 24px;
+          font-family:Consolas,"Cascadia Code","Courier New",monospace; font-size:14px;
+          width:860px; line-height:1.75; white-space:pre; overflow:hidden; }
+  .file { background:#ffffff; border:1px solid #e5e7eb; border-radius:12px; padding:20px 24px;
+          font-family:Consolas,"Cascadia Code","Courier New",monospace; font-size:13.5px;
+          width:860px; line-height:1.7; white-space:pre; color:#111827; }
+  .file .name { font:600 13px -apple-system,"Segoe UI",sans-serif; color:#6b7280;
+                display:block; margin-bottom:12px; letter-spacing:.3px; }
+  .p  { color:#3fb950; font-weight:600; }   /* prompt      */
+  .c  { color:#e6edf3; }                    /* command     */
+  .k  { color:#79c0ff; }                    /* key / value */
+  .g  { color:#3fb950; }                    /* good        */
+  .y  { color:#d29922; }                    /* warn / num  */
+  .r  { color:#f85149; }                    /* error       */
+  .d  { color:#7d8590; }                    /* dim         */
+  .t  { color:#bc8cff; }                    /* tool call   */
+  .s  { color:#e6edf3; font-weight:600; }
+</style>
+</head>
+<body>
+
+<!-- 1 ------------------------------------------------------------------ -->
+<div class="screen" id="install"><div class="term"><span class="p">></span> <span class="c">npm install -g opencode-ai</span>
+
+<span class="d">added 3 packages in 37s</span>
+
+<span class="p">></span> <span class="c">opencode --version</span>
+<span class="g">1.18.21</span></div></div>
+
+<!-- 2 ------------------------------------------------------------------ -->
+<div class="screen" id="seturl"><div class="term"><span class="p">></span> <span class="c">$env:OPENAI_BASE_URL = "https://apim-hackathon-gw.azure-api.net/v1"</span>
+
+<span class="p">></span> <span class="c">echo $env:OPENAI_BASE_URL</span>
+<span class="k">https://apim-hackathon-gw.azure-api.net/v1</span></div></div>
+
+<!-- 3 ------------------------------------------------------------------ -->
+<div class="screen" id="setkey"><div class="term"><span class="p">></span> <span class="c">$env:OPENAI_API_KEY = "<span id="tok">PASTE-THE-KEY-FROM-YOUR-CARD-HERE-IT-IS-ABOUT-340-CHARACTERS</span>"</span>
+
+<span class="p">></span> <span class="c">$env:OPENAI_API_KEY.Length</span>
+<span class="y">339</span></div></div>
+
+<!-- 4 ------------------------------------------------------------------ -->
+<div class="screen" id="checkkey"><div class="term"><span class="p">></span> <span class="c">curl "$env:OPENAI_BASE_URL/models" -H "Authorization: Bearer $env:OPENAI_API_KEY"</span>
+
+{
+  <span class="s">"object"</span>: <span class="k">"list"</span>,
+  <span class="s">"data"</span>: [
+    { <span class="s">"id"</span>: <span class="g">"flash"</span>, <span class="s">"object"</span>: <span class="k">"model"</span>, <span class="s">"owned_by"</span>: <span class="k">"foundry-hackathon-gateway"</span> },
+    { <span class="s">"id"</span>: <span class="g">"pro"</span>,   <span class="s">"object"</span>: <span class="k">"model"</span>, <span class="s">"owned_by"</span>: <span class="k">"foundry-hackathon-gateway"</span> }
+  ]
+}</div></div>
+
+<!-- 5 ------------------------------------------------------------------ -->
+<div class="screen" id="config"><div class="file"><span class="name">opencode.json</span>{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "hackathon-gateway": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Hackathon Gateway (Foundry)",
+      "options": {
+        "baseURL": "https://apim-hackathon-gw.azure-api.net/v1",
+        "apiKey": "{env:OPENAI_API_KEY}"
+      },
+      "models": {
+        "flash": { "name": "flash" },
+        "pro":   { "name": "pro" }
+      }
+    }
+  },
+  "model": "hackathon-gateway/flash"
+}</div></div>
+
+<!-- 6 ------------------------------------------------------------------ -->
+<div class="screen" id="start"><div class="term"><span class="p">></span> <span class="c">opencode</span>
+
+<span class="d">  Select a model</span>
+
+<span class="g">  > hackathon-gateway/flash</span>   <span class="d">flash</span>
+<span class="d">    hackathon-gateway/pro     pro</span>
+
+<span class="d">  Enter to choose, arrows to move</span></div></div>
+
+<!-- 7 ------------------------------------------------------------------ -->
+<div class="screen" id="build"><div class="term"><span class="p">></span> <span class="c">opencode run --model hackathon-gateway/flash \</span>
+<span class="c">      "Create fizzbuzz.py with a function fizzbuzz(n), then read it back to confirm."</span>
+
+<span class="k">> build · flash</span>
+
+<span class="t">← Write fizzbuzz.py</span>
+Wrote file successfully.
+
+<span class="t">→ Read fizzbuzz.py</span>
+Created it. Read back confirms the file exists with the <span class="k">fizzbuzz(n)</span> function.</div></div>
+
+<!-- 8 ------------------------------------------------------------------ -->
+<div class="screen" id="budget"><div class="term"><span class="p">></span> <span class="c">curl -i "$env:OPENAI_BASE_URL/chat/completions" -H "Authorization: Bearer $env:OPENAI_API_KEY" \</span>
+<span class="c">       -H "Content-Type: application/json" -d '{\"model\":\"flash\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}'</span>
+
+<span class="g">HTTP/1.1 200 OK</span>
+<span class="s">x-budget-used</span>:      <span class="y">22</span>
+<span class="s">x-budget-total</span>:     <span class="y">2000000</span>
+<span class="s">x-budget-remaining</span>: <span class="g">1999978</span></div></div>
+
+<script>
+  function show(id) {
+    document.querySelectorAll('.screen').forEach(function (s) { s.classList.remove('on'); });
+    var el = document.getElementById(id);
+    if (el) { el.classList.add('on'); }
+  }
+  show((location.hash || '#install').slice(1));
+  window.addEventListener('hashchange', function () { show(location.hash.slice(1)); });
+</script>
+</body>
+</html>

@@ -1,0 +1,79 @@
+{
+  "$comment": "Generates the screenshots in docs/SETUP.md from docs/fixture.html. Run: node scripts/shot.mjs --steps scripts/steps.json --out docs/img",
+  "baseUrl": "",
+  "viewport": { "width": 940, "height": 420 },
+  "deviceScaleFactor": 2,
+  "maskColor": "#111827",
+  "maskText": [
+    "\\beyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9._-]+",
+    "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}",
+    "\\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\b"
+  ],
+  "steps": [
+    {
+      "id": 1,
+      "title": "install opencode",
+      "url": "../docs/fixture.html#install",
+      "waitFor": "#install .term",
+      "clip": "#install .term",
+      "note": "Real output. npm reported 'added 3 packages in 37s' and opencode 1.18.21."
+    },
+    {
+      "id": 2,
+      "title": "set the gateway address",
+      "url": "../docs/fixture.html#seturl",
+      "waitFor": "#seturl .term",
+      "clip": "#seturl .term",
+      "note": "Hostname is invented. Each event has its own."
+    },
+    {
+      "id": 3,
+      "title": "set your key",
+      "url": "../docs/fixture.html#setkey",
+      "waitFor": "#setkey .term",
+      "mask": ["#tok"],
+      "maskLabels": ["your key - hidden"],
+      "clip": "#setkey .term",
+      "note": "The token in the fixture is invented AND painted over. The reader only needs to see where it goes."
+    },
+    {
+      "id": 4,
+      "title": "check your key works",
+      "url": "../docs/fixture.html#checkkey",
+      "waitFor": "#checkkey .term",
+      "clip": "#checkkey .term",
+      "note": "Real response body from GET /v1/models."
+    },
+    {
+      "id": 5,
+      "title": "add the model list to your project",
+      "url": "../docs/fixture.html#config",
+      "waitFor": "#config .file",
+      "clip": "#config .file",
+      "note": "Real opencode.json as written by admin.ps1, hostname swapped for the invented one."
+    },
+    {
+      "id": 6,
+      "title": "start opencode",
+      "url": "../docs/fixture.html#start",
+      "waitFor": "#start .term",
+      "clip": "#start .term"
+    },
+    {
+      "id": 7,
+      "title": "ask it to build something",
+      "url": "../docs/fixture.html#build",
+      "waitFor": "#build .term",
+      "clip": "#build .term",
+      "note": "Real session output, captured against the live gateway."
+    },
+    {
+      "id": 8,
+      "title": "check how much budget is left",
+      "url": "../docs/fixture.html#budget",
+      "waitFor": "#budget .term",
+      "clip": "#budget .term",
+      "note": "Real header values from a live call."
+    }
+  ]
+}

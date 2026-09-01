@@ -1,0 +1,21 @@
+{
+  "$comment": "Copy me next to your README as scrub.allow.json. Anything listed here is allowed to appear in the doc. Every entry needs a reason - silence must be justified.",
+  "allow": [
+    {
+      "value": "support@example.com",
+      "reason": "Public support inbox printed on the website."
+    },
+    {
+      "value": "00000000-0000-0000-0000-000000000000",
+      "reason": "The documented empty GUID placeholder, not a real tenant."
+    },
+    {
+      "value": "127.0.0.1",
+      "reason": "Localhost, used in the run command."
+    }
+  ],
+  "allowPatterns": [
+    "^https://raw\\.githubusercontent\\.com/",
+    "^<YOUR_[A-Z0-9_]+>$"
+  ]
+}

@@ -1,0 +1,51 @@
+{
+  "$comment": "Prerequisites for a hackathon PARTICIPANT setting up opencode against the gateway. Run: pwsh scripts/preflight.json -Manifest scripts/preflight.json",
+  "title": "Hackathon gateway - participant setup",
+  "checks": [
+    {
+      "name": "Node.js 20+",
+      "type": "version",
+      "command": "node --version",
+      "min": "20.0.0",
+      "fix": "Install the LTS build from https://nodejs.org, then close and reopen your terminal."
+    },
+    {
+      "name": "opencode installed",
+      "type": "command",
+      "command": "opencode",
+      "fix": "Run: npm install -g opencode-ai"
+    },
+    {
+      "name": "Gateway is reachable",
+      "type": "http",
+      "url": "https://apim-hackathon-gw.azure-api.net/v1/models",
+      "expectStatus": 401,
+      "timeoutSec": 15,
+      "fix": "Replace the URL in scripts/preflight.json with the address on your key card. If it still fails, check your internet or VPN. A 401 here is correct - it proves the gateway is alive and asking for a key."
+    },
+    {
+      "name": "Gateway address is set",
+      "type": "env",
+      "var": "OPENAI_BASE_URL",
+      "startsWith": "https://",
+      "optional": true,
+      "fix": "You set this in Step 2. It is normal for this to be missing before you start."
+    },
+    {
+      "name": "Your key is set",
+      "type": "env",
+      "var": "OPENAI_API_KEY",
+      "startsWith": "eyJ",
+      "secret": true,
+      "optional": true,
+      "fix": "You set this in Step 3. It is normal for this to be missing before you start."
+    },
+    {
+      "name": "Model list in this folder",
+      "type": "path",
+      "path": "opencode.json",
+      "optional": true,
+      "fix": "You copy this in Step 5. It is normal for this to be missing before you start."
+    }
+  ]
+}

@@ -16,7 +16,10 @@ One interactive script does everything.
 
 ## What a participant gets
 
-Two environment variables. That is the whole setup.
+Two environment variables and one config file. That is the whole setup.
+
+**[→ Participant setup guide](docs/SETUP.md)** — eight numbered steps, each with a
+screenshot, written for someone who has never seen this project.
 
 ```bash
 OPENAI_BASE_URL=https://<your-gateway>.azure-api.net/v1

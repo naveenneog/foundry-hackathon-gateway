@@ -639,8 +639,24 @@ function Show-Menu {
 function Invoke-Verify {
     $state = Get-State
     if (-not $state.gatewayUrl) { Write-Warn 'Deploy first.'; return }
-    & (Join-Path $script:Root 'scripts/Test-Governance.ps1') `
-        -GatewayUrl $state.gatewayUrl -SecretPath $script:SecretPath
+
+    $pins = @($state.models)
+    $openaiPins = @($pins | Where-Object { -not ($_.PSObject.Properties.Name -contains 'route') -or $_.route -eq 'openai' })
+    $claudePins = @($pins | Where-Object { $_.PSObject.Properties.Name -contains 'route' -and $_.route -eq 'claude' })
+
+    if ($openaiPins.Count -ge 1) {
+        & (Join-Path $script:Root 'scripts/Test-Governance.ps1') `
+            -GatewayUrl $state.gatewayUrl -SecretPath $script:SecretPath -Route 'openai' `
+            -Model $openaiPins[0].alias -SecondModel (Coalesce $openaiPins[1].alias $openaiPins[0].alias)
+    }
+
+    if ($state.claudeGatewayUrl -and $claudePins.Count -ge 1) {
+        & (Join-Path $script:Root 'scripts/Test-Governance.ps1') `
+            -GatewayUrl $state.claudeGatewayUrl -SecretPath $script:SecretPath -Route 'claude' `
+            -Model $claudePins[0].alias -SecondModel (Coalesce $claudePins[1].alias $claudePins[0].alias)
+    } elseif ($state.claudeGatewayUrl) {
+        Write-Info 'Claude route is deployed but has no pinned models; skipping its checks (option 3 to pin one).'
+    }
 }
 
 # --------------------------------------------------------------------------------------------

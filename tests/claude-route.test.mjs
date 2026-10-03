@@ -206,6 +206,47 @@ describe("the protocol requirements a gateway must meet", () => {
   });
 });
 
+describe("the participant handout configures Claude Code correctly", () => {
+  /**
+   * The single most likely way a participant fails: putting a perfectly good key in
+   * ANTHROPIC_API_KEY. That is sent as `x-api-key`; this gateway validates
+   * `Authorization: Bearer`, which is what ANTHROPIC_AUTH_TOKEN produces. The result is a bare
+   * 401 with nothing to go on.
+   *
+   * https://code.claude.com/docs/en/llm-gateway-connect
+   */
+  const keys = fs.readFileSync(path.join(root, "scripts/Keys.ps1"), "utf8");
+
+  test("it writes a settings file, which is what reaches background agents", () => {
+    assert.match(keys, /\.claude/);
+    assert.match(keys, /settings\.json/);
+  });
+
+  test("the credential goes in ANTHROPIC_AUTH_TOKEN", () => {
+    assert.match(keys, /ANTHROPIC_AUTH_TOKEN\s*=\s*\$Token/);
+  });
+
+  test("ANTHROPIC_API_KEY is never set to the key", () => {
+    assert.ok(
+      !/ANTHROPIC_API_KEY\s*=\s*\$Token/.test(keys),
+      "That variable is sent as x-api-key and the gateway would reject it."
+    );
+  });
+
+  test("the base URL and a model are set too", () => {
+    assert.match(keys, /ANTHROPIC_BASE_URL/);
+    assert.match(
+      keys,
+      /ANTHROPIC_MODEL/,
+      "Without it Claude Code sends its own default model id, which is not an alias here."
+    );
+  });
+
+  test("the card explains the variable that catches people out", () => {
+    assert.match(keys, /ANTHROPIC_AUTH_TOKEN``, not ``ANTHROPIC_API_KEY/);
+  });
+});
+
 describe("the route can be left out of a deployment that cannot serve it", () => {
   test("a parameter controls whether the Claude route is deployed", () => {
     // A classic-tier instance meters zero Anthropic tokens, so deploying this route onto one

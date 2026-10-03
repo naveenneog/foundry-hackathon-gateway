@@ -47,10 +47,19 @@ that are actually deployed in the subscription, and serve Claude models to Claud
       *Verified 2026-10-03:* `infra/policy-claude.xml` + a conditional `claude-gateway` API in
       `infra/main.bicep`. Same key, same controls, Anthropic-shaped errors. Not published on a
       tier that meters zero Anthropic tokens.
-- [ ] **P18** Claude Code verified, and the participant setup documented
-      *Acceptance:* `scripts/Test-Governance.ps1 -Route claude` proves each control fires against
-      a live Claude route, and the README states the exact `ANTHROPIC_BASE_URL` /
-      `ANTHROPIC_AUTH_TOKEN` / `ANTHROPIC_MODEL` values a participant sets.
+- [x] **P18** Claude Code setup documented, and the harness extended to the Claude route
+      *Verified 2026-10-03:* `scripts/Test-Governance.ps1 -Route claude` exists and is wired into
+      option 11; option 5 writes `.claude/settings.json` and a card covering both routes.
+      **Not yet run against a live Claude route** — see P19.
+
+- [ ] **P19** Verify the Claude route live
+      *Acceptance:* `./admin.ps1` option 11 reports 0 failures for `-Route claude` against a
+      deployed gateway with a Claude deployment pinned, and a real Claude Code session completes
+      a turn with a tool call through it.
+      *Why it is separate:* it needs a Foundry account with a Claude deployment, which requires
+      accepting Azure Marketplace terms and incurs Claude Consumption Unit billing. Everything
+      P17 and P18 build is proven statically and by unit test; the one assumption that only a
+      live call can settle is UNKNOWNS U9, the managed-identity audience.
 
 ## Milestone M4 — Hardening (only if this outlives one event)
 

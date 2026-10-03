@@ -17,13 +17,26 @@
 param(
     [Parameter(Mandatory)][string]$GatewayUrl,
     [Parameter(Mandatory)][string]$SecretPath,
-    [string]$Model = 'flash'
+    [ValidateSet('openai', 'claude')][string]$Route = 'openai',
+    [string]$Model,
+    [string]$SecondModel
 )
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 $secret = (Get-Content $SecretPath -Raw).Trim()
 $mint = Join-Path $root 'scripts/mint.mjs'
+
+# Two aliases are needed: one the key grants, and one it does not, to prove the allowlist fires.
+if (-not $Model)       { $Model       = if ($Route -eq 'claude') { 'sonnet' } else { 'flash' } }
+if (-not $SecondModel) { $SecondModel = if ($Route -eq 'claude') { 'opus' }   else { 'pro' } }
+
+# A route may have only one model pinned, in which case the caller passes the same alias twice.
+# The allowlist test then asks for a model the key DOES grant and gets a correct 200, which the
+# harness would report as the allowlist being broken. Detect it and use a name that cannot be
+# granted instead.
+$script:HasTwoModels = ($SecondModel -ne $Model)
+$script:NotGranted = "not-pinned-$([guid]::NewGuid().ToString('N').Substring(0, 8))"
 
 $script:Pass = 0
 $script:Fail = 0
@@ -44,14 +57,59 @@ function New-TestKey {
     return $r.token
 }
 
+# ---------------------------------------------------------------------------------------------
+# The two routes differ in path, required headers and body shape. Everything below this point
+# is the same for both, which is the point: one key, one set of controls.
+# ---------------------------------------------------------------------------------------------
+
+function Get-RoutePath {
+    if ($Route -eq 'claude') { return '/v1/messages' }
+    return '/chat/completions'
+}
+
+function New-ChatBody {
+    param([string]$ModelAlias, [string]$Prompt = 'Reply with the single word: ok', [int]$MaxTokens = 16)
+    if ($Route -eq 'claude') {
+        # max_tokens is REQUIRED by the Messages API.
+        return @{ model = $ModelAlias; max_tokens = $MaxTokens; messages = @(@{ role = 'user'; content = $Prompt }) } | ConvertTo-Json -Depth 5
+    }
+    return @{ model = $ModelAlias; messages = @(@{ role = 'user'; content = $Prompt }); max_tokens = $MaxTokens } | ConvertTo-Json -Depth 5
+}
+
+function New-ToolBody {
+    param([string]$ModelAlias)
+    if ($Route -eq 'claude') {
+        # The Messages API describes tools with `input_schema`, not an OpenAI function wrapper.
+        return @{
+            model      = $ModelAlias
+            max_tokens = 200
+            messages   = @(@{ role = 'user'; content = 'What is the weather in Paris? Use the tool.' })
+            tools      = @(@{
+                name         = 'get_weather'
+                description  = 'Get weather'
+                input_schema = @{ type = 'object'; properties = @{ city = @{ type = 'string' } }; required = @('city') }
+            })
+        } | ConvertTo-Json -Depth 10
+    }
+    return @{
+        model    = $ModelAlias
+        messages = @(@{ role = 'user'; content = 'What is the weather in Paris? Use the tool.' })
+        tools    = @(@{ type = 'function'; function = @{ name = 'get_weather'; description = 'Get weather'; parameters = @{ type = 'object'; properties = @{ city = @{ type = 'string' } }; required = @('city') } } })
+        max_tokens = 200
+    } | ConvertTo-Json -Depth 10
+}
+
 function Invoke-Gateway {
     param($Token, $Body)
+    $headers = @{ Authorization = "Bearer $Token"; 'Content-Type' = 'application/json' }
+    # Claude Code always sends this; a hand-written request has to as well.
+    if ($Route -eq 'claude') { $headers['anthropic-version'] = '2023-06-01' }
+
     # PowerShell 7.0+ is required (see the #Requires above), so -SkipHttpErrorCheck is always
     # available and a 4xx comes back as an ordinary response rather than an exception.
     try {
-        $resp = Invoke-WebRequest -Uri "$GatewayUrl/chat/completions" -Method Post `
-                    -Headers @{ Authorization = "Bearer $Token"; 'Content-Type' = 'application/json' } `
-                    -Body $Body -SkipHttpErrorCheck -TimeoutSec 120
+        $resp = Invoke-WebRequest -Uri "$GatewayUrl$(Get-RoutePath)" -Method Post `
+                    -Headers $headers -Body $Body -SkipHttpErrorCheck -TimeoutSec 120
         return @{ Status = [int]$resp.StatusCode; Body = (ConvertTo-Text $resp.Content); Headers = $resp.Headers }
     } catch {
         return @{ Status = -1; Body = $_.Exception.Message; Headers = @{} }
@@ -90,21 +148,17 @@ function Assert-Control {
     }
 }
 
-$chat = @{ model = $Model; messages = @(@{ role = 'user'; content = 'Reply with the single word: ok' }); max_tokens = 16 } | ConvertTo-Json -Depth 5
-$withTools = @{
-    model = 'pro'
-    messages = @(@{ role = 'user'; content = 'hi' })
-    tools = @(@{ type = 'function'; function = @{ name = 'noop'; description = 'x'; parameters = @{ type = 'object'; properties = @{} } } })
-} | ConvertTo-Json -Depth 8
+$chat = New-ChatBody -ModelAlias $Model
 
 Write-Host ''
-Write-Host '  Verifying governance controls' -ForegroundColor Cyan
+Write-Host "  Verifying governance controls - $Route route" -ForegroundColor Cyan
 Write-Host '  -----------------------------' -ForegroundColor DarkCyan
-Write-Host "  Gateway: $GatewayUrl" -ForegroundColor DarkGray
+Write-Host "  Gateway: $GatewayUrl$(Get-RoutePath)" -ForegroundColor DarkGray
+Write-Host "  Models : $Model (granted), $SecondModel (not granted, for the allowlist test)" -ForegroundColor DarkGray
 Write-Host ''
 
 # 1. Happy path
-$good = New-TestKey -Subject 'verify-ok' -Models @('flash','pro') -Budget 500000 -StartOffsetHours 0 -EndOffsetHours 2
+$good = New-TestKey -Subject 'verify-ok' -Models @($Model, $SecondModel) -Budget 500000 -StartOffsetHours 0 -EndOffsetHours 2
 $r = Invoke-Gateway -Token $good -Body $chat
 Assert-Control 'valid key is served' @(200) $r.Status $r.Body
 
@@ -113,49 +167,47 @@ $r = Invoke-Gateway -Token '' -Body $chat
 Assert-Control 'missing key rejected' @(401) $r.Status
 
 # 3. Forged signature
-$forged = New-TestKey -Subject 'verify-forge' -Models @('flash') -Budget 500000 -StartOffsetHours 0 -EndOffsetHours 2
+$forged = New-TestKey -Subject 'verify-forge' -Models @($Model) -Budget 500000 -StartOffsetHours 0 -EndOffsetHours 2
 $tampered = $forged.Substring(0, $forged.LastIndexOf('.')) + '.AAAAinvalidsignatureAAAA'
 $r = Invoke-Gateway -Token $tampered -Body $chat
 Assert-Control 'forged signature rejected' @(401) $r.Status
 
 # 4. Expired
-$expired = New-TestKey -Subject 'verify-exp' -Models @('flash') -Budget 500000 -StartOffsetHours -48 -EndOffsetHours -24
+$expired = New-TestKey -Subject 'verify-exp' -Models @($Model) -Budget 500000 -StartOffsetHours -48 -EndOffsetHours -24
 $r = Invoke-Gateway -Token $expired -Body $chat
 Assert-Control 'expired key rejected' @(401) $r.Status
 
 # 5. Not yet active
-$future = New-TestKey -Subject 'verify-nbf' -Models @('flash') -Budget 500000 -StartOffsetHours 24 -EndOffsetHours 48
+$future = New-TestKey -Subject 'verify-nbf' -Models @($Model) -Budget 500000 -StartOffsetHours 24 -EndOffsetHours 48
 $r = Invoke-Gateway -Token $future -Body $chat
 Assert-Control 'not-yet-active key rejected' @(401) $r.Status
 
-# 6. Model not on the key
-$flashOnly = New-TestKey -Subject 'verify-model' -Models @('flash') -Budget 500000 -StartOffsetHours 0 -EndOffsetHours 2
-$proBody = @{ model = 'pro'; messages = @(@{ role = 'user'; content = 'hi' }); max_tokens = 16 } | ConvertTo-Json -Depth 5
-$r = Invoke-Gateway -Token $flashOnly -Body $proBody
+# 6. Model not on the key. With only one model pinned there is no second alias to ask for, so
+#    a name the gateway has never pinned is used: the allowlist is checked before the alias map,
+#    so it is still the allowlist that rejects it.
+$deniedAlias = if ($script:HasTwoModels) { $SecondModel } else { $script:NotGranted }
+$oneModel = New-TestKey -Subject 'verify-model' -Models @($Model) -Budget 500000 -StartOffsetHours 0 -EndOffsetHours 2
+$r = Invoke-Gateway -Token $oneModel -Body (New-ChatBody -ModelAlias $deniedAlias)
 Assert-Control 'model allowlist enforced' @(403) $r.Status $r.Body
 
-# 7. Model that does not exist at all
-$ghost = @{ model = 'gpt-4o'; messages = @(@{ role = 'user'; content = 'hi' }); max_tokens = 16 } | ConvertTo-Json -Depth 5
-$r = Invoke-Gateway -Token $good -Body $ghost
+# 7. A model the gateway has never pinned, asked for with a key that grants other models.
+#    The name is generated so it cannot collide with a real alias: aliases are operator-chosen,
+#    and a deployment called gpt-4o pinned under its own name would have made this pass a 200.
+$r = Invoke-Gateway -Token $good -Body (New-ChatBody -ModelAlias $script:NotGranted)
 Assert-Control 'unpinned model rejected' @(403) $r.Status
 
-# 8. Tool calling works on BOTH models (ADR-0003, corrected by live testing).
-$toolsBody = @{
-    model = 'pro'
-    messages = @(@{ role = 'user'; content = 'What is the weather in Paris? Use the tool.' })
-    tools = @(@{ type = 'function'; function = @{ name = 'get_weather'; description = 'Get weather'; parameters = @{ type = 'object'; properties = @{ city = @{ type = 'string' } }; required = @('city') } } })
-    max_tokens = 200
-} | ConvertTo-Json -Depth 10
-$r = Invoke-Gateway -Token $good -Body $toolsBody
-Assert-Control 'tool calls accepted on pro' @(200) $r.Status $r.Body
+# 8. Tool calling. The whole point of an agent harness, so it has to work on every pinned model.
+if ($script:HasTwoModels) {
+    $r = Invoke-Gateway -Token $good -Body (New-ToolBody -ModelAlias $SecondModel)
+    Assert-Control "tool calls accepted on $SecondModel" @(200) $r.Status $r.Body
+}
 
-$toolsFlash = $toolsBody -replace '"model":\s*"pro"', '"model": "flash"'
-$r = Invoke-Gateway -Token $good -Body $toolsFlash
-Assert-Control 'tool calls accepted on flash' @(200) $r.Status $r.Body
+$r = Invoke-Gateway -Token $good -Body (New-ToolBody -ModelAlias $Model)
+Assert-Control "tool calls accepted on $Model" @(200) $r.Status $r.Body
 
 # 9. Budget exhaustion -> 403 so the client STOPS (ADR-0004)
-$tiny = New-TestKey -Subject "verify-budget-$(Get-Random)" -Models @('flash') -Budget 200 -StartOffsetHours 0 -EndOffsetHours 2
-$big = @{ model = 'flash'; messages = @(@{ role = 'user'; content = ('Write a long essay about databases. ' * 40) }); max_tokens = 512 } | ConvertTo-Json -Depth 5
+$tiny = New-TestKey -Subject "verify-budget-$(Get-Random)" -Models @($Model) -Budget 200 -StartOffsetHours 0 -EndOffsetHours 2
+$big = New-ChatBody -ModelAlias $Model -Prompt ('Write a long essay about databases. ' * 40) -MaxTokens 512
 $null = Invoke-Gateway -Token $tiny -Body $big
 Start-Sleep -Seconds 3
 $r = Invoke-Gateway -Token $tiny -Body $chat
@@ -180,6 +232,45 @@ Assert-Control 'exhausted budget body says so' @($true) ($r.Body -match 'budget_
 $r = Invoke-Gateway -Token $good -Body $chat
 $hasBudgetHeaders = $r.Headers.Keys -contains 'x-budget-total'
 Assert-Control 'budget headers returned' @($true) $hasBudgetHeaders
+
+# 11. Claude route only: every rejection has to be in the Anthropic envelope. A client in this
+#     mode parses {"type":"error","error":{...}} and nothing else, so an OpenAI-shaped body
+#     reaches the participant as "the response was malformed" rather than as the reason.
+if ($Route -eq 'claude') {
+    $rejections = @(
+        @{ Name = 'allowlist rejection'; Token = $oneModel; Body = (New-ChatBody -ModelAlias $deniedAlias) }
+        @{ Name = 'unpinned-model rejection'; Token = $good; Body = (New-ChatBody -ModelAlias $script:NotGranted) }
+        @{ Name = 'spent-budget rejection'; Token = $tiny; Body = $chat }
+    )
+    foreach ($case in $rejections) {
+        $rr = Invoke-Gateway -Token $case.Token -Body $case.Body
+        $shaped = $rr.Body -match '"type"\s*:\s*"error"' -and $rr.Body -match '"message"\s*:'
+        Assert-Control "$($case.Name) is Anthropic-shaped" @($true) $shaped $rr.Body
+    }
+
+    # The reason has nowhere to live but the message, so it has to be there.
+    $rr = Invoke-Gateway -Token $tiny -Body $chat
+    Assert-Control 'spent budget names budget_exhausted' @($true) ($rr.Body -match 'budget_exhausted') $rr.Body
+
+    # The realistic mistake on this route: a participant who does not set ANTHROPIC_MODEL sends
+    # Claude Code's own default id, which is not an alias here.
+    $claudeDefault = 'claude-opus-4-8'
+    if ($claudeDefault -ne $Model -and $claudeDefault -ne $SecondModel) {
+        $rr = Invoke-Gateway -Token $good -Body (New-ChatBody -ModelAlias $claudeDefault)
+        Assert-Control "Claude Code's default model id is refused" @(403) $rr.Status $rr.Body
+    }
+
+    # count_tokens must not be broken by the body rewrite: max_tokens is not in its schema.
+    try {
+        $countBody = @{ model = $Model; messages = @(@{ role = 'user'; content = 'hello' }) } | ConvertTo-Json -Depth 5
+        $resp = Invoke-WebRequest -Uri "$GatewayUrl/v1/messages/count_tokens" -Method Post `
+                    -Headers @{ Authorization = "Bearer $good"; 'Content-Type' = 'application/json'; 'anthropic-version' = '2023-06-01' } `
+                    -Body $countBody -SkipHttpErrorCheck -TimeoutSec 60
+        Assert-Control 'count_tokens works' @(200) ([int]$resp.StatusCode) (ConvertTo-Text $resp.Content)
+    } catch {
+        Assert-Control 'count_tokens works' @(200) -1 $_.Exception.Message
+    }
+}
 
 Write-Host ''
 Write-Host "  $script:Pass passed, $script:Fail failed" -ForegroundColor $(if ($script:Fail -eq 0) { 'Green' } else { 'Red' })

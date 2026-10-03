@@ -1,8 +1,8 @@
 # Foundry Hackathon Gateway
 
-Hand out **time-bound, spend-capped API keys** for DeepSeek models on Microsoft Foundry, so
-hackathon participants can build real apps with **opencode** — and nobody holds a model credential
-or can overspend.
+Hand out **time-bound, spend-capped API keys** for models on Microsoft Foundry, so hackathon
+participants can build real apps with **opencode** and **Claude Code** — and nobody holds a model
+credential or can overspend.
 
 One interactive script does everything.
 
@@ -29,8 +29,26 @@ OPENAI_API_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 They work in `opencode`, the OpenAI SDK, Aider, Continue, `curl` — anything that speaks the OpenAI
 wire format.
 
+For **Claude Code**, and anything else speaking the Anthropic Messages API, the same key:
+
+```bash
+ANTHROPIC_BASE_URL=https://<your-gateway>.azure-api.net/claude
+ANTHROPIC_AUTH_TOKEN=<the same key>
+ANTHROPIC_MODEL=<an alias the key grants>
+```
+
+`ANTHROPIC_AUTH_TOKEN`, not `ANTHROPIC_API_KEY`. The first is sent as `Authorization: Bearer`,
+which is what the gateway validates; the second is sent as `x-api-key` and returns a bare 401.
+Option 5 writes a `.claude/settings.json` carrying all three, which is also what makes them apply
+to Claude Code's background agents — a shell export does not reach those.
+
+Claude Code is pointed at the gateway as a plain Anthropic endpoint rather than through
+`CLAUDE_CODE_USE_FOUNDRY`, so a participant needs no Azure identity at all.
+See [ADR-0009](docs/adr/0009-claude-code-connection.md).
+
 The key **is** the entitlement. It carries, signed and untamperable: which models it may call, when
-it starts working, when it dies, and how many tokens it may spend.
+it starts working, when it dies, and how many tokens it may spend. **One key, one budget** — using
+both routes draws on the same allowance.
 
 ### It really builds things
 
@@ -155,7 +173,21 @@ Full reasoning: [ADR-0002](docs/adr/0002-credential-transport.md).
 
 ---
 
-## The two models
+## The models
+
+Any number can be pinned, on either route ([ADR-0007](docs/adr/0007-model-map-named-value.md)).
+What a route can serve is decided by the wire format the model speaks, not by preference:
+
+| Route | Base URL | Wire format | Foundry endpoint |
+|---|---|---|---|
+| `v1` | `https://<gw>.azure-api.net/v1` | OpenAI Chat Completions | `/openai/v1` |
+| `claude` | `https://<gw>.azure-api.net/claude` | Anthropic Messages | `/anthropic` |
+
+Option 3 lists every deployment in the subscription with the route that serves it, and refuses a
+pin that crosses routes — a Claude model on the OpenAI route reaches a backend that has never
+heard of it and returns an opaque 404.
+
+The default DeepSeek pins:
 
 | Alias | Foundry deployment | Best for |
 |---|---|---|
@@ -163,6 +195,14 @@ Full reasoning: [ADR-0002](docs/adr/0002-credential-transport.md).
 | `pro` | `DeepSeek-V4-Pro` | Hard reasoning. Slower, pricier. |
 
 Both support tool calling, so both work in `opencode`.
+
+Claude models are deployed in the Foundry portal rather than from here: they need organisation
+details and Azure Marketplace terms that the CLI cannot supply
+([UNKNOWNS U14](docs/UNKNOWNS.md)). Once deployed, pin one with option 3.
+
+The Claude route needs an API Management **v2** tier. `llm-token-limit` parses the Anthropic
+Messages shape on v2 tiers only; on a classic tier it meters zero tokens and a budget would never
+fire, so the route is not published there.
 
 Verified live on 2026-08-31 — a single `opencode` run through the gateway used **Grep**, **Bash**,
 **Read** and **Write**:

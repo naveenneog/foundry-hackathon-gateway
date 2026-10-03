@@ -11,6 +11,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · [Semantic Ve
   at it with `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN` — the same key, the same allowlist,
   time window, one-time budget, revocation and attribution, and no Azure identity on their
   machine. (P17, ADR-0009)
+- **The handout configures Claude Code.** Options 5 and 6 write a `.claude/settings.json` with
+  the three variables, which is also what makes them apply to Claude Code's background agents,
+  and a card that leads with the two mistakes producing a bare 401 or 403. (P18)
+- **The control harness covers both routes.** `scripts/Test-Governance.ps1 -Route claude` checks
+  the same controls plus three Claude-specific ones: every rejection is in the Anthropic error
+  envelope, a spent budget names `budget_exhausted`, and `count_tokens` works. Option 11 runs it
+  once per route that has models pinned. (P18)
 - **Pick from the models deployed anywhere in the subscription.** Options 2 and 3 list every
   Foundry account's deployments grouped by account, show which route can serve each one, and
   refuse a pin that crosses routes — a Claude model on the OpenAI route would return an opaque

@@ -1,10 +1,46 @@
 # Status
 
-**Active packet:** P18 — verify the Claude route and document the participant setup.
+**Active packet:** P19 — verify the Claude route against a live deployment.
 
 M1, M2 and M3 are complete and verified live. M5 (P15–P18) was requested after that: adopt an
 APIM an organisation already runs, pick from the models actually deployed in the subscription,
-and serve Claude models to Claude Code.
+and serve Claude models to Claude Code. P15–P18 are done; P19 is the live proof.
+
+### What is NOT yet proven
+
+The Claude route has never served a request. Everything about it is proven statically and by
+unit test, which is not the same thing — this project's own history says so: live testing
+disproved a documented model limitation (ADR-0003) and caught a policy expression that no static
+check could see.
+
+One command closes it, against a gateway with a Claude deployment pinned:
+
+```powershell
+./admin.ps1        # 11  Verify the controls
+```
+
+The single assumption it settles is **UNKNOWNS U9**, the managed-identity audience for the
+`/anthropic` endpoint. A 401 from the backend — as opposed to from `validate-jwt` — means
+`https://ai.azure.com` is wrong for this route and `https://cognitiveservices.azure.com` is
+right.
+
+### P18 — Claude Code setup and verification harness — DONE
+
+| Criterion | Evidence |
+|---|---|
+| The harness covers the Claude route | `scripts/Test-Governance.ps1 -Route claude`; option 11 runs it per route that has pins |
+| The participant setup is documented exactly | README and the generated card name `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN` and `ANTHROPIC_MODEL` |
+| A key is usable in Claude Code | option 5 writes `.claude/settings.json` with the env block; verified by generating handouts for all three grant combinations |
+
+### P18 council
+
+| Seat | Verdict |
+|---|---|
+| Architect | PASS — one harness parameterised by route rather than a second copy; the request shape, headers and tool schema are the only route-specific parts. |
+| Coder | BLOCK, cleared — 3 findings. With only one model pinned on a route, the allowlist test asked for a model the key *did* grant and would have reported a working control as broken. A key granting only Claude models, issued before the Claude route was published, printed its token nowhere and wrote it nowhere — the key was minted and lost. The "unpinned model" test used `gpt-4o`, which an operator could legitimately have pinned under that alias. |
+| QA | PASS — the handout generator was run for all three grant combinations and the lost-token case reproduced before the fix and confirmed after. The ghost alias is now generated so it cannot collide. |
+| UX | PASS — the card leads with the two mistakes that produce a bare 401 and a 403: the wrong credential variable, and a missing `ANTHROPIC_MODEL`. |
+| Security | PASS — `handouts/` is gitignored, which covers the new `.claude/settings.json`. The token is printed once, as before. |
 
 ### P17 — Claude route, the Anthropic Messages API — DONE (not yet verified live)
 

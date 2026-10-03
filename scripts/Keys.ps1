@@ -154,13 +154,34 @@ function New-ParticipantKey {
     Write-Host "   Expires     : $($expDto.ToLocalTime().ToString('yyyy-MM-dd HH:mm zzz'))  ($($expDto.UtcDateTime.ToString('HH:mm')) UTC)"
     Write-Host "   Key id      : $($result.jti)"
     Write-Host ''
-    Write-Host "   OPENAI_BASE_URL=$baseUrl" -ForegroundColor Yellow
-    Write-Host "   OPENAI_API_KEY=$($result.token)" -ForegroundColor Yellow
+    # The token is shown once and is not recoverable, so it is printed unconditionally before
+    # anything route-specific. An earlier revision printed it only inside the per-route blocks,
+    # which meant a key granting only Claude models, issued before the Claude route was
+    # deployed, was minted and then lost.
+    Write-Host "   KEY: $($result.token)" -ForegroundColor Yellow
+    Write-Host ''
+    $issuedSplit = Split-ModelsByRoute -State $state -Models $cfg.models
+    if ($issuedSplit.openai.Count -gt 0) {
+        Write-Host "   OPENAI_BASE_URL=$baseUrl" -ForegroundColor Yellow
+        Write-Host "   OPENAI_API_KEY=<the key above>" -ForegroundColor Yellow
+    }
+    if ($issuedSplit.claude.Count -gt 0 -and $state.claudeGatewayUrl) {
+        Write-Host ''
+        Write-Host "   ANTHROPIC_BASE_URL=$($state.claudeGatewayUrl)" -ForegroundColor Yellow
+        Write-Host "   ANTHROPIC_AUTH_TOKEN=<the key above>" -ForegroundColor Yellow
+        Write-Host "   ANTHROPIC_MODEL=$(@($issuedSplit.claude)[0])" -ForegroundColor Yellow
+        Write-Info 'AUTH_TOKEN, not API_KEY: the second is sent as x-api-key and returns 401.'
+    } elseif ($issuedSplit.claude.Count -gt 0) {
+        Write-Warn 'This key grants Claude models but the Claude route is not deployed yet.'
+        Write-Info 'The key will start working on that route as soon as option 1 publishes it.'
+    }
     Write-Host ''
 
-    if ((Read-Default 'Write an opencode.json + card for this participant? (y/n)' 'y') -eq 'y') {
+    if ((Read-Default 'Write a config + card for this participant? (y/n)' 'y') -eq 'y') {
+        $split = Split-ModelsByRoute -State $state -Models $cfg.models
         Write-Handout -Subject $subject -Token $result.token -BaseUrl $baseUrl `
-                      -Models $cfg.models -Budget $cfg.budget -ExpiresAt $cfg.expiresAt
+                      -Models $cfg.models -Budget $cfg.budget -ExpiresAt $cfg.expiresAt `
+                      -ClaudeBaseUrl $state.claudeGatewayUrl -ClaudeModels $split.claude
         Write-Ok "Handout written to handouts/$subject/"
     }
 }
@@ -248,6 +269,7 @@ function New-BulkKeys {
     $issued = 0
     $failed = 0
     $index  = @()
+    $bulkSplit = Split-ModelsByRoute -State $state -Models $cfg.models
 
     foreach ($subject in $subjects) {
         $result = New-Key -Secret $secret -Subject $subject -Label '' -Models $cfg.models `
@@ -256,6 +278,7 @@ function New-BulkKeys {
 
         Write-Handout -Subject $subject -Token $result.token -BaseUrl $baseUrl `
                       -Models $cfg.models -Budget $cfg.budget -ExpiresAt $cfg.expiresAt `
+                      -ClaudeBaseUrl $state.claudeGatewayUrl -ClaudeModels $bulkSplit.claude `
                       -Root $batch
         $issued++
         $index += [pscustomobject]@{
@@ -345,14 +368,39 @@ function Test-ParticipantKey {
 # Handouts
 # ------------------------------------------------------------------------------------------
 
+function Split-ModelsByRoute {
+    <#
+        Which of the granted aliases belong to which route. The handout differs: opencode gets
+        an opencode.json and OPENAI_* variables; Claude Code gets ANTHROPIC_* variables and a
+        .claude/settings.json.
+    #>
+    param($State, $Models)
+    $pins = @($State.models)
+    $claude = @()
+    $openai = @()
+    foreach ($alias in @($Models)) {
+        $pin = @($pins | Where-Object { $_.alias -eq $alias }) | Select-Object -First 1
+        $route = if ($pin -and ($pin.PSObject.Properties.Name -contains 'route') -and $pin.route) { $pin.route } else { 'openai' }
+        if ($route -eq 'claude') { $claude += $alias } else { $openai += $alias }
+    }
+    return [pscustomobject]@{ openai = $openai; claude = $claude }
+}
+
 function Write-Handout {
-    param($Subject, $Token, $BaseUrl, $Models, $Budget, $ExpiresAt, $Root)
+    param(
+        $Subject, $Token, $BaseUrl, $Models, $Budget, $ExpiresAt, $Root,
+        $ClaudeBaseUrl, $ClaudeModels
+    )
 
     $base = Coalesce $Root (Join-Path $script:Root 'handouts')
     $dir  = Join-Path $base $Subject
     New-Item -ItemType Directory -Path $dir -Force | Out-Null
+
+    $claudeAliases = @($ClaudeModels)
+    $openaiAliases = @(@($Models) | Where-Object { $claudeAliases -notcontains $_ })
+
     $modelEntries = [ordered]@{}
-    foreach ($m in @($Models)) { $modelEntries[$m] = @{ name = $m } }
+    foreach ($m in $openaiAliases) { $modelEntries[$m] = @{ name = $m } }
 
     $cfg = [ordered]@{
         '$schema' = 'https://opencode.ai/config.json'
@@ -371,14 +419,115 @@ function Write-Handout {
                 models  = $modelEntries
             }
         }
-        model = "hackathon-gateway/$(@($Models)[0])"
+        model = "hackathon-gateway/$(@($openaiAliases)[0])"
     }
-    $cfg | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $dir 'opencode.json') -Encoding UTF8
+    if ($openaiAliases.Count -gt 0) {
+        $cfg | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $dir 'opencode.json') -Encoding UTF8
+    }
+
+    # Claude Code reads an `env` block from a settings file, which is what makes the gateway
+    # apply to background agents too - a shell export does not reach those.
+    # https://code.claude.com/docs/en/llm-gateway-connect
+    if ($claudeAliases.Count -gt 0 -and $ClaudeBaseUrl) {
+        $claudeDir = Join-Path $dir '.claude'
+        New-Item -ItemType Directory -Path $claudeDir -Force | Out-Null
+        $claudeSettings = [ordered]@{
+            env = [ordered]@{
+                # AUTH_TOKEN, not API_KEY: this value is sent as `Authorization: Bearer`, which
+                # is what the gateway validates. ANTHROPIC_API_KEY would be sent as `x-api-key`
+                # and produce a bare 401.
+                ANTHROPIC_BASE_URL   = $ClaudeBaseUrl
+                ANTHROPIC_AUTH_TOKEN = $Token
+                # Without this, Claude Code asks for its own default model id, which is not an
+                # alias on this gateway, and the key refuses it.
+                ANTHROPIC_MODEL      = @($claudeAliases)[0]
+            }
+        }
+        $claudeSettings | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $claudeDir 'settings.json') -Encoding UTF8
+    }
 
     $expDto  = [DateTimeOffset]::FromUnixTimeMilliseconds($ExpiresAt)
     $expUtc   = $expDto.UtcDateTime.ToString('yyyy-MM-dd HH:mm') + ' UTC'
     $expLocal = $expDto.ToLocalTime().ToString('yyyy-MM-dd HH:mm zzz')
     $modelRows = (@($Models) | ForEach-Object { "| ``$_`` |" }) -join "`n"
+
+    $openaiSection = ''
+    if ($openaiAliases.Count -gt 0) {
+        $openaiSection = @"
+
+## opencode (and any OpenAI-compatible client)
+
+Models on this route: $($openaiAliases -join ', ')
+
+PowerShell:
+
+    `$env:OPENAI_BASE_URL = "$BaseUrl"
+    `$env:OPENAI_API_KEY  = "$Token"
+
+bash/zsh:
+
+    export OPENAI_BASE_URL="$BaseUrl"
+    export OPENAI_API_KEY="$Token"
+
+Copy ``opencode.json`` into your project directory, then run ``opencode``.
+"@
+    }
+
+    $claudeSection = ''
+    if ($claudeAliases.Count -gt 0 -and $ClaudeBaseUrl) {
+        $firstClaude = @($claudeAliases)[0]
+        $claudeSection = @"
+
+## Claude Code
+
+Models on this route: $($claudeAliases -join ', ')
+
+PowerShell:
+
+    `$env:ANTHROPIC_BASE_URL   = "$ClaudeBaseUrl"
+    `$env:ANTHROPIC_AUTH_TOKEN = "$Token"
+    `$env:ANTHROPIC_MODEL      = "$firstClaude"
+
+bash/zsh:
+
+    export ANTHROPIC_BASE_URL="$ClaudeBaseUrl"
+    export ANTHROPIC_AUTH_TOKEN="$Token"
+    export ANTHROPIC_MODEL="$firstClaude"
+
+Then run ``claude``.
+
+Three things are worth knowing before you start.
+
+**``ANTHROPIC_AUTH_TOKEN``, not ``ANTHROPIC_API_KEY``.** The first is sent as
+``Authorization: Bearer``, which is what this gateway checks. The second is sent as
+``x-api-key``, and the same key in that variable returns a bare 401.
+
+**``ANTHROPIC_MODEL`` is required.** Without it Claude Code asks for its own default model,
+which is not one of the names above, and the gateway returns 403.
+
+**Shell exports do not reach background agents.** The included ``.claude/settings.json`` sets
+all three everywhere Claude Code runs. Copy it into your project, or merge its ``env`` block
+into ``~/.claude/settings.json``. It contains your key, so do not commit it.
+
+Check it worked with ``/status``: it should show the base URL and an auth token.
+"@
+    }
+
+    # A grant can resolve to neither section: Claude aliases pinned before the Claude route is
+    # deployed. The card is then the only record of the token, so it carries it plainly rather
+    # than silently omitting a credential that cannot be recovered.
+    $fallbackSection = ''
+    if ($openaiSection -eq '' -and $claudeSection -eq '') {
+        $fallbackSection = @"
+
+## Your key
+
+    $Token
+
+The route for the models on this key is not published yet. Ask the organiser when it is, then
+use the base URL they give you with this key.
+"@
+    }
 
     $card = @"
 # Your gateway key - $Subject
@@ -391,25 +540,12 @@ Same moment in UTC: $expUtc
 The gateway decides expiry using its own clock, not yours. Changing your computer's clock
 or timezone does not extend the key, and a wrong clock on your machine does not break it.
 
-## 1. Set your environment
+One key, one budget. If you use both routes below, they draw on the same allowance.
+$openaiSection
+$claudeSection
+$fallbackSection
 
-PowerShell:
-
-    `$env:OPENAI_BASE_URL = "$BaseUrl"
-    `$env:OPENAI_API_KEY  = "$Token"
-
-bash/zsh:
-
-    export OPENAI_BASE_URL="$BaseUrl"
-    export OPENAI_API_KEY="$Token"
-
-## 2. Use opencode
-
-Copy ``opencode.json`` into your project directory, then run:
-
-    opencode
-
-## 3. Models you can use
+## Models you can use
 
 $modelRows
 

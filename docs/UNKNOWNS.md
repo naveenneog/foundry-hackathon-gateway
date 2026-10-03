@@ -109,10 +109,23 @@ regardless of the route's wire format. An Anthropic client does not parse that s
 budget rejection surfaces as a parse error rather than as the reason it happened.
 
 The sibling found this only by deploying (`infra/policy.xml:872-881`) and rewrites the response.
-The Claude policy here does the same, in `<on-error>` and on the outbound path, emitting
-`{"type":"error","error":{"type":"...","message":"..."}}`.
 
-Source: sibling repo `claude-code-foundry-gateway/infra/policy.xml:872-881`.
+**Where the rewrite has to live, which is not where it was first written.** `llm-token-limit`
+*raises a policy error* rather than returning a response, and "if an error occurs, processing
+immediately jumps to the `on-error` policy section" — so `<outbound>` never runs for a budget
+rejection. A first revision of `infra/policy-claude.xml` put the rewrite in `<outbound>`, where
+it could never have fired. It is now in `<on-error>`, keyed on
+`context.LastError.Reason` containing `QuotaExceeded`. The sibling's own record of the symptom
+(`Reason=OpenAITokenQuotaExceeded`) is the evidence: `Reason` is a `context.LastError` field and
+is only readable from `on-error`.
+
+A second constraint applies in that section: **`set-body` is not among the policies `on-error`
+permits**, so the body is emitted with `return-response`, which is. A policy document that uses
+`set-body` there fails validation when it is PUT and takes the whole ARM deployment with it.
+
+Sources: sibling repo `claude-code-foundry-gateway/infra/policy.xml:872-881` ·
+[Error handling in API Management policies](https://learn.microsoft.com/en-us/azure/api-management/api-management-error-handling-policies)
+(allowed policies in `on-error`, retrieved 2026-10-03).
 
 ### U10 — Backend host for the Claude route — RESEARCHED
 

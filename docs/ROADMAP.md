@@ -43,10 +43,10 @@ that are actually deployed in the subscription, and serve Claude models to Claud
 - [x] **P16** Choose from the models deployed across the subscription
       *Verified 2026-10-03:* `src/foundry.mjs` + `scripts/Models.ps1` list every Foundry account's
       deployments, classify each by wire format, and refuse a pin that crosses routes.
-- [ ] **P17** Claude route — the Anthropic Messages API, governed
-      *Acceptance:* `POST {gateway}/claude/v1/messages` with a participant key reaches a Claude
-      deployment in Foundry. The same key controls apply — allowlist, time window, one-time
-      budget, revocation, attribution — and every rejection is an Anthropic-shaped error body.
+- [x] **P17** Claude route — the Anthropic Messages API, governed
+      *Verified 2026-10-03:* `infra/policy-claude.xml` + a conditional `claude-gateway` API in
+      `infra/main.bicep`. Same key, same controls, Anthropic-shaped errors. Not published on a
+      tier that meters zero Anthropic tokens.
 - [ ] **P18** Claude Code verified, and the participant setup documented
       *Acceptance:* `scripts/Test-Governance.ps1 -Route claude` proves each control fires against
       a live Claude route, and the README states the exact `ANTHROPIC_BASE_URL` /

@@ -41,6 +41,12 @@ param apimCapacity int = 1
 @description('Alias-to-deployment map, as alias=deployment;alias=deployment. Aliases are what participants put in the `model` field; deployment names must exist in the Foundry account. Adding a model later is a named-value edit, not a redeploy.')
 param modelMap string = 'flash=deepseek-v4-flash;pro=deepseek-v4-pro'
 
+@description('Alias-to-deployment map for the Claude route, as alias=deployment;alias=deployment. Separate from modelMap because the two routes reach different Foundry endpoints: an alias pinned here names a deployment the /anthropic backend serves.')
+param claudeModelMap string = ';'
+
+@description('Whether to publish the Claude route. A classic API Management tier meters zero Anthropic tokens, so a budget on one would be configured and never fire - admin.ps1 passes false rather than publishing a control that cannot work. See docs/UNKNOWNS.md U12.')
+param deployClaudeRoute bool = true
+
 @description('HS256 signing secret for participant keys. Generate with admin.ps1; never commit it.')
 @secure()
 param signingKey string
@@ -63,6 +69,26 @@ var appInsightsName = 'appi-${namePrefix}'
 var workspaceName = 'log-${namePrefix}'
 var apiId = 'deepseek-gateway'
 var apiPath = 'v1'
+var claudeApiId = 'claude-gateway'
+var claudeApiPath = 'claude'
+
+// Defence in depth for UNKNOWNS U12. admin.ps1 refuses to publish this route onto a classic
+// tier, but a direct `az deployment group create` bypasses admin.ps1 entirely. On a tier that
+// meters zero Anthropic tokens the route would advertise a budget that can never fire, so the
+// template refuses too. Only the create path can be checked here: a deployment condition cannot
+// read an existing resource's SKU, which is a runtime value.
+var claudeTierOk = empty(existingApimName) ? endsWith(toLower(apimSku), 'v2') : true
+var claudeRouteEnabled = deployClaudeRoute && claudeTierOk
+
+// The Claude backend. Read from the account's published endpoints rather than assembled from
+// the resource name: a Foundry account's host and its name can differ, which the OpenAI route
+// already learned. `AI Foundry API` is the published base; the Anthropic Messages surface hangs
+// off it. The documented form is used when the key is absent.
+// https://learn.microsoft.com/en-us/azure/foundry/foundry-models/how-to/use-foundry-models-claude
+var foundryEndpoints = foundry.properties.endpoints
+var claudeServiceUrl = contains(foundryEndpoints, 'AI Foundry API')
+  ? '${foundryEndpoints['AI Foundry API']}anthropic'
+  : 'https://${foundry.properties.customSubDomainName}.services.ai.azure.com/anthropic'
 
 resource foundry 'Microsoft.CognitiveServices/accounts@2024-10-01' existing = {
   name: foundryAccountName
@@ -232,6 +258,7 @@ var plainNamedValues = [
   { key: 'hackgw-calls-per-minute', value: string(callsPerMinute) }
   { key: 'hackgw-max-output-tokens', value: string(maxOutputTokens) }
   { key: 'hackgw-model-map', value: modelMap }
+  { key: 'hackgw-claude-model-map', value: claudeModelMap }
 ]
 
 resource apimNamedValues 'Microsoft.ApiManagement/service/namedValues@2024-05-01' = [
@@ -282,6 +309,98 @@ resource apiDiagnostic 'Microsoft.ApiManagement/service/apis/diagnostics@2024-05
 }
 
 // ---------------------------------------------------------------------------
+// Claude route — the Anthropic Messages API
+//
+// A different endpoint and a different wire format from the OpenAI route, so it is a separate
+// API with its own policy rather than another operation on the existing one. Conditional
+// because a classic-tier instance meters zero Anthropic tokens: publishing this there would
+// advertise a budget that cannot fire. See docs/UNKNOWNS.md U12 and ADR-0009.
+// ---------------------------------------------------------------------------
+
+resource claudeApi 'Microsoft.ApiManagement/service/apis@2024-05-01' = if (claudeRouteEnabled) {
+  parent: apim
+  name: claudeApiId
+  properties: {
+    displayName: 'Claude on Foundry (hackathon)'
+    // A client appends /v1/messages to ANTHROPIC_BASE_URL itself, so the base is this path.
+    path: claudeApiPath
+    protocols: [
+      'https'
+    ]
+    serviceUrl: claudeServiceUrl
+    subscriptionRequired: false
+  }
+  dependsOn: [
+    apimNew
+  ]
+}
+
+resource claudeMessages 'Microsoft.ApiManagement/service/apis/operations@2024-05-01' = if (claudeRouteEnabled) {
+  parent: claudeApi
+  name: 'messages'
+  properties: {
+    displayName: 'Create a Message'
+    method: 'POST'
+    urlTemplate: '/v1/messages'
+    responses: [
+      {
+        statusCode: 200
+      }
+    ]
+  }
+}
+
+// Optional per the gateway protocol, but without it Claude Code falls back to a character-based
+// estimate of context usage and shows the participant that estimate.
+resource claudeCountTokens 'Microsoft.ApiManagement/service/apis/operations@2024-05-01' = if (claudeRouteEnabled) {
+  parent: claudeApi
+  name: 'count-tokens'
+  properties: {
+    displayName: 'Count Message Tokens'
+    method: 'POST'
+    urlTemplate: '/v1/messages/count_tokens'
+    responses: [
+      {
+        statusCode: 200
+      }
+    ]
+  }
+}
+
+resource claudePolicy 'Microsoft.ApiManagement/service/apis/policies@2024-05-01' = if (claudeRouteEnabled) {
+  parent: claudeApi
+  name: 'policy'
+  properties: {
+    format: 'rawxml'
+    value: loadTextContent('policy-claude.xml')
+  }
+  dependsOn: [
+    apimNamedValues
+    nvSigningKey
+    claudeMessages
+    claudeCountTokens
+  ]
+}
+
+resource claudeDiagnostic 'Microsoft.ApiManagement/service/apis/diagnostics@2024-05-01' = if (claudeRouteEnabled) {
+  parent: claudeApi
+  name: 'applicationinsights'
+  properties: {
+    loggerId: apimLogger.id
+    alwaysLog: 'allErrors'
+    // metrics:true is what makes llm-emit-token-metric actually emit. Without it the custom
+    // metric namespace never appears and per-participant attribution is silently absent.
+    metrics: true
+    verbosity: 'information'
+    httpCorrelationProtocol: 'W3C'
+    sampling: {
+      samplingType: 'fixed'
+      percentage: 100
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // The gateway identity is the only principal that may call Foundry
 // ---------------------------------------------------------------------------
 
@@ -302,6 +421,8 @@ module foundryRole 'foundry-role.bicep' = {
 
 output apimName string = apim.name
 output gatewayUrl string = '${apim.properties.gatewayUrl}/${apiPath}'
+output claudeGatewayUrl string = claudeRouteEnabled ? '${apim.properties.gatewayUrl}/${claudeApiPath}' : ''
+output claudeServiceUrl string = claudeServiceUrl
 output apimPrincipalId string = apim.identity.principalId
 output appInsightsName string = appInsights.name
 output modelMap string = modelMap

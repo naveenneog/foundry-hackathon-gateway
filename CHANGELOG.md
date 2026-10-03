@@ -6,6 +6,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · [Semantic Ve
 ## [Unreleased]
 
 ### Added
+- **Claude models, through the same key.** A second route speaks the Anthropic Messages API at
+  `{gateway}/claude`, backed by Foundry's `/anthropic` endpoint. A participant points Claude Code
+  at it with `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN` — the same key, the same allowlist,
+  time window, one-time budget, revocation and attribution, and no Azure identity on their
+  machine. (P17, ADR-0009)
 - **Pick from the models deployed anywhere in the subscription.** Options 2 and 3 list every
   Foundry account's deployments grouped by account, show which route can serve each one, and
   refuse a pin that crosses routes — a Claude model on the OpenAI route would return an opaque

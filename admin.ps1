@@ -108,6 +108,9 @@ function Get-State {
         if (-not ($s.PSObject.Properties.Name -contains 'existingApimName')) {
             $s | Add-Member -NotePropertyName existingApimName -NotePropertyValue $null -Force
         }
+        if (-not ($s.PSObject.Properties.Name -contains 'claudeGatewayUrl')) {
+            $s | Add-Member -NotePropertyName claudeGatewayUrl -NotePropertyValue $null -Force
+        }
         # Pins written before the Claude route existed have no route and are OpenAI-shaped.
         $s.models = @(@($s.models) | ForEach-Object {
             if ($_ -and -not ($_.PSObject.Properties.Name -contains 'route' -and $_.route)) {
@@ -125,6 +128,7 @@ function Get-State {
         apimName             = $null
         existingApimName     = $null
         gatewayUrl           = $null
+        claudeGatewayUrl     = $null
         # Alias -> deployment pins. Any number of models; see ADR-0007. `route` says which wire
         # format the deployment speaks, and therefore which gateway route can serve it.
         models               = @(
@@ -366,6 +370,32 @@ function Invoke-Deploy {
         }
     }
 
+    # ------------------------------------------------------------------------------------
+    # The Claude route is published only where it can actually enforce a budget.
+    #
+    # llm-token-limit parses the Anthropic Messages shape on v2 tiers only; a classic tier
+    # accepts the identical policy and meters zero tokens. Publishing it there would advertise
+    # a cap that silently never fires. See docs/UNKNOWNS.md U12.
+    # ------------------------------------------------------------------------------------
+    $claudePins = @($state.models | Where-Object {
+        $_.PSObject.Properties.Name -contains 'route' -and $_.route -eq 'claude'
+    })
+    $deployClaude = $true
+    if ($state.existingApimName) {
+        $sku = az apim show -g $state.resourceGroup -n $state.existingApimName --query sku.name -o tsv 2>$null
+        if ($LASTEXITCODE -eq 0 -and $sku -and $sku -notmatch 'V2$') {
+            $deployClaude = $false
+            Write-Warn "$($state.existingApimName) is $sku, which meters zero Anthropic tokens."
+            Write-Info 'The Claude route will not be published on it; budgets there could never fire.'
+            if ($claudePins.Count -gt 0) {
+                Write-Warn "$($claudePins.Count) Claude pin(s) will be unreachable until the gateway moves to a v2 instance."
+            }
+        }
+    }
+    if ($deployClaude) {
+        Write-Info ("Claude route : {0} pinned model(s)" -f $claudePins.Count)
+    }
+
     Write-Head 'Deploying'
     az group create -n $state.resourceGroup -l $state.location -o none
 
@@ -404,7 +434,9 @@ function Invoke-Deploy {
                 existingApimName     = @{ value = [string]$state.existingApimName }
                 publisherEmail       = @{ value = $email }
                 signingKey           = @{ value = $secret }
-                modelMap             = @{ value = (ConvertTo-ModelMapString $state.models) }
+                modelMap             = @{ value = (ConvertTo-ModelMapString $state.models -Route 'openai') }
+                claudeModelMap       = @{ value = (Coalesce (ConvertTo-ModelMapString $state.models -Route 'claude') ';') }
+                deployClaudeRoute    = @{ value = $deployClaude }
                 revokedKeys          = @{ value = $revoked }
             }
         }
@@ -437,10 +469,14 @@ function Invoke-Deploy {
     $out = az deployment group show -g $state.resourceGroup -n $deployName --query properties.outputs -o json | ConvertFrom-Json
     $state.apimName   = $out.apimName.value
     $state.gatewayUrl = $out.gatewayUrl.value
+    if ($out.PSObject.Properties.Name -contains 'claudeGatewayUrl') {
+        $state.claudeGatewayUrl = $out.claudeGatewayUrl.value
+    }
     Save-State $state
 
     Write-Ok "Gateway is live: $($state.gatewayUrl)"
-    Write-Info 'Next: issue a participant key (menu option 3).'
+    if ($state.claudeGatewayUrl) { Write-Ok "Claude route  : $($state.claudeGatewayUrl)" }
+    Write-Info 'Next: issue a participant key (menu option 5).'
 }
 
 # --------------------------------------------------------------------------------------------

@@ -1,10 +1,32 @@
 # Status
 
-**Active packet:** P17 — the Claude route.
+**Active packet:** P18 — verify the Claude route and document the participant setup.
 
 M1, M2 and M3 are complete and verified live. M5 (P15–P18) was requested after that: adopt an
 APIM an organisation already runs, pick from the models actually deployed in the subscription,
 and serve Claude models to Claude Code.
+
+### P17 — Claude route, the Anthropic Messages API — DONE (not yet verified live)
+
+| Criterion | Evidence |
+|---|---|
+| `POST {gateway}/claude/v1/messages` reaches a Claude deployment | `infra/main.bicep` `claudeApi`, backend `endpoints['AI Foundry API'] + anthropic` |
+| The same key controls apply | `infra/policy-claude.xml` steps 1–9, same claims and counters as the OpenAI route |
+| Every rejection is Anthropic-shaped | `src/anthropic.mjs`, 29 tests; `tests/claude-route.test.mjs` asserts every error body in the policy |
+| One budget across both routes | both policies write the cache key `used-<sub>` with identical semantics |
+
+**Live verification is P18.** Everything here is proven statically and by unit test; no request
+has been made against a deployed Claude route.
+
+### P17 council
+
+| Seat | Verdict |
+|---|---|
+| Architect | PASS — a separate API with its own policy rather than another operation, because the endpoint, the wire format and the error shape all differ. The alias map is per-route for the same reason. |
+| Coder | BLOCK, cleared — 3 defects. `set-body` is not legal in `on-error`, which would have failed the deployment outright. The body clamp ran for `count_tokens`, injecting a field that endpoint rejects, making every token count a 400. The quota rewrite sat in `<outbound>`, which a policy error never reaches. |
+| QA | PASS — a comment containing `--` (illegal in XML, rejected by APIM) was found by validating the policy as XML, and is now a negative-tested detector. The `on-error` and `count_tokens` fixes each have their own assertion. |
+| UX | PASS — the rejection for a missing `ANTHROPIC_MODEL` names the variable, because Claude Code otherwise sends its own default model id and the allowlist refuses it with no clue why. |
+| Security | PASS — the participant token never reaches Foundry; both `api-key` and `x-api-key` are stripped. `context.LastError.Message` carries pipeline diagnostics, not named values. |
 
 ### P16 — choose from the models deployed across the subscription — DONE
 

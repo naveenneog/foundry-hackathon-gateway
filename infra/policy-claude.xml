@@ -1,0 +1,427 @@
+<!--
+  Foundry Hackathon Gateway — Claude route.
+
+  Same credential, same controls, different wire format.
+  ======================================================
+  A participant sets ANTHROPIC_BASE_URL to this gateway and ANTHROPIC_AUTH_TOKEN to their key.
+  Claude Code then treats the gateway as the Claude API and cannot tell what is behind it, so
+  everything here has to look like the Claude API to a client that only knows that shape.
+
+  The credential is the same self-issued HS256 JWT as the OpenAI route. ANTHROPIC_AUTH_TOKEN is
+  sent as `Authorization: Bearer`, which is exactly what validate-jwt reads — so no new
+  credential type, no new minting path, and one key works on both routes.
+
+  (ANTHROPIC_API_KEY would arrive as `x-api-key` instead. That is why the participant card says
+  AUTH_TOKEN: the same key in the wrong variable produces a bare 401 from validate-jwt.)
+
+  What differs from infra/policy.xml, and why
+  ===========================================
+  1. Errors use {"type":"error","error":{"type":...,"message":...}}. An Anthropic client parses
+     that and nothing else; an OpenAI-shaped body arrives as a malformed response, so a spent
+     budget reads as a broken stream. The gateway's own reason leads the message, because the
+     envelope has no field for it.
+  2. The body carries `max_tokens` (required by the Messages API) and no `n`.
+  3. `llm-token-limit` returns its OWN body when the quota is exceeded, and that body is
+     OpenAI-shaped whatever the route speaks. It is rewritten on the way out. See UNKNOWNS U11.
+  4. The alias map is this route's own. An alias pinned for the OpenAI route names a deployment
+     the /anthropic backend cannot serve.
+
+  src/anthropic.mjs is the canonical, unit-tested implementation of the envelope, the clamp and
+  the quota-error detection. If you change one, change both.
+
+  Everything fails closed.
+-->
+<policies>
+    <inbound>
+        <base />
+
+        <!-- 1. Authenticity. validate-jwt enforces exp and nbf, so a key expires with no timer
+             job and no cleanup. Identical to the OpenAI route: one key, both routes. -->
+        <validate-jwt
+            header-name="Authorization"
+            require-scheme="Bearer"
+            require-expiration-time="true"
+            require-signed-tokens="true"
+            clock-skew="60"
+            failed-validation-httpcode="401"
+            failed-validation-error-message="invalid_key: Your access key is invalid, not yet active, or has expired. Ask an organiser for a new key."
+            output-token-variable-name="jwt">
+            <issuer-signing-keys>
+                <key>{{hackgw-signing-key}}</key>
+            </issuer-signing-keys>
+            <audiences>
+                <audience>hackathon-gateway</audience>
+            </audiences>
+            <issuers>
+                <issuer>foundry-hackathon-gateway</issuer>
+            </issuers>
+        </validate-jwt>
+
+        <!-- 2. Lift the entitlement out of the verified token. -->
+        <set-variable name="sub" value="@(((Jwt)context.Variables["jwt"]).Claims.GetValueOrDefault("sub", "unknown"))" />
+        <set-variable name="jti" value="@(((Jwt)context.Variables["jwt"]).Claims.GetValueOrDefault("jti", "none"))" />
+        <set-variable name="grantedModels" value="@(((Jwt)context.Variables["jwt"]).Claims.GetValueOrDefault("models", ""))" />
+        <set-variable name="budget" value="@{
+            var raw = ((Jwt)context.Variables["jwt"]).Claims.GetValueOrDefault("budget", "0");
+            long b; return long.TryParse(raw, out b) ? b : 0L;
+        }" />
+
+        <!-- 3. Revocation denylist. Sentinel commas make the match exact, so "k_a" cannot
+             revoke "k_aaa". -->
+        <choose>
+            <when condition="@(("{{hackgw-revoked-keys}}").Contains("," + (string)context.Variables["jti"] + ","))">
+                <return-response>
+                    <set-status code="403" reason="Forbidden" />
+                    <set-header name="Content-Type" exists-action="override">
+                        <value>application/json</value>
+                    </set-header>
+                    <set-body>{"type":"error","error":{"type":"permission_error","message":"revoked: This key has been revoked. Ask an organiser if you think this is a mistake."}}</set-body>
+                </return-response>
+            </when>
+        </choose>
+
+        <!-- 4. Which model is being asked for? The Messages API carries it in the body, same
+             field name as Chat Completions. -->
+        <set-variable name="requestedModel" value="@{
+            try {
+                var fromBody = context.Request.Body.As<JObject>(preserveContent: true)["model"]?.ToString();
+                if (!string.IsNullOrEmpty(fromBody)) { return fromBody.Trim().ToLowerInvariant(); }
+            } catch { }
+            return "";
+        }" />
+
+        <!-- 5. The model allowlist, from the signed claim. Exact match against a
+             comma-delimited list; no prefix matching.
+
+             A participant who forgets to set ANTHROPIC_MODEL lands here: Claude Code defaults
+             to an Anthropic model id such as claude-opus-4-8, which is not an alias on this
+             gateway. The message says so rather than leaving them guessing. -->
+        <choose>
+            <when condition="@{
+                var wanted = (string)context.Variables["requestedModel"];
+                if (string.IsNullOrEmpty(wanted)) { return true; }
+                var granted = "," + ((string)context.Variables["grantedModels"]).ToLowerInvariant() + ",";
+                return !granted.Contains("," + wanted + ",");
+            }">
+                <return-response>
+                    <set-status code="403" reason="Forbidden" />
+                    <set-header name="Content-Type" exists-action="override">
+                        <value>application/json</value>
+                    </set-header>
+                    <set-body>@{
+                        var wanted = (string)context.Variables["requestedModel"];
+                        var granted = (string)context.Variables["grantedModels"];
+                        var msg = "model_not_permitted: The model '" + wanted + "' is not included in your key. Yours: "
+                            + granted + ". Set ANTHROPIC_MODEL to one of those - Claude Code sends its own default "
+                            + "model id otherwise.";
+                        return new JObject(
+                            new JProperty("type", "error"),
+                            new JProperty("error", new JObject(
+                                new JProperty("type", "permission_error"),
+                                new JProperty("message", msg)
+                            ))
+                        ).ToString();
+                    }</set-body>
+                </return-response>
+            </when>
+        </choose>
+
+        <!-- 5b. Resolve the alias to a real deployment name, from THIS route's map. An alias
+             pinned for the OpenAI route names a deployment the /anthropic backend has never
+             heard of, and forwarding it verbatim returns an opaque 404. -->
+        <set-variable name="deployment" value="@{
+            var alias = (string)context.Variables["requestedModel"];
+            foreach (var entry in "{{hackgw-claude-model-map}}".Split(';')) {
+                var idx = entry.IndexOf('=');
+                if (idx <= 0) { continue; }
+                var key = entry.Substring(0, idx).Trim().ToLowerInvariant();
+                var val = entry.Substring(idx + 1).Trim();
+                // First definition wins, matching src/models.mjs parseModelMap.
+                if (key == alias && val.Length > 0) { return val; }
+            }
+            return "";
+        }" />
+        <choose>
+            <when condition="@(((string)context.Variables["deployment"]).Length == 0)">
+                <return-response>
+                    <set-status code="403" reason="Forbidden" />
+                    <set-header name="Content-Type" exists-action="override">
+                        <value>application/json</value>
+                    </set-header>
+                    <set-body>@{
+                        var msg = "model_not_configured: The model '" + (string)context.Variables["requestedModel"]
+                            + "' is granted by your key but is not pinned on this gateway's Claude route. Tell an "
+                            + "organiser - this is a gateway configuration problem, not a problem with your key.";
+                        return new JObject(
+                            new JProperty("type", "error"),
+                            new JProperty("error", new JObject(
+                                new JProperty("type", "permission_error"),
+                                new JProperty("message", msg)
+                            ))
+                        ).ToString();
+                    }</set-body>
+                </return-response>
+            </when>
+        </choose>
+
+        <!-- 6. The one-time budget. Keyed on `sub`, shared with the OpenAI route, so a key's
+             budget is spent across both rather than doubled by using two routes.
+
+             403 with no Retry-After, for the same reason as the OpenAI route: a one-time budget
+             never refills, so a retryable status makes an agent loop spin. See ADR-0004. -->
+        <cache-lookup-value
+            key="@("used-" + (string)context.Variables["sub"])"
+            variable-name="usedTokens"
+            default-value="unknown" />
+        <choose>
+            <when condition="@{
+                long used;
+                // Unparseable or absent means the cache does not know. Do NOT read that as zero
+                // (a fresh budget on every eviction) and do NOT deny. Defer to the quota below.
+                if (!long.TryParse((string)context.Variables["usedTokens"], out used)) { return false; }
+                return used >= (long)context.Variables["budget"];
+            }">
+                <return-response>
+                    <set-status code="403" reason="Forbidden" />
+                    <set-header name="Content-Type" exists-action="override">
+                        <value>application/json</value>
+                    </set-header>
+                    <set-header name="x-budget-remaining" exists-action="override">
+                        <value>0</value>
+                    </set-header>
+                    <set-header name="x-budget-exhausted" exists-action="override">
+                        <value>true</value>
+                    </set-header>
+                    <set-body>{"type":"error","error":{"type":"permission_error","message":"budget_exhausted: Your token budget is fully spent. This is NOT an invalid key - the budget is one-time and does not reset. Retrying will not help. Ask an organiser for a new key."}}</set-body>
+                </return-response>
+            </when>
+        </choose>
+
+        <!-- 7. Gateway-native limits. llm-token-limit parses the Anthropic Messages shape only
+             on v2 tiers; on a classic tier it meters zero and this budget never fires, which is
+             why the installer refuses to put this route on one. See UNKNOWNS U12. -->
+        <llm-token-limit
+            counter-key="@((string)context.Variables["sub"])"
+            tokens-per-minute="{{hackgw-tpm-per-key}}"
+            estimate-prompt-tokens="false"
+            retry-after-header-name="Retry-After"
+            remaining-tokens-header-name="x-ratelimit-remaining-tokens"
+            tokens-consumed-variable-name="consumedTokens" />
+
+        <llm-token-limit
+            counter-key="@((string)context.Variables["sub"] + ":lifetime")"
+            token-quota="@((long)context.Variables["budget"])"
+            token-quota-period="Yearly"
+            estimate-prompt-tokens="false"
+            remaining-quota-tokens-header-name="x-budget-remaining" />
+
+        <!-- 8. Request-rate ceiling. Claude Code issues parallel tool calls and sub-agent
+             requests; token budgets alone do not stop a runaway loop of small calls. -->
+        <rate-limit-by-key
+            calls="{{hackgw-calls-per-minute}}"
+            renewal-period="60"
+            counter-key="@((string)context.Variables["sub"])"
+            retry-after-header-name="Retry-After" />
+
+        <!-- 9. Attribution. Azure Monitor allows at most 5 custom dimensions. -->
+        <llm-emit-token-metric namespace="hackathongw">
+            <dimension name="Participant" value="@((string)context.Variables["sub"])" />
+            <dimension name="KeyId" value="@((string)context.Variables["jti"])" />
+            <dimension name="Model" value="@((string)context.Variables["requestedModel"])" />
+            <dimension name="Route" value="claude" />
+        </llm-emit-token-metric>
+
+        <!-- 10. Swap the participant's token for the gateway's own identity. The participant
+             token is deliberately not forwarded: Foundry trusts only the managed identity, so
+             no model credential exists on any participant machine.
+
+             The audience is https://ai.azure.com, the value Microsoft's own Claude-on-Foundry
+             sample uses for this endpoint. The sibling claude-code-foundry-gateway uses the
+             Cognitive Services audience for ITS route, which reaches Foundry through a
+             different host. See UNKNOWNS U9 - this is the one assumption in this packet, and
+             a 401 from the BACKEND (not from validate-jwt) is what disproves it. -->
+        <authentication-managed-identity
+            resource="https://ai.azure.com"
+            output-token-variable-name="msi-token"
+            ignore-error="false" />
+        <set-header name="Authorization" exists-action="override">
+            <value>@("Bearer " + (string)context.Variables["msi-token"])</value>
+        </set-header>
+        <set-header name="api-key" exists-action="delete" />
+        <set-header name="x-api-key" exists-action="delete" />
+
+        <!-- anthropic-version is required by the Messages API. Claude Code always sends it and
+             it is forwarded unchanged; this only supplies it for a caller that omits one, such
+             as a hand-written curl. anthropic-beta is never touched: the set of values changes
+             with every Claude Code release, and allowlisting them breaks features silently. -->
+        <set-header name="anthropic-version" exists-action="skip">
+            <value>2023-06-01</value>
+        </set-header>
+
+        <!-- 11. Map the friendly alias onto the real Foundry deployment name, and cap the
+             completion length.
+
+             The two operations differ. /v1/messages REQUIRES max_tokens, so an absent or
+             unusable value becomes the cap. /v1/messages/count_tokens does NOT accept it, and
+             the Messages API rejects unknown body fields - injecting it there turns every token
+             count into a 400, which is worse than not publishing the endpoint at all. One
+             policy serves both operations, so the difference is explicit.
+
+             There is no `n` on either: that is an OpenAI concept and this API rejects it.
+             src/anthropic.mjs holds both transforms. -->
+        <choose>
+            <when condition="@(context.Operation.Id == "count-tokens")">
+                <set-body>@{
+                    var body = context.Request.Body.As<JObject>(preserveContent: true);
+                    body["model"] = (string)context.Variables["deployment"];
+                    body.Remove("max_tokens");
+                    return body.ToString();
+                }</set-body>
+            </when>
+            <otherwise>
+                <set-body>@{
+                    var body = context.Request.Body.As<JObject>(preserveContent: true);
+
+                    // Resolved and validated in step 5b, so it is always a real deployment name.
+                    body["model"] = (string)context.Variables["deployment"];
+
+                    var cap = int.Parse("{{hackgw-max-output-tokens}}");
+                    int requested;
+                    if (body["max_tokens"] == null
+                        || !int.TryParse(body["max_tokens"].ToString(), out requested)
+                        || requested <= 0
+                        || requested > cap) {
+                        body["max_tokens"] = cap;
+                    }
+
+                    return body.ToString();
+                }</set-body>
+            </otherwise>
+        </choose>
+
+        <set-header name="x-gateway-participant" exists-action="override">
+            <value>@((string)context.Variables["sub"])</value>
+        </set-header>
+    </inbound>
+
+    <backend>
+        <!-- Agent turns are long and streamed. Claude Code aborts a stream after five minutes
+             of silence, and stalls entirely if a gateway buffers the response, so do neither. -->
+        <forward-request timeout="600" buffer-request-body="false" />
+    </backend>
+
+    <outbound>
+        <base />
+
+        <!-- Accumulate lifetime consumption. Identical to the OpenAI route, deliberately: both
+             routes write the SAME cache key, so a key's budget is spent across both rather than
+             doubled by using two routes. Divergent semantics here would make the counter depend
+             on which route wrote last.
+             NOTE: on a streamed response APIM estimates rather than counts (UNKNOWNS U5), so
+             this figure drifts slightly. The Yearly quota in step 7 is the authoritative cap. -->
+        <set-variable name="newUsed" value="@{
+            long used; long.TryParse((string)context.Variables["usedTokens"], out used);
+            long spent = 0;
+            try { spent = Convert.ToInt64(context.Variables["consumedTokens"]); } catch { }
+            return (used + spent).ToString();
+        }" />
+        <cache-store-value
+            key="@("used-" + (string)context.Variables["sub"])"
+            value="@((string)context.Variables["newUsed"])"
+            duration="31536000" />
+
+        <set-header name="x-governed-by" exists-action="override">
+            <value>foundry-hackathon-gateway</value>
+        </set-header>
+        <set-header name="x-budget-used" exists-action="override">
+            <value>@((string)context.Variables["newUsed"])</value>
+        </set-header>
+        <set-header name="x-budget-total" exists-action="override">
+            <value>@(((long)context.Variables["budget"]).ToString())</value>
+        </set-header>
+    </outbound>
+
+    <on-error>
+        <base />
+        <!--
+            A policy error jumps straight here: <outbound> never runs. That is where the budget
+            rejection actually lands, because llm-token-limit raises an error rather than
+            returning a response - so the rewrite has to be here, not on the outbound path.
+
+            Note what is and is not legal in this section. `set-body` is NOT allowed on its own
+            here; `return-response` is, and carries a body of its own. The allowed list is in
+            https://learn.microsoft.com/en-us/azure/api-management/api-management-error-handling-policies
+        -->
+        <set-variable name="errReason" value="@(context.LastError?.Reason ?? "unknown")" />
+        <set-header name="x-gateway-error" exists-action="override">
+            <value>@((string)context.Variables["errReason"])</value>
+        </set-header>
+
+        <choose>
+            <!-- The one-time budget. APIM's own body here is OpenAI-shaped whatever the route
+                 speaks, so an Anthropic client cannot read it. See UNKNOWNS U11. -->
+            <when condition="@(((string)context.Variables["errReason"]).Contains("QuotaExceeded"))">
+                <return-response>
+                    <set-status code="403" reason="Forbidden" />
+                    <set-header name="Content-Type" exists-action="override">
+                        <value>application/json</value>
+                    </set-header>
+                    <set-header name="x-budget-remaining" exists-action="override">
+                        <value>0</value>
+                    </set-header>
+                    <set-header name="x-budget-exhausted" exists-action="override">
+                        <value>true</value>
+                    </set-header>
+                    <set-body>{"type":"error","error":{"type":"permission_error","message":"budget_exhausted: Your token budget is fully spent. This is NOT an invalid key - the budget is one-time and does not reset. Retrying will not help. Ask an organiser for a new key."}}</set-body>
+                </return-response>
+            </when>
+
+            <!-- Rate limits. Retry-After is carried across deliberately: a client that honours
+                 it backs off correctly, and unlike the budget this limit really does refill. -->
+            <when condition="@(((string)context.Variables["errReason"]).Contains("RateLimitExceeded") || ((string)context.Variables["errReason"]).Contains("TokenLimitExceeded"))">
+                <return-response>
+                    <set-status code="429" reason="Too Many Requests" />
+                    <set-header name="Content-Type" exists-action="override">
+                        <value>application/json</value>
+                    </set-header>
+                    <set-header name="Retry-After" exists-action="override">
+                        <value>@(context.Response?.Headers.GetValueOrDefault("Retry-After", "60") ?? "60")</value>
+                    </set-header>
+                    <set-body>{"type":"error","error":{"type":"rate_limit_error","message":"rate_limited: You are sending requests faster than this gateway allows. Wait for the interval in Retry-After and continue; this is a per-minute limit, not your budget."}}</set-body>
+                </return-response>
+            </when>
+
+            <!-- Anything else still has to leave as an Anthropic error, or the client reports a
+                 malformed response and the real cause is lost. -->
+            <otherwise>
+                <return-response>
+                    <set-status code="@(context.Response != null && context.Response.StatusCode >= 400 ? context.Response.StatusCode : 500)" reason="Error" />
+                    <set-header name="Content-Type" exists-action="override">
+                        <value>application/json</value>
+                    </set-header>
+                    <set-body>@{
+                        var status = context.Response != null && context.Response.StatusCode >= 400
+                            ? context.Response.StatusCode
+                            : 500;
+                        var type = status == 401 ? "authentication_error"
+                            : status == 403 ? "permission_error"
+                            : status == 404 ? "not_found_error"
+                            : status == 429 ? "rate_limit_error"
+                            : status >= 500 ? "api_error"
+                            : "invalid_request_error";
+                        var detail = context.LastError != null && !string.IsNullOrEmpty(context.LastError.Message)
+                            ? context.LastError.Message
+                            : "The gateway could not complete this request.";
+                        return new JObject(
+                            new JProperty("type", "error"),
+                            new JProperty("error", new JObject(
+                                new JProperty("type", type),
+                                new JProperty("message", "gateway_error: " + detail)
+                            ))
+                        ).ToString();
+                    }</set-body>
+                </return-response>
+            </otherwise>
+        </choose>
+    </on-error>
+</policies>

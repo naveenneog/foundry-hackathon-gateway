@@ -21,7 +21,13 @@ import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const bicep = fs.readFileSync(path.join(root, "infra/main.bicep"), "utf8");
-const policy = fs.readFileSync(path.join(root, "infra/policy.xml"), "utf8");
+
+/** Every policy file, so a new route cannot quietly reference an undeclared named value. */
+const policyFiles = fs
+  .readdirSync(path.join(root, "infra"))
+  .filter((f) => f.endsWith(".xml"))
+  .map((f) => fs.readFileSync(path.join(root, "infra", f), "utf8"));
+const policy = policyFiles.join("\n");
 
 const PREFIX = "hackgw-";
 
@@ -41,10 +47,11 @@ const declared = new Set(
 
 describe("the policy and the infrastructure agree on every named value", () => {
   test("the policy actually references named values — otherwise this file proves nothing", () => {
+    assert.ok(policyFiles.length >= 2, `Expected several policy files, found ${policyFiles.length}.`);
     assert.ok(
       referenced.size >= 5,
-      `Expected the policy to reference several named values, found ${referenced.size}. ` +
-      `If the policy stopped using them, these tests are measuring nothing and must be rewritten.`
+      `Expected the policies to reference several named values, found ${referenced.size}. ` +
+      `If they stopped using them, these tests are measuring nothing and must be rewritten.`
     );
   });
 
@@ -67,6 +74,40 @@ describe("the policy and the infrastructure agree on every named value", () => {
       `overwrite another API's named value on a shared API Management instance.`
     );
   });
+});
+
+describe("the policy documents are well-formed enough to deploy", () => {
+  /**
+   * An XML comment may not contain `--`. A decorative rule of dashes inside a comment is the
+   * easy way to write one, and it fails validation when the policy is PUT — taking the whole
+   * ARM deployment with it. Caught here rather than at deploy time.
+   */
+  const names = fs.readdirSync(path.join(root, "infra")).filter((f) => f.endsWith(".xml"));
+
+  test("there are policy files to check", () => {
+    assert.ok(names.length >= 2, `Found ${names.length} policy files.`);
+  });
+
+  for (const name of names) {
+    const src = fs.readFileSync(path.join(root, "infra", name), "utf8");
+
+    test(`${name} has balanced comment markers`, () => {
+      const open = (src.match(/<!--/g) ?? []).length;
+      const close = (src.match(/-->/g) ?? []).length;
+      assert.equal(open, close, `${open} comment openings and ${close} closings.`);
+    });
+
+    test(`${name} has no '--' inside a comment`, () => {
+      const offenders = [...src.matchAll(/<!--([\s\S]*?)-->/g)]
+        .filter((m) => m[1].includes("--"))
+        .map((m) => m[1].trim().split("\n")[0].slice(0, 60));
+      assert.deepEqual(
+        offenders,
+        [],
+        `An XML comment cannot contain '--'. APIM rejects the policy document: ${offenders.join(" | ")}`
+      );
+    });
+  }
 });
 
 describe("no script reaches past the namespace", () => {

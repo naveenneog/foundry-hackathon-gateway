@@ -27,6 +27,16 @@ const PAIR_SEP = ";";
 const KV_SEP = "=";
 
 /**
+ * What to write when a route has no pins.
+ *
+ * Not an empty string: an APIM named value cannot reliably hold one, and the removal case —
+ * taking away a route's last pin — is exactly when the write has to succeed. A lone separator
+ * parses to zero entries in all three implementations, so the gateway answers
+ * `model_not_configured`, which is the correct behaviour for a route with nothing pinned.
+ */
+export const EMPTY_MAP = PAIR_SEP;
+
+/**
  * Parse the wire format into a plain alias -> deployment object.
  *
  * Never throws. A malformed entry is skipped rather than taking out the whole map, because a
@@ -114,4 +124,21 @@ export function buildModelMap(pairs) {
 /** The aliases a map defines, sorted, for display. */
 export function listAliases(map) {
   return Object.keys(map || {}).sort();
+}
+
+/**
+ * Join several route maps into one lookup.
+ *
+ * There is one map per route, so anything answering "is this alias configured at all?" has to
+ * see every map. Key diagnosis is the case that matters: reading only the OpenAI map reports a
+ * valid Claude alias as unconfigured, which is precisely the confidently wrong answer the
+ * diagnosis tool exists to prevent.
+ *
+ * Duplicate aliases keep the first definition, matching parseModelMap.
+ */
+export function mergeModelMaps(...maps) {
+  return maps
+    .map((m) => (typeof m === "string" ? m.trim() : ""))
+    .filter((m) => m !== "" && m !== EMPTY_MAP)
+    .join(PAIR_SEP);
 }

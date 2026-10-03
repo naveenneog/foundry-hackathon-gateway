@@ -40,10 +40,9 @@ that are actually deployed in the subscription, and serve Claude models to Claud
       *Verified 2026-10-03:* `src/apim.mjs` + `scripts/Apim.ps1` judge every instance in the
       subscription; `infra/main.bicep` adopts one via `existingApimName` and creates none.
       Named values and the logger are namespaced so nothing collides on a shared instance.
-- [ ] **P16** Choose from the models deployed across the subscription
-      *Acceptance:* the model picker lists deployments from every Foundry account in the
-      subscription, not only the configured one, shows which wire format each speaks, and refuses
-      to pin a model to a route that cannot serve it.
+- [x] **P16** Choose from the models deployed across the subscription
+      *Verified 2026-10-03:* `src/foundry.mjs` + `scripts/Models.ps1` list every Foundry account's
+      deployments, classify each by wire format, and refuse a pin that crosses routes.
 - [ ] **P17** Claude route — the Anthropic Messages API, governed
       *Acceptance:* `POST {gateway}/claude/v1/messages` with a participant key reaches a Claude
       deployment in Foundry. The same key controls apply — allowlist, time window, one-time

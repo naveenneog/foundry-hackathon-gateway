@@ -297,12 +297,21 @@ function Test-ParticipantKey {
     if ([string]::IsNullOrWhiteSpace($token)) { Write-Info 'Cancelled.'; return }
 
     # Diagnose against the map the GATEWAY currently has, not the local pins, so a pin that
-    # was never pushed shows up as the problem it is.
+    # was never pushed shows up as the problem it is. Both routes' maps are read: a key can
+    # grant a Claude alias, and reading only the OpenAI map would report it as unconfigured.
     $map = ''
     if ($state.apimName) {
-        $map = Get-GatewayNamedValue -Id 'model-map' -State $state
+        $parts = @()
+        foreach ($id in @('model-map', 'claude-model-map')) {
+            $m = Get-GatewayNamedValue -Id $id -State $state
+            if ($m -and $m.Trim() -ne '' -and $m.Trim() -ne ';') { $parts += $m.Trim() }
+        }
+        $map = ($parts -join ';')
     }
-    if (-not $map) { $map = ConvertTo-ModelMapString $state.models }
+    if (-not $map) {
+        $map = (@('openai', 'claude') | ForEach-Object { ConvertTo-ModelMapString $state.models -Route $_ } |
+            Where-Object { $_ -ne '' }) -join ';'
+    }
 
     $revoked = @(Get-IssuedKeys | Where-Object { $_.revoked } | ForEach-Object { $_.jti })
 

@@ -1,10 +1,31 @@
 # Status
 
-**Active packet:** P16 — choose from the models deployed across the subscription.
+**Active packet:** P17 — the Claude route.
 
 M1, M2 and M3 are complete and verified live. M5 (P15–P18) was requested after that: adopt an
 APIM an organisation already runs, pick from the models actually deployed in the subscription,
 and serve Claude models to Claude Code.
+
+### P16 — choose from the models deployed across the subscription — DONE
+
+| Criterion | Evidence |
+|---|---|
+| Lists every Foundry account's deployments | `Get-FoundryCatalogue`; logic in `src/foundry.mjs`, 36 tests |
+| Shows the wire format each model speaks | `wireFormatOf` / `Get-WireFormat`, pinned by a parity test |
+| Refuses a pin that crosses routes | `canPin` / `Test-CanPin` |
+
+One map per route: `hackgw-model-map` and `hackgw-claude-model-map`. A route with no pins is
+written as a lone `;`, never an empty string, so removing a route's last pin still lands.
+
+### P16 council
+
+| Seat | Verdict |
+|---|---|
+| Architect | PASS — the wire format is a property of the deployment, so the route is derived rather than chosen. A model can only be pinned where it can actually be served. |
+| Coder | BLOCK, cleared — 2 findings. Splitting the map by route broke key diagnosis: it read only the OpenAI map, so a valid Claude alias was reported `model_not_configured`. Reproduced and fixed with `mergeModelMaps`. Dead code (`Get-FoundryDeployments`, zero callers) removed. |
+| QA | PASS — the format-parity detector was negative-tested by removing a format from the script. The diagnosis regression was proved by running a real minted key through `diagnoseKey` before and after. |
+| UX | PASS — deployments are grouped by account, and one in a different account than the gateway's warns before pinning, because the gateway can only reach its own account. Claude models are named in option 4 as portal-only rather than being silently absent. |
+| Security | PASS — discovery is read-only. No new credential path; the alias map still carries no secret. |
 
 ### P15 — attach to an existing API Management instance — DONE
 

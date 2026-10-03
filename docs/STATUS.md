@@ -1,6 +1,41 @@
 # Status
 
-**Active packet:** none — M1, M2 and M3 complete and verified live.
+**Active packet:** P16 — choose from the models deployed across the subscription.
+
+M1, M2 and M3 are complete and verified live. M5 (P15–P18) was requested after that: adopt an
+APIM an organisation already runs, pick from the models actually deployed in the subscription,
+and serve Claude models to Claude Code.
+
+### P15 — attach to an existing API Management instance — DONE
+
+| Criterion | Evidence |
+|---|---|
+| Instances listed with a verdict | `Select-ApimInstance` in `scripts/Apim.ps1`; logic in `src/apim.mjs`, 53 tests |
+| Adds to the chosen instance, creates no second one | `infra/main.bicep` `apimNew` is `if (empty(existingApimName))`; compiled with `az bicep build` |
+| Classic tier refused for the Claude route | `classifyApim` blocker `classic_tier`; UNKNOWNS U12 |
+| A pre-existing role assignment does not fail the deployment | `needsRoleAssignment` / `Test-FoundryRoleNeeded` |
+
+Not in the original criteria, found during the packet and fixed: named values and the logger are
+namespaced `hackgw-` so nothing collides on a shared instance, and an API path already in use is
+a blocker rather than a deploy-time failure.
+
+### P15 council
+
+| Seat | Verdict |
+|---|---|
+| Architect | PASS-WITH-NOTES — two declarations (`apimNew` + `existing`) is the supported shape. The adopted instance must share the deployment's resource group; recorded in ADR-0008 rather than worked around. |
+| Coder | BLOCK, cleared — 8 findings, all fixed. The critical one: `module foundryRole` lost its ARM dependency when `apim` became an `existing` reference, so every fresh deployment would resolve `identity.principalId` against an instance that did not exist yet. |
+| QA | PASS — the test that should have caught that bug matched `dependsOn` anywhere in the file; it now checks every direct child. Three detectors were negative-tested: the namespace check, the transcription-parity check, and `unknowns.open`. |
+| UX | PASS — every instance is listed including unusable ones, each with the reason and whether deploying would add or update. The resource group is shown rather than prompted when an instance is adopted, because a free-text answer there fails as `ResourceNotFound` on the APIM name. |
+| Security | PASS — namespacing removes the cross-API overwrite. The signing secret still never appears in argv. Enabling a missing managed identity is left to the operator: `az apim update` sets identity to `None` unless `--enable-managed-identity true` is passed, so doing it automatically could strip an identity other APIs depend on. |
+
+### Detector repaired
+
+`unknowns.open` reads markdown **table rows** containing `OPEN`. `docs/UNKNOWNS.md` was prose, so
+the check had never been able to see anything in this repository and passed while measuring
+nothing. The register now has a status table, and the check was negative-tested by marking U9
+`OPEN` and confirming the warning.
+
 
 ## Live deployment (verified 2026-08-31)
 

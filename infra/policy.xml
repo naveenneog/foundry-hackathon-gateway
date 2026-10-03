@@ -38,7 +38,7 @@
             failed-validation-error-message="Your access key is invalid, not yet active, or has expired. Ask an organiser for a new key."
             output-token-variable-name="jwt">
             <issuer-signing-keys>
-                <key>{{signing-key}}</key>
+                <key>{{hackgw-signing-key}}</key>
             </issuer-signing-keys>
             <audiences>
                 <audience>hackathon-gateway</audience>
@@ -60,7 +60,7 @@
         <!-- 3. Revocation denylist. Sentinel commas make the match exact, so "k_a" cannot
              revoke "k_aaa". Same trick as the sibling Claude gateway. -->
         <choose>
-            <when condition="@(("{{revoked-keys}}").Contains("," + (string)context.Variables["jti"] + ","))">
+            <when condition="@(("{{hackgw-revoked-keys}}").Contains("," + (string)context.Variables["jti"] + ","))">
                 <return-response>
                     <set-status code="403" reason="Forbidden" />
                     <set-header name="Content-Type" exists-action="override">
@@ -171,7 +171,7 @@
              DeploymentNotFound, which reads as a gateway fault rather than a config mistake. -->
         <set-variable name="deployment" value="@{
             var alias = (string)context.Variables["requestedModel"];
-            foreach (var entry in "{{model-map}}".Split(';')) {
+            foreach (var entry in "{{hackgw-model-map}}".Split(';')) {
                 var idx = entry.IndexOf('=');
                 if (idx <= 0) { continue; }
                 var key = entry.Substring(0, idx).Trim().ToLowerInvariant();
@@ -251,7 +251,7 @@
              the hard backstop that does not depend on the cache surviving. -->
         <llm-token-limit
             counter-key="@((string)context.Variables["sub"])"
-            tokens-per-minute="{{tpm-per-key}}"
+            tokens-per-minute="{{hackgw-tpm-per-key}}"
             estimate-prompt-tokens="false"
             retry-after-header-name="Retry-After"
             remaining-tokens-header-name="x-ratelimit-remaining-tokens"
@@ -267,7 +267,7 @@
         <!-- 8. Request-rate ceiling. Token budgets alone do not stop a runaway agent loop
              making many small calls — opencode can generate a lot of them. -->
         <rate-limit-by-key
-            calls="{{calls-per-minute}}"
+            calls="{{hackgw-calls-per-minute}}"
             renewal-period="60"
             counter-key="@((string)context.Variables["sub"])"
             retry-after-header-name="Retry-After" />
@@ -322,7 +322,7 @@
             //
             // Parsed defensively rather than cast: a null, a string, a float or an out-of-range
             // value would throw on a direct (int) cast and surface as a 500.
-            var cap = int.Parse("{{max-output-tokens}}");
+            var cap = int.Parse("{{hackgw-max-output-tokens}}");
             foreach (var field in new[] { "max_tokens", "max_completion_tokens" }) {
                 int requested;
                 if (body[field] == null

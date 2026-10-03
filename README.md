@@ -48,13 +48,37 @@ cd foundry-hackathon-gateway
 az login
 
 ./admin.ps1
-#  1  Deploy / update the gateway     (~5 min)
-#  3  Deploy a DeepSeek model         (if you have not already)
-#  4  Issue a participant key
+#  1  Deploy / update the gateway     (~5 min, or seconds onto an instance you already run)
+#  4  Deploy a new model to Foundry   (if you have not already)
+#  5  Issue a participant key
 ```
 
-Option 4 writes `handouts/<team>/` containing a ready-to-paste `opencode.json` and a one-page card
+Option 5 writes `handouts/<team>/` containing a ready-to-paste `opencode.json` and a one-page card
 for the participant.
+
+### Use an API Management instance you already have
+
+Option 1 lists every API Management instance in the subscription before it creates one:
+
+```
+  API Management instances in this subscription:
+    [1] apim-corp                    StandardV2   eastus2    add
+        StandardV2. Usable; 'deepseek-gateway' would be added alongside anything
+        already published here.
+    [2] apim-legacy                  Developer    eastus2    unusable
+        The Claude route needs a v2 tier (BasicV2, StandardV2 or PremiumV2). Developer
+        accepts the token policy and meters zero Anthropic tokens, so budgets would
+        never fire.
+    [3] Create a new instance
+```
+
+Picking one adds this gateway's API, policy and named values to it and creates nothing else. The
+instance keeps its SKU, publisher details and identity. Everything written at instance scope is
+prefixed `hackgw-`, so it cannot collide with another API published there.
+
+An instance is refused rather than flagged when it cannot enforce the controls: a classic tier for
+the Claude route, the Consumption tier, an instance that is not `Succeeded`, or one with no
+system-assigned managed identity. See [ADR-0008](docs/adr/0008-adopt-existing-apim.md).
 
 **Requirements:** an Azure subscription, a Microsoft Foundry (`AIServices`) account, the Azure CLI,
 Node 20+, and **PowerShell 7.0 or later**.
@@ -164,22 +188,29 @@ Done. Files with TODOs: src/alpha.py, src/gamma.py. Total files in src/: 3.
 
 ## Tuning
 
-Limits are API Management named values, so changing one is a config edit, not a redeployment:
+Limits are API Management named values, so changing one is a config edit, not a redeployment.
+Every name is prefixed `hackgw-`, so nothing here can collide with another API on a shared
+instance ([ADR-0008](docs/adr/0008-adopt-existing-apim.md)):
 
 | Named value | Default | Meaning |
 |---|---|---|
-| `tpm-per-key` | 40,000 | tokens/minute per participant |
-| `calls-per-minute` | 240 | request ceiling per participant |
-| `max-output-tokens` | 8,192 | hard cap on any single completion |
-| `model-flash` / `model-pro` | — | what each alias resolves to |
-| `revoked-keys` | `,` | denylist, managed by `admin.ps1` |
+| `hackgw-tpm-per-key` | 40,000 | tokens/minute per participant |
+| `hackgw-calls-per-minute` | 240 | request ceiling per participant |
+| `hackgw-max-output-tokens` | 8,192 | hard cap on any single completion |
+| `hackgw-model-map` | — | `alias=deployment;alias=deployment` ([ADR-0007](docs/adr/0007-model-map-named-value.md)) |
+| `hackgw-revoked-keys` | `,` | denylist, managed by `admin.ps1` |
+| `hackgw-signing-key` | — | HS256 secret; rotating it invalidates every outstanding key |
 
 ```powershell
 az apim nv update -g rg-hackathon-gateway --service-name <apim> `
-    --named-value-id max-output-tokens --value 4096
+    --named-value-id hackgw-max-output-tokens --value 4096
 ```
 
-**Emergency stop:** rotating `signing-key` invalidates every outstanding key at once.
+**Emergency stop:** rotating `hackgw-signing-key` invalidates every outstanding key at once.
+
+A gateway deployed before the prefix existed still has the old unprefixed names. `admin.ps1`
+reads either, and the next deployment writes only the prefixed ones — the old values are left in
+place and are no longer read, so delete them once the gateway has been redeployed.
 
 ### If two people run the event
 

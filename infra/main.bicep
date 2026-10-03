@@ -22,7 +22,10 @@ param publisherEmail string
 @description('Publisher name shown on the API Management instance.')
 param publisherName string = 'Hackathon Organisers'
 
-@description('API Management SKU. DeepSeek returns the OpenAI Chat Completions shape, which llm-* policies parse on ALL tiers - unlike the Anthropic shape, which needs v2. BasicV2 is still the default for fast provisioning (minutes rather than 30-45).')
+@description('Name of an existing API Management instance to deploy onto, which must live in this resource group and already have a system-assigned identity. Leave empty to create apim-{namePrefix}. The Claude route additionally requires a v2 SKU - see docs/UNKNOWNS.md U12.')
+param existingApimName string = ''
+
+@description('API Management SKU. Used only when creating an instance. DeepSeek returns the OpenAI Chat Completions shape, which llm-* policies parse on ALL tiers - unlike the Anthropic shape, which needs v2. BasicV2 is still the default for fast provisioning (minutes rather than 30-45).')
 @allowed([
   'BasicV2'
   'StandardV2'
@@ -54,7 +57,8 @@ param callsPerMinute int = 240
 @description('Hard cap on max_tokens for any single completion, so one call cannot drain a budget.')
 param maxOutputTokens int = 8192
 
-var apimName = 'apim-${namePrefix}'
+var createApim = empty(existingApimName)
+var apimName = createApim ? 'apim-${namePrefix}' : existingApimName
 var appInsightsName = 'appi-${namePrefix}'
 var workspaceName = 'log-${namePrefix}'
 var apiId = 'deepseek-gateway'
@@ -98,9 +102,14 @@ resource appInsights 'Microsoft.Insights/components@2020-02-02' = {
 
 // ---------------------------------------------------------------------------
 // Gateway
+//
+// Two declarations, deliberately. `apimNew` creates an instance only when none was named;
+// `apim` is an `existing` reference that every child hangs off, so adopting an instance never
+// rewrites its SKU, publisher details or identity. An `existing` reference produces no ARM
+// dependency, which is why the children carry an explicit dependsOn.
 // ---------------------------------------------------------------------------
 
-resource apim 'Microsoft.ApiManagement/service@2024-05-01' = {
+resource apimNew 'Microsoft.ApiManagement/service@2024-05-01' = if (empty(existingApimName)) {
   name: apimName
   location: location
   sku: {
@@ -116,9 +125,16 @@ resource apim 'Microsoft.ApiManagement/service@2024-05-01' = {
   }
 }
 
+resource apim 'Microsoft.ApiManagement/service@2024-05-01' existing = {
+  name: apimName
+}
+
 resource apimLogger 'Microsoft.ApiManagement/service/loggers@2024-05-01' = {
   parent: apim
-  name: 'appinsights'
+  // Namespaced. `appinsights` is the name nearly every APIM sample uses, so on an instance
+  // somebody else runs it is the logger most likely to already exist and be silently repointed
+  // at our Application Insights.
+  name: 'hackgw-appinsights'
   properties: {
     loggerType: 'applicationInsights'
     description: 'Token metrics and request logs for the hackathon gateway'
@@ -127,6 +143,9 @@ resource apimLogger 'Microsoft.ApiManagement/service/loggers@2024-05-01' = {
       instrumentationKey: appInsights.properties.InstrumentationKey
     }
   }
+  dependsOn: [
+    apimNew
+  ]
 }
 
 resource api 'Microsoft.ApiManagement/service/apis@2024-05-01' = {
@@ -149,6 +168,9 @@ resource api 'Microsoft.ApiManagement/service/apis@2024-05-01' = {
     // so a Bearer-prefixed value can never be rescued by a policy. See ADR-0002.
     subscriptionRequired: false
   }
+  dependsOn: [
+    apimNew
+  ]
 }
 
 resource chatCompletions 'Microsoft.ApiManagement/service/apis/operations@2024-05-01' = {
@@ -185,24 +207,31 @@ resource listModels 'Microsoft.ApiManagement/service/apis/operations@2024-05-01'
 
 // ---------------------------------------------------------------------------
 // Policy parameters, so limits are a config change rather than a redeploy
+//
+// Every name is prefixed `hackgw-`. Named values are INSTANCE-wide: on an API Management
+// instance somebody else also uses, an unprefixed `signing-key` or `model-map` would overwrite
+// theirs. tests/brownfield-apim.test.mjs pins the prefix and the policy/Bicep agreement.
 // ---------------------------------------------------------------------------
 
 resource nvSigningKey 'Microsoft.ApiManagement/service/namedValues@2024-05-01' = {
   parent: apim
-  name: 'signing-key'
+  name: 'hackgw-signing-key'
   properties: {
-    displayName: 'signing-key'
+    displayName: 'hackgw-signing-key'
     value: signingKey
     secret: true
   }
+  dependsOn: [
+    apimNew
+  ]
 }
 
 var plainNamedValues = [
-  { key: 'revoked-keys', value: revokedKeys }
-  { key: 'tpm-per-key', value: string(tpmPerKey) }
-  { key: 'calls-per-minute', value: string(callsPerMinute) }
-  { key: 'max-output-tokens', value: string(maxOutputTokens) }
-  { key: 'model-map', value: modelMap }
+  { key: 'hackgw-revoked-keys', value: revokedKeys }
+  { key: 'hackgw-tpm-per-key', value: string(tpmPerKey) }
+  { key: 'hackgw-calls-per-minute', value: string(callsPerMinute) }
+  { key: 'hackgw-max-output-tokens', value: string(maxOutputTokens) }
+  { key: 'hackgw-model-map', value: modelMap }
 ]
 
 resource apimNamedValues 'Microsoft.ApiManagement/service/namedValues@2024-05-01' = [
@@ -213,6 +242,9 @@ resource apimNamedValues 'Microsoft.ApiManagement/service/namedValues@2024-05-01
       displayName: nv.key
       value: nv.value
     }
+    dependsOn: [
+      apimNew
+    ]
   }
 ]
 
@@ -260,6 +292,12 @@ module foundryRole 'foundry-role.bicep' = {
     foundryAccountName: foundryAccountName
     principalId: apim.identity.principalId
   }
+  // `apim` is an `existing` reference, which creates no ARM dependency. Without this the role
+  // grant is scheduled in the first parallel wave and resolves identity.principalId against an
+  // instance that does not exist yet, failing every fresh deployment.
+  dependsOn: [
+    apimNew
+  ]
 }
 
 output apimName string = apim.name

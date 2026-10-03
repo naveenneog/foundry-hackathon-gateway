@@ -300,8 +300,7 @@ function Test-ParticipantKey {
     # was never pushed shows up as the problem it is.
     $map = ''
     if ($state.apimName) {
-        $map = az apim nv show -g $state.resourceGroup --service-name $state.apimName `
-            --named-value-id model-map --query value -o tsv 2>$null
+        $map = Get-GatewayNamedValue -Id 'model-map' -State $state
     }
     if (-not $map) { $map = ConvertTo-ModelMapString $state.models }
 

@@ -31,6 +31,28 @@ A packet is *one behaviour, testable in isolation, shippable in one commit*.
       *Verified:* 15/15 checks pass in `scripts/Test-Governance.ps1`.
 - [x] **P10** Documentation
 
+## Milestone M5 — Bring your own gateway, and bring Claude
+
+Requested after M3: adopt an APIM instance an organisation already runs, choose from the models
+that are actually deployed in the subscription, and serve Claude models to Claude Code.
+
+- [x] **P15** Attach to an existing API Management instance
+      *Verified 2026-10-03:* `src/apim.mjs` + `scripts/Apim.ps1` judge every instance in the
+      subscription; `infra/main.bicep` adopts one via `existingApimName` and creates none.
+      Named values and the logger are namespaced so nothing collides on a shared instance.
+- [ ] **P16** Choose from the models deployed across the subscription
+      *Acceptance:* the model picker lists deployments from every Foundry account in the
+      subscription, not only the configured one, shows which wire format each speaks, and refuses
+      to pin a model to a route that cannot serve it.
+- [ ] **P17** Claude route — the Anthropic Messages API, governed
+      *Acceptance:* `POST {gateway}/claude/v1/messages` with a participant key reaches a Claude
+      deployment in Foundry. The same key controls apply — allowlist, time window, one-time
+      budget, revocation, attribution — and every rejection is an Anthropic-shaped error body.
+- [ ] **P18** Claude Code verified, and the participant setup documented
+      *Acceptance:* `scripts/Test-Governance.ps1 -Route claude` proves each control fires against
+      a live Claude route, and the README states the exact `ANTHROPIC_BASE_URL` /
+      `ANTHROPIC_AUTH_TOKEN` / `ANTHROPIC_MODEL` values a participant sets.
+
 ## Milestone M4 — Hardening (only if this outlives one event)
 
 - [ ] **P11** Move the budget counter to external Redis

@@ -125,8 +125,7 @@ function Test-Prerequisites {
     $st = Get-State
     if ($st.apimName -and (Test-Path $script:SecretPath)) {
         $localSecret = (Get-Content $script:SecretPath -Raw).Trim()
-        $deployed = az apim nv show-secret -g $st.resourceGroup --service-name $st.apimName `
-            --named-value-id signing-key --query value -o tsv 2>$null
+        $deployed = Get-GatewayNamedValue -Id 'signing-key' -State $st -Secret
         if ($deployed) {
             if ($deployed -eq $localSecret) {
                 Write-Ok 'Signing secret matches the deployed gateway'

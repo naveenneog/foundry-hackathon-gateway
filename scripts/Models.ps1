@@ -182,9 +182,7 @@ function Edit-ModelPins {
                 # the map in a single named value: no redeployment needed.
                 if ($state.apimName) {
                     $mapString = ConvertTo-ModelMapString $pins
-                    az apim nv update -g $state.resourceGroup --service-name $state.apimName `
-                        --named-value-id model-map --value $mapString -o none 2>$null
-                    if ($LASTEXITCODE -eq 0) {
+                    if (Set-GatewayNamedValue -Id 'model-map' -Value $mapString -State $state) {
                         Write-Ok 'Pushed to the gateway. Live on the next request - no redeploy needed.'
                     } else {
                         Write-Err 'Could not update the gateway. Run option 1 to redeploy.'

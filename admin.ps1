@@ -103,7 +103,18 @@ function Get-State {
             }
             $s | Add-Member -NotePropertyName models -NotePropertyValue $migrated -Force
         }
-        $s.models = @($s.models)
+        # ConvertFrom-Json objects reject assignment to a property the JSON did not contain, so
+        # a state file written before P15 would throw the moment an instance is adopted.
+        if (-not ($s.PSObject.Properties.Name -contains 'existingApimName')) {
+            $s | Add-Member -NotePropertyName existingApimName -NotePropertyValue $null -Force
+        }
+        # Pins written before the Claude route existed have no route and are OpenAI-shaped.
+        $s.models = @(@($s.models) | ForEach-Object {
+            if ($_ -and -not ($_.PSObject.Properties.Name -contains 'route' -and $_.route)) {
+                $_ | Add-Member -NotePropertyName route -NotePropertyValue 'openai' -Force
+            }
+            $_
+        })
         return $s
     }
     return [pscustomobject]@{
@@ -112,11 +123,13 @@ function Get-State {
         foundryResourceGroup = $FoundryResourceGroup
         location             = $Location
         apimName             = $null
+        existingApimName     = $null
         gatewayUrl           = $null
-        # Alias -> deployment pins. Any number of models; see ADR-0007.
+        # Alias -> deployment pins. Any number of models; see ADR-0007. `route` says which wire
+        # format the deployment speaks, and therefore which gateway route can serve it.
         models               = @(
-            [pscustomobject]@{ alias = 'flash'; deployment = 'deepseek-v4-flash' }
-            [pscustomobject]@{ alias = 'pro';   deployment = 'deepseek-v4-pro' }
+            [pscustomobject]@{ alias = 'flash'; deployment = 'deepseek-v4-flash'; route = 'openai' }
+            [pscustomobject]@{ alias = 'pro';   deployment = 'deepseek-v4-pro';   route = 'openai' }
         )
     }
 }
@@ -219,6 +232,7 @@ function ConvertTo-Dto {
 
 # Preflight lives in its own file to keep this one within its complexity budget. It is
 # dot-sourced, so it runs in this scope and can use the helpers defined above.
+. (Join-Path $PSScriptRoot 'scripts/Apim.ps1')
 . (Join-Path $PSScriptRoot 'scripts/Admin-Preflight.ps1')
 
 # --------------------------------------------------------------------------------------------
@@ -229,8 +243,34 @@ function Invoke-Deploy {
     $state = Get-State
     Write-Head 'Deploy the gateway'
 
-    $state.resourceGroup = Read-Default 'Resource group for the gateway' (Coalesce $state.resourceGroup 'rg-hackathon-gateway')
-    $state.location      = Read-Default 'Location' (Coalesce $state.location 'eastus2')
+    # ------------------------------------------------------------------------------------
+    # Adopt an instance the organisation already runs, or create one.
+    #
+    # Child resources must share the deployment's resource group, so adopting an instance
+    # sets the resource group to that instance's. See ADR-0008.
+    # ------------------------------------------------------------------------------------
+    if (-not $state.apimName) {
+        $chosen = Select-ApimInstance -Route 'openai'
+        if ($chosen) {
+            $state.existingApimName = $chosen.name
+            $state.resourceGroup    = $chosen.resourceGroup
+            $state.location         = $chosen.location
+        }
+    } elseif ($state.existingApimName) {
+        Write-Info "Updating the gateway on the adopted instance '$($state.existingApimName)'."
+    }
+
+    if ($state.existingApimName) {
+        # Not a prompt. ARM child resources share their parent's scope, so deploying into any
+        # other resource group resolves the `existing` reference to a name that is not there
+        # and fails every child with ResourceNotFound - an error that names the API Management
+        # instance rather than the real mistake.
+        Write-Info "Resource group : $($state.resourceGroup)  (fixed by '$($state.existingApimName)')"
+        Write-Info "Location       : $($state.location)"
+    } else {
+        $state.resourceGroup = Read-Default 'Resource group for the gateway' (Coalesce $state.resourceGroup 'rg-hackathon-gateway')
+        $state.location      = Read-Default 'Location' (Coalesce $state.location 'eastus2')
+    }
 
     if (-not $state.foundryAccount) {
         Write-Info 'Looking for Foundry accounts...'
@@ -334,9 +374,8 @@ function Invoke-Deploy {
     # "Deploy / update", so this WILL be re-run. Read the live value and pass it through.
     $revoked = ','
     if ($state.apimName) {
-        $live = az apim nv show -g $state.resourceGroup --service-name $state.apimName `
-            --named-value-id revoked-keys --query value -o tsv 2>$null
-        if ($LASTEXITCODE -eq 0 -and $live) {
+        $live = Get-GatewayNamedValue -Id 'revoked-keys' -State $state
+        if ($live) {
             $revoked = $live
             $count = @($live.Split(',') | Where-Object { $_ }).Count
             Write-Info "Preserving $count revoked key(s) across this deployment."
@@ -362,6 +401,7 @@ function Invoke-Deploy {
             parameters     = @{
                 foundryAccountName   = @{ value = $state.foundryAccount }
                 foundryResourceGroup = @{ value = $state.foundryResourceGroup }
+                existingApimName     = @{ value = [string]$state.existingApimName }
                 publisherEmail       = @{ value = $email }
                 signingKey           = @{ value = $secret }
                 modelMap             = @{ value = (ConvertTo-ModelMapString $state.models) }
@@ -473,10 +513,9 @@ function Revoke-Key {
 
     $state = Get-State
     if ($state.apimName) {
-        az apim nv update -g $state.resourceGroup --service-name $state.apimName `
-            --named-value-id revoked-keys --value $value -o none
-        if ($LASTEXITCODE -eq 0) { Write-Ok "Revoked $($target.subject). Takes effect on the next request." }
-        else { Write-Err 'Could not update the gateway denylist.' }
+        if (Set-GatewayNamedValue -Id 'revoked-keys' -Value $value -State $state) {
+            Write-Ok "Revoked $($target.subject). Takes effect on the next request."
+        } else { Write-Err 'Could not update the gateway denylist.' }
     } else {
         Write-Warn 'Gateway not deployed; recorded locally only.'
     }

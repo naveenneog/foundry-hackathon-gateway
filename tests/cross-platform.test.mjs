@@ -43,14 +43,17 @@ ${snippet}`;
 const q = (s) => `'${String(s).replace(/'/g, "''")}'`;
 
 /**
- * Remove SeSecurityPrivilege from the test process's own token.
+ * Remove the admin-only file privileges from the test process's own token, so it holds what an
+ * operator who is not elevated holds.
  *
- * GitHub's Windows runners are elevated and hold it, so Set-Acl's first, all-sections write
- * succeeds there and the retry that fails for everyone else never runs - a regression test without
- * this is green in CI whatever the code does. An operator who is not elevated never holds it.
- * Prints "PRIV 0" when it was removed and "PRIV 1300" (ERROR_NOT_ALL_ASSIGNED) when it was not held.
+ * GitHub's Windows runners are elevated. Removing SeSecurityPrivilege alone was not enough: a
+ * negative-test run with Set-Acl put back stayed green on windows-latest after the test reported
+ * "held and has been removed", because Set-Acl enables SeRestorePrivilege before it writes, and
+ * an elevated runner holds that too. A standard user token holds none of these four.
+ * Prints "PRIV <name> 0" when one was removed and "PRIV <name> 1300" (ERROR_NOT_ALL_ASSIGNED)
+ * when it was not held.
  */
-const DROP_SECURITY_PRIVILEGE = `
+const DROP_ADMIN_FILE_PRIVILEGES = `
 Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
@@ -75,8 +78,11 @@ public static class FhgPriv {
     }
 }
 '@
-"PRIV $([FhgPriv]::Remove('SeSecurityPrivilege'))"
+foreach ($p in 'SeSecurityPrivilege', 'SeRestorePrivilege', 'SeBackupPrivilege', 'SeTakeOwnershipPrivilege') {
+    "PRIV $p $([FhgPriv]::Remove($p))"
+}
 `;
+const ADMIN_FILE_PRIVILEGES = ["SeSecurityPrivilege", "SeRestorePrivilege", "SeBackupPrivilege", "SeTakeOwnershipPrivilege"];
 
 describe("the signing secret is owner-only on this platform", () => {
   let dir;
@@ -140,13 +146,18 @@ describe("the signing secret is owner-only on this platform", () => {
     const f = join(dir, "twice.txt");
     writeFileSync(f, "not-a-real-secret");
     const p = q(f);
-    const r = run(`${isWindows ? DROP_SECURITY_PRIVILEGE : ""}
+    const r = run(`${isWindows ? DROP_ADMIN_FILE_PRIVILEGES : ""}
 Protect-File -Path ${p}; Protect-File -Path ${p}; Protect-File -Path ${p}; 'third ok'`);
     if (isWindows) {
-      assert.match(r.stdout, /PRIV (0|1300)\b/, `could not drop SeSecurityPrivilege: ${r.stdout} ${r.stderr}`);
-      // Recorded so a CI log shows which case ran: an elevated runner holds the privilege and
-      // has it removed; an operator who is not elevated never held it.
-      t.diagnostic(/PRIV 0\b/.test(r.stdout) ? "SeSecurityPrivilege was held and has been removed" : "SeSecurityPrivilege was not held");
+      const removed = [];
+      for (const name of ADMIN_FILE_PRIVILEGES) {
+        const m = r.stdout.match(new RegExp(`PRIV ${name} (\\d+)`));
+        assert.ok(m && (m[1] === "0" || m[1] === "1300"), `could not drop ${name}: ${r.stdout} ${r.stderr}`);
+        if (m[1] === "0") removed.push(name);
+      }
+      // Recorded so a CI log shows which case ran: an elevated runner holds these and has them
+      // removed; an operator who is not elevated never held them.
+      t.diagnostic(removed.length ? `held and removed: ${removed.join(", ")}` : "none of the admin file privileges were held");
     }
     assert.equal(r.status, 0, `a repeat call failed: ${r.stderr}`);
     assert.match(r.stdout, /third ok/);

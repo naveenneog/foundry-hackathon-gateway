@@ -1,6 +1,6 @@
 # Status
 
-**Active packet:** P26 — macOS and Linux run the same console. Awaiting the CI matrix.
+**Active packet:** none — P26 complete, CI green on all three platforms.
 
 M1, M2, M3 and M5 are complete. M5 (P15–P19) added: adopt an APIM an organisation already runs,
 pick from the models actually deployed in the subscription, serve Claude models to Claude Code,
@@ -20,7 +20,7 @@ and prove it live.
 | `flash` / `pro` | `deepseek-v4-flash` / `deepseek-v4-pro` |
 | `sonnet-5` / `opus-5` | `claude-sonnet-5` / `claude-opus-5` |
 
-### P26 — macOS and Linux run the same console — DONE
+### P26 — macOS and Linux run the same console — DONE (`7557aaf`, `5bf3c45`, `6bcb87e`)
 
 The request was "an equivalent script for Mac and Linux, tested in CI". An audit of all six
 `.ps1` files found exactly two Windows-only blocks, both the same ACL call: no `cmd /c`, no
@@ -89,6 +89,12 @@ distro rather than Debian-only commands; `admin.sh` follows symlinks, since putt
 
 Both new ordering assertions were negative-tested: writing before restricting, and dropping the
 cleanup, each turn the test red.
+
+**Verified** on run
+[37208582696](https://github.com/naveenneog/foundry-hackathon-gateway/actions/runs/37208582696):
+green on all four jobs. The macOS log reads
+`/bin/bash (3.2.57(1)-release): HANDOVER ok args=3` — the handover line executing with zero
+arguments under the exact bash that would have rejected it.
 
 ### P25 — deploy onto whatever is already there — DONE (`3eab12e`)
 

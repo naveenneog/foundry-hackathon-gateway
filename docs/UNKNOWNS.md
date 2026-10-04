@@ -60,6 +60,15 @@ retry still includes the SACL, and writing a SACL requires `SeSecurityPrivilege`
 
 The suite was green because every test called `Protect-File` once per file.
 
+GitHub's Windows runners are elevated, which hides the defect in CI. A negative-test run on a
+throwaway branch with `Set-Acl` restored stayed green on `windows-latest` even after the test
+removed `SeSecurityPrivilege` from its own token. `Set-Acl` enables `SeRestorePrivilege` before it
+writes, and the elevated runner holds that too. With all four admin-only file privileges removed
+(Security, Restore, Backup, TakeOwnership), which is what a standard user token lacks, the same
+mutant failed on `windows-latest` with the operator's message
+([run 37218967361](https://github.com/naveenneog/foundry-hackathon-gateway/actions/runs/37218967361)).
+The test removes all four.
+
 **Fix:** `Protect-File` reads only the `Access` section through
 `System.IO.FileSystemAclExtensions` and persists through .NET, which writes only the sections that
 changed

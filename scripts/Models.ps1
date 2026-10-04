@@ -143,6 +143,39 @@ function Get-FoundryCatalogue {
     return $out
 }
 
+function Get-FoundryAccountList {
+    <# Every Foundry (AIServices) account in the subscription. #>
+    return @(az cognitiveservices account list --query "[?kind=='AIServices']" -o json 2>$null | ConvertFrom-Json)
+}
+
+function Find-FoundryAccount {
+    <# The Foundry account with this name in the subscription, or $null. #>
+    param([string]$Name, $Accounts)
+    if (-not $Name) { return $null }
+    # Normalised: a function's array output arrives as $null, one object or an array, and
+    # @($null) is a one-element array.
+    $all = @(@(if ($PSBoundParameters.ContainsKey('Accounts')) { $Accounts } else { Get-FoundryAccountList }) | Where-Object { $_ })
+    return (@($all | Where-Object { $_.name -eq $Name }) | Select-Object -First 1)
+}
+
+function Sync-FoundryAccount {
+    <#
+        Check the recorded account exists, and record the resource group it is actually in.
+
+        Options 2 and 3 read one account, so the resource group matters: with the wrong one
+        `account show` fails and the account looks empty. Returns $false when the account is not
+        in the subscription at all.
+    #>
+    param($State)
+    $found = Find-FoundryAccount -Name $State.foundryAccount
+    if (-not $found) { return $false }
+    if ([string]$found.resourceGroup -ne [string]$State.foundryResourceGroup) {
+        Write-Info "'$($found.name)' is in resource group '$($found.resourceGroup)', not '$($State.foundryResourceGroup)'. Using '$($found.resourceGroup)'."
+        $State | Add-Member -NotePropertyName foundryResourceGroup -NotePropertyValue ([string]$found.resourceGroup) -Force
+    }
+    return $true
+}
+
 function Select-FoundryAccount {
     <#
         Choose the Foundry account the gateway uses, and record it on the state. Every model
@@ -151,10 +184,10 @@ function Select-FoundryAccount {
         Returns $false when there is nothing to choose or the answer is not a listed number; the
         state is left untouched in that case.
     #>
-    param($State)
+    param($State, $Accounts)
 
     Write-Info 'Looking for Foundry accounts...'
-    $accounts = @(az cognitiveservices account list --query "[?kind=='AIServices']" -o json 2>$null | ConvertFrom-Json)
+    $accounts = @(@(if ($PSBoundParameters.ContainsKey('Accounts')) { $Accounts } else { Get-FoundryAccountList }) | Where-Object { $_ })
     if ($accounts.Count -eq 0) {
         Write-Warn 'No Foundry (AIServices) accounts were found in this subscription.'
         return $false
@@ -175,6 +208,44 @@ function Select-FoundryAccount {
     $State | Add-Member -NotePropertyName foundryAccount -NotePropertyValue ([string]$chosen.name) -Force
     $State | Add-Member -NotePropertyName foundryResourceGroup -NotePropertyValue ([string]$chosen.resourceGroup) -Force
     Write-Ok "Using $($chosen.name). Models are pinned from this account."
+    return $true
+}
+
+function Read-FoundryAccount {
+    <#
+        Option 1's account step. Offers the list when no account is recorded or the recorded one
+        no longer exists, lets the operator type another name, and takes the resource group from
+        where that account actually is. The prompt used to default to the previous account's
+        resource group, so changing account recorded a pair that does not exist.
+
+        Returns $false when no account name is given.
+    #>
+    param($State)
+
+    $all = Get-FoundryAccountList
+    if ($State.foundryAccount -and -not (Find-FoundryAccount -Name $State.foundryAccount -Accounts $all)) {
+        Write-Warn "'$($State.foundryAccount)' was not found among the Foundry accounts in this subscription."
+        $State | Add-Member -NotePropertyName foundryAccount -NotePropertyValue '' -Force
+    }
+    if (-not $State.foundryAccount) { [void](Select-FoundryAccount -State $State -Accounts $all) }
+
+    $name = ([string](Read-Default 'Foundry account name' $State.foundryAccount)).Trim()
+    if (-not $name) {
+        Write-Warn 'No Foundry account was given. The gateway needs one: it is where the models are.'
+        return $false
+    }
+
+    $found = Find-FoundryAccount -Name $name -Accounts $all
+    $rgDefault = if ($found) { [string]$found.resourceGroup }
+                 elseif ($name -eq $State.foundryAccount) { [string]$State.foundryResourceGroup }
+                 else { '' }
+    if (-not $found) {
+        Write-Warn "'$name' was not found among the Foundry accounts in this subscription. The deployment plan will block on it."
+    }
+    $rg = ([string](Read-Default 'Foundry resource group' $rgDefault)).Trim()
+
+    $State | Add-Member -NotePropertyName foundryAccount -NotePropertyValue $name -Force
+    $State | Add-Member -NotePropertyName foundryResourceGroup -NotePropertyValue $rg -Force
     return $true
 }
 
@@ -237,8 +308,13 @@ function Show-Models {
 
     $pinned = @($state.models)
     # Once the gateway has an account, that account is all it can reach, so it is all this shows.
-    # Before one is chosen the whole subscription is listed, to help choose.
-    $scoped = [bool]$state.foundryAccount
+    # Before one is chosen - or when the recorded one is not in this subscription - the whole
+    # subscription is listed, to help choose.
+    $scoped = $false
+    if ($state.foundryAccount) {
+        if (Sync-FoundryAccount -State $state) { $scoped = $true }
+        else { Write-Warn "'$($state.foundryAccount)' was not found among the Foundry accounts in this subscription. Showing every account." }
+    }
     $catalogue = @(if ($scoped) { Get-FoundryCatalogue -ThisAccountOnly -State $state } else { Get-FoundryCatalogue })
     $where = if ($scoped) { "in $($state.foundryAccount)" } else { 'in this subscription' }
 
@@ -289,8 +365,17 @@ function Edit-ModelPins {
     # Pins come from the gateway's account and nowhere else: both routes point at that one
     # account, so a deployment anywhere else answers 404. With no account chosen yet, choosing
     # one is the first step rather than something to discover after pinning.
-    if (-not $state.foundryAccount) {
+    if ($state.foundryAccount) {
+        if (-not (Sync-FoundryAccount -State $state)) {
+            Write-Warn "'$($state.foundryAccount)' was not found among the Foundry accounts in this subscription."
+            Write-Info 'If it was moved or deleted, choose the account again with option 1.'
+            return
+        }
+    } else {
         if (-not (Select-FoundryAccount -State $state)) { return }
+        # An explicit choice, so it is kept even if nothing is pinned: option 4 deploys a model
+        # into this account.
+        Save-State $state
     }
 
     $catalogue = @(Get-FoundryCatalogue -ThisAccountOnly -State $state)
@@ -310,7 +395,12 @@ function Edit-ModelPins {
             $i = 1
             foreach ($p in $pins) {
                 $r = if ($p.PSObject.Properties.Name -contains 'route' -and $p.route) { $p.route } else { 'openai' }
-                Write-Host ("    [{0}] {1,-10} {2,-14} -> {3}" -f $i, $r, $p.alias, $p.deployment)
+                # A state file from before scoping can hold pins from another account. They are
+                # kept - removing one is the operator's call - but not shown as if they work.
+                $here = @($catalogue | Where-Object { $_.deployment -eq $p.deployment }).Count -gt 0
+                $mark = if ($here) { '' } else { "   MISSING in $($state.foundryAccount)" }
+                $colour = if ($here) { 'Gray' } else { 'Red' }
+                Write-Host ("    [{0}] {1,-10} {2,-14} -> {3}{4}" -f $i, $r, $p.alias, $p.deployment, $mark) -ForegroundColor $colour
                 $i++
             }
         }

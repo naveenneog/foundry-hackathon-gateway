@@ -48,7 +48,12 @@ it is the way to decide which account to choose.
 
 - The "Pin it anyway?" branch is gone. Nothing it guarded can be reached any more.
 - Option 2 reports a pin as `MISSING in <account>` when its deployment is not in the gateway's
-  account, which is the same check the deployment plan makes (P25).
+  account, which is the same check the deployment plan makes (P25). Option 3 marks such a pin
+  in its list of current pins.
+- Scoping makes the account's resource group matter: with the wrong one the account would look
+  empty. Options 2 and 3 look the account up by name and use the resource group it is in;
+  option 1 takes the resource-group default from the account rather than the previous one; an
+  account that is not in the subscription is reported as not found, not as empty.
 - Moving to a different account is a deliberate step in option 1, not a side effect of picking a
   row.
 - If serving models from several accounts is ever wanted, it is option B: a change to the

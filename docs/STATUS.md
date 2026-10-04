@@ -1,10 +1,76 @@
 # Status
 
-**Active packet:** none — P26 complete, CI green on all three platforms.
+**Active packet:** none — P27 and P28 complete, council notes closed.
 
 M1, M2, M3 and M5 are complete. M5 (P15–P19) added: adopt an APIM an organisation already runs,
 pick from the models actually deployed in the subscription, serve Claude models to Claude Code,
 and prove it live.
+
+### P27 — `Protect-File` can be applied more than once — DONE (`c9ee7bf`, `73d4c7e`, `1383425`)
+
+An operator ran option 1 and it stopped with *"The process does not possess the
+'SeSecurityPrivilege' privilege which is required for this operation"* at `Platform.ps1:37`.
+
+This was a defect introduced by P26, in the step most likely to run. P26 made `Get-SigningSecret`
+re-apply `Protect-File` on every read. On Windows, for a user who is not elevated, `Set-Acl`
+succeeds on a file the first time and fails every time after, so the second read of the secret
+failed. Option 1 reads it right after pinning. The cause is a comparison in `Set-Acl`'s own retry
+path, documented with sources in UNKNOWNS U21. Every test called `Protect-File` once per file,
+so the suite was green.
+
+The fix writes the DACL through .NET, which persists only the sections that changed. A new test
+applies it three times to one file; it was RED with the operator's exact message. The real
+`Get-SigningSecret` read the real, already-protected secret three times afterwards; the owner was
+unchanged and one access rule remained.
+
+**Council — P27.** Coder, QA and Security: PASS-WITH-NOTES. Three notes, all fixed with a test
+that was RED first:
+
+| Note | Fix |
+|---|---|
+| A checkout on a network share failed: `.Path` keeps PowerShell's own path form | `.ProviderPath`; tested through a PowerShell drive on all three platforms |
+| The local `Stop` did not stop a `Continue` caller; an advanced function's .NET error is statement-terminating | try/catch that rethrows with `throw` |
+| The regression test could not fail in CI: the Windows runner is elevated | the test removes the admin-only file privileges from its own token |
+
+The third note's suggested fix was not enough, and only running it showed that. A throwaway
+branch with `Set-Acl` put back stayed green on `windows-latest` with `SeSecurityPrivilege`
+removed: `Set-Acl` enables `SeRestorePrivilege` before writing, and the runner holds that too.
+Removing all four admin-only file privileges made the same mutant fail there with the operator's
+message ([run 37218967361](https://github.com/naveenneog/foundry-hackathon-gateway/actions/runs/37218967361)).
+The branch was deleted. The cleanup step also moved into an `after()` hook, because a run filtered
+by test name skipped it and left files behind.
+
+### P28 — options 2 and 3 list only the chosen account's models — DONE (`e959874` + council fixes)
+
+The same run listed 54 deployments from four Foundry accounts in the pin picker, after the
+operator had chosen one account. The gateway reaches one account, so 25 of them could not work.
+P16 chose the subscription-wide list; [ADR-0011](adr/0011-pin-from-the-gateways-account.md)
+reverses it. Writing the tests found two more consequences: option 2 marked a pin `ok` if its
+deployment existed in any account, and option 3 with no account chosen pinned against an empty
+account name.
+
+`tests/model-picker.test.mjs` drives the real `Models.ps1` functions with `az` stubbed, so it
+tests the shipping code. Five tests, all RED before the change. Read-only against the live
+subscription: the picker listed exactly the 29 deployments of `ai-contosohub530569751908`.
+
+**Council — P28.** Architect: PASS. Coder, QA, UX: PASS-WITH-NOTES. The main note: scoping made
+the account's resource group matter, and nothing kept it right. With the wrong group, `account
+show` fails and the account looked empty ("No model deployments were found"). Option 1 offered no
+way out, because its resource-group prompt defaulted to the previous account's group.
+
+| Note | Fix |
+|---|---|
+| Wrong resource group reads as "no deployments" | options 2 and 3 look the account up by name and use the group it is in |
+| Option 1 recorded name/group pairs that do not exist | `Read-FoundryAccount` takes the group from the account; offers the list again if the recorded account is gone |
+| An account not in the subscription read as empty | reported as not found |
+| An account chosen in option 3 was kept only in memory | saved when chosen, so option 4 can use it |
+| An empty name in option 1 carried on as `''` | stops |
+| Pins from another account were not marked in option 3 | marked `MISSING in <account>` |
+| The stub ignored `-g`, returned `[null]` for no deployments, and shared one state object | stub checks the group, returns `[]`, state round-trips through JSON |
+
+Twelve tests now, seven of them RED before the fixes. Read-only against the live subscription with
+a deliberately wrong resource group: *"'ai-contosohub530569751908' is in resource group
+'rg-contosohub' … Using 'rg-contosohub'"*, then all 29 deployments.
 
 ## Live deployment (verified 2026-10-04)
 

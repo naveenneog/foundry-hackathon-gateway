@@ -69,9 +69,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · [Semantic Ve
   deployments that would answer 404, offered behind a "Pin it anyway?" prompt; a real run listed
   54 deployments from four accounts, 25 of them unreachable. Both options now list only the
   chosen account. Option 3 with no account chosen asks for one first instead of pinning against
-  an empty account name, and option 2 reports a pin whose deployment is in another account as
-  `MISSING` rather than `ok`. See [ADR-0011](docs/adr/0011-pin-from-the-gateways-account.md).
-  (P28)
+  an empty account name, and keeps the choice even when nothing is pinned. Option 2 reports a pin
+  whose deployment is in another account as `MISSING` rather than `ok`. An account recorded with
+  the wrong resource group is found where it is rather than shown as empty, and option 1 takes
+  the resource group from the account instead of defaulting to the previous one. See
+  [ADR-0011](docs/adr/0011-pin-from-the-gateways-account.md). (P28)
 - **Option 1 stopped with "The process does not possess the 'SeSecurityPrivilege' privilege"**
   on Windows, for every operator who was not elevated. P26 made `Get-SigningSecret` re-apply
   the file restriction on every read, and PowerShell's `Set-Acl` succeeds on a file the first

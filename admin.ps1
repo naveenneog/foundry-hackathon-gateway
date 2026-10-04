@@ -280,12 +280,9 @@ function Invoke-Deploy {
         $state.location      = Read-Default 'Location' (Coalesce $state.location 'eastus2')
     }
 
-    if (-not $state.foundryAccount) {
-        # The account decides which models can be pinned, so it is chosen before pinning.
-        [void](Select-FoundryAccount -State $state)
-    }
-    $state.foundryAccount       = Read-Default 'Foundry account name' $state.foundryAccount
-    $state.foundryResourceGroup = Read-Default 'Foundry resource group' (Coalesce $state.foundryResourceGroup $state.resourceGroup)
+    # The account decides which models can be pinned, so it is settled before pinning, and its
+    # resource group is taken from where it actually is.
+    if (-not (Read-FoundryAccount -State $state)) { Write-Info 'Cancelled.'; return }
 
     $email = Read-Default 'Publisher email (for APIM)' (Coalesce $PublisherEmail (az account show --query user.name -o tsv 2>$null))
 

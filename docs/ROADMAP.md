@@ -100,6 +100,19 @@ that are actually deployed in the subscription, and serve Claude models to Claud
       Found a real defect doing it: the ACL call sat in a `catch` that warned, so off Windows the
       signing secret kept the default umask (UNKNOWNS U19).
 
+- [x] **P27** `Protect-File` can be applied more than once on Windows
+      *Acceptance:* applying it repeatedly to the same file succeeds for a user who is not
+      elevated, and the file stays owner-only.
+      *Why:* reported from a real run 2026-10-04 — option 1 stopped with *"The process does not
+      possess the 'SeSecurityPrivilege' privilege"*. P26 made `Get-SigningSecret` re-apply the
+      restriction on every read, and `Set-Acl` fails on every call after the first (UNKNOWNS U21).
+
+- [x] **P28** Options 2 and 3 list only the chosen Foundry account's models
+      *Acceptance:* with an account chosen, no deployment from another account is listed or
+      pinnable; with none chosen, option 3 asks for one first.
+      *Why:* reported from a real run 2026-10-04 — 54 deployments from four accounts, 25 of them
+      unreachable by the gateway. Reverses the P16 choice ([ADR-0011](adr/0011-pin-from-the-gateways-account.md)).
+
 ## Milestone M6 — Only if this outlives one event
 
 - [ ] **P20** Report the budget from the number that enforces it

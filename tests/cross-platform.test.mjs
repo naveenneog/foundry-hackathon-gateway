@@ -1,4 +1,4 @@
-import { test, describe, before } from "node:test";
+import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
@@ -38,6 +38,45 @@ const run = (snippet) => {
 ${snippet}`;
   return spawnSync(pwsh, ["-NoProfile", "-NonInteractive", "-Command", script], { encoding: "utf8" });
 };
+
+/** A PowerShell single-quoted literal. */
+const q = (s) => `'${String(s).replace(/'/g, "''")}'`;
+
+/**
+ * Remove SeSecurityPrivilege from the test process's own token.
+ *
+ * GitHub's Windows runners are elevated and hold it, so Set-Acl's first, all-sections write
+ * succeeds there and the retry that fails for everyone else never runs - a regression test without
+ * this is green in CI whatever the code does. An operator who is not elevated never holds it.
+ * Prints "PRIV 0" when it was removed and "PRIV 1300" (ERROR_NOT_ALL_ASSIGNED) when it was not held.
+ */
+const DROP_SECURITY_PRIVILEGE = `
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class FhgPriv {
+    [StructLayout(LayoutKind.Sequential, Pack = 4)] struct LUID { public uint Low; public int High; }
+    [StructLayout(LayoutKind.Sequential, Pack = 4)] struct TP { public uint Count; public LUID Luid; public uint Attr; }
+    [DllImport("advapi32.dll", SetLastError = true)] static extern bool OpenProcessToken(IntPtr p, uint a, out IntPtr t);
+    [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)] static extern bool LookupPrivilegeValue(string s, string n, out LUID l);
+    [DllImport("advapi32.dll", SetLastError = true)] static extern bool AdjustTokenPrivileges(IntPtr t, bool d, ref TP n, uint len, IntPtr p, IntPtr r);
+    [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcess();
+    [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
+    public static int Remove(string name) {
+        IntPtr t;
+        if (!OpenProcessToken(GetCurrentProcess(), 0x28, out t)) return Marshal.GetLastWin32Error();
+        try {
+            LUID l;
+            if (!LookupPrivilegeValue(null, name, out l)) return Marshal.GetLastWin32Error();
+            TP tp = new TP { Count = 1, Luid = l, Attr = 4 };
+            AdjustTokenPrivileges(t, false, ref tp, 0, IntPtr.Zero, IntPtr.Zero);
+            return Marshal.GetLastWin32Error();
+        } finally { CloseHandle(t); }
+    }
+}
+'@
+"PRIV $([FhgPriv]::Remove('SeSecurityPrivilege'))"
+`;
 
 describe("the signing secret is owner-only on this platform", () => {
   let dir;
@@ -100,11 +139,78 @@ describe("the signing secret is owner-only on this platform", () => {
   test("Protect-File can be applied again to a file it already protected", () => {
     const f = join(dir, "twice.txt");
     writeFileSync(f, "not-a-real-secret");
-    const p = f.replace(/\\/g, "\\\\");
-    const r = run(`Protect-File -Path '${p}'; Protect-File -Path '${p}'; Protect-File -Path '${p}'; 'third ok'`);
+    const p = q(f);
+    const r = run(`${isWindows ? DROP_SECURITY_PRIVILEGE : ""}
+Protect-File -Path ${p}; Protect-File -Path ${p}; Protect-File -Path ${p}; 'third ok'`);
+    if (isWindows) {
+      assert.match(r.stdout, /PRIV (0|1300)\b/, `could not drop SeSecurityPrivilege: ${r.stdout} ${r.stderr}`);
+    }
     assert.equal(r.status, 0, `a repeat call failed: ${r.stderr}`);
     assert.match(r.stdout, /third ok/);
     assert.doesNotMatch(r.stderr, /SeSecurityPrivilege/);
+  });
+
+  test("the Windows branch does not call Set-Acl", () => {
+    // Read from the syntax tree rather than the text, so the comment explaining why Set-Acl is
+    // not used does not count. This also covers the Windows branch on Linux and macOS, where the
+    // test above runs chmod instead.
+    const r = spawnSync(
+      pwsh,
+      [
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        `$ast = [System.Management.Automation.Language.Parser]::ParseFile(${q(join(root, "scripts", "Platform.ps1"))}, [ref]$null, [ref]$null)
+@($ast.FindAll({ $args[0] -is [System.Management.Automation.Language.CommandAst] -and $args[0].GetCommandName() -in @('Set-Acl','Get-Acl') }, $true)).Count`,
+      ],
+      { encoding: "utf8" }
+    );
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.stdout.trim(), "0", "Platform.ps1 calls Set-Acl or Get-Acl; see UNKNOWNS U21");
+  });
+
+  test("a path through a PowerShell drive is restricted, not rejected", () => {
+    // Resolve-Path's .Path keeps PowerShell's own form of a path - 'Drive:\x' for a PowerShell
+    // drive, 'Microsoft.PowerShell.Core\FileSystem::\\server\share\x' for a network share - and
+    // neither FileInfo nor chmod understands it. A checkout opened from a share failed on the
+    // first call. A PowerShell drive reproduces the same thing on every platform.
+    const f = join(dir, "psdrive.txt");
+    writeFileSync(f, "not-a-real-secret");
+    const r = run(`New-PSDrive -Name FhgT -PSProvider FileSystem -Root ${q(dir)} | Out-Null
+Protect-File -Path (Join-Path 'FhgT:' 'psdrive.txt')
+if ($IsWindows) { "protected=$((Get-Acl -LiteralPath ${q(f)}).AreAccessRulesProtected)" }
+'drive ok'`);
+    assert.equal(r.status, 0, `a PowerShell-drive path failed: ${r.stderr}`);
+    assert.match(r.stdout, /drive ok/);
+    if (isWindows) assert.match(r.stdout, /protected=True/);
+    else assert.equal(statSync(f).mode & 0o777, 0o600);
+  });
+
+  test("a failure stops a caller that does not use Stop", () => {
+    // Protect-File is an advanced function. An exception from a .NET call inside one reaches the
+    // caller as a statement-terminating error, so a caller running with Continue printed it and
+    // carried on with the file unprotected. Only an explicit throw stops every caller.
+    const f = join(dir, "locked.txt");
+    writeFileSync(f, "not-a-real-secret");
+    const setup = isWindows
+      ? // An OWNER RIGHTS entry limits the owner to what the entries grant, so WRITE_DAC is gone
+        // and restricting the file has to fail - elevated or not.
+        `$info = [System.IO.FileInfo]::new(${q(f)})
+$acl = [System.IO.FileSystemAclExtensions]::GetAccessControl($info, [System.Security.AccessControl.AccessControlSections]::Access)
+$acl.SetAccessRuleProtection($true, $false)
+foreach ($x in @($acl.GetAccessRules($true, $false, [System.Security.Principal.SecurityIdentifier]))) { $acl.RemoveAccessRuleSpecific($x) }
+$acl.AddAccessRule([System.Security.AccessControl.FileSystemAccessRule]::new([System.Security.Principal.SecurityIdentifier]::new('S-1-3-4'), 'Read', 'Allow'))
+$acl.AddAccessRule([System.Security.AccessControl.FileSystemAccessRule]::new([System.Security.Principal.WindowsIdentity]::GetCurrent().User, 'Read, Delete', 'Allow'))
+[System.IO.FileSystemAclExtensions]::SetAccessControl($info, $acl)`
+      : `function chmod { $global:LASTEXITCODE = 1 }`;
+    const script = `$ErrorActionPreference = 'Continue'
+. ${q(join(root, "scripts", "Platform.ps1"))}
+${setup}
+Protect-File -Path ${q(f)}
+'AFTER'`;
+    const r = spawnSync(pwsh, ["-NoProfile", "-NonInteractive", "-Command", script], { encoding: "utf8" });
+    assert.doesNotMatch(r.stdout, /AFTER/, `the caller carried on after Protect-File failed: ${r.stderr}`);
+    assert.notEqual(r.status, 0, "a failed restriction exited 0");
   });
 
   test("every write of the signing secret restricts the file first", () => {
@@ -173,7 +279,9 @@ describe("the signing secret is owner-only on this platform", () => {
     assert.deepEqual(offenders, [], `Windows-only calls outside scripts/Platform.ps1: ${offenders.join(", ")}`);
   });
 
-  test("cleanup", () => {
-    rmSync(dir, { recursive: true, force: true });
+  // A hook, not a test: a run filtered with --test-name-pattern skips tests, and left the
+  // directory behind when this was one.
+  after(() => {
+    if (dir) rmSync(dir, { recursive: true, force: true });
   });
 });

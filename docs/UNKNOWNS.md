@@ -27,13 +27,42 @@ assumption is only closed if it names its blast radius and the detector that wou
 | U14 | Claude deployment needs provider metadata | RESOLVED |
 | U15 | Streamed traffic: the budget stops, but the counter lies | MEASURED |
 | U16 | Revocation latency | MEASURED |
-| U17 | Foundry rejects some `anthropic-beta` values Claude Code sends | MEASURED |
-| U18 | Does the AIGateway SKU meter Anthropic tokens? | ASSUMED |
+| U17 | Foundry rejects some `anthropic-beta` values Claude Code sends | MEASURED || U18 | Does the AIGateway SKU meter Anthropic tokens? | ASSUMED |
+| U19 | File permissions for the signing secret on macOS and Linux | OPEN |
+| U20 | Is `pwsh` present on the GitHub-hosted macOS and Linux runners? | OPEN |
 
 ---
 
 
 ## Open
+
+### U19 — File permissions for the signing secret on macOS and Linux — OPEN
+
+`New-SigningSecret` restricts `.gateway-secret` with `Get-Acl` / `Set-Acl` and a
+`FileSystemAccessRule`. All three are Windows-only: `Get-Acl` is not present in PowerShell on
+Linux or macOS, and `System.Security.AccessControl` throws `PlatformNotSupportedException` there.
+
+The call sits inside a `try`/`catch` that warns and continues, so on a non-Windows host the secret
+would be written with the default umask — world-readable on a typical Linux box. This secret mints
+a key for any participant, any budget, any model, so that is total compromise of the governance
+model behind a warning an operator may not read.
+
+The same pattern guards the deployment parameters file, which contains the secret in cleartext.
+
+**To close:** exercise the restriction under `pwsh` on Linux and macOS and assert the resulting
+mode is owner-only, rather than asserting the code looks right.
+
+### U20 — Is `pwsh` present on the GitHub-hosted macOS and Linux runners? — OPEN
+
+The cross-platform check is only worth anything if it actually runs. The runner images have
+historically shipped PowerShell on all three platforms, and the Ubuntu 26.04 migration notes list
+removed packages without naming PowerShell
+([actions/runner-images](https://github.com/actions/runner-images#available-images-and-included-software),
+read 2026-10-04) — but image contents change, and a test that quietly skips when `pwsh` is missing
+is worse than no test.
+
+**To close:** have CI print `pwsh --version` as its own step, and make the permission test fail
+rather than skip when `pwsh` cannot be found.
 
 ---
 

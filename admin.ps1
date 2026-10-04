@@ -168,17 +168,7 @@ function New-SigningSecret {
 
     # Restrict to the current user only. This secret can mint a key for any participant, with
     # any budget, for any model — holding it is total compromise of the governance model.
-    try {
-        $acl = Get-Acl $script:SecretPath
-        $acl.SetAccessRuleProtection($true, $false)
-        $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
-            [System.Security.Principal.WindowsIdentity]::GetCurrent().Name,
-            'FullControl', 'Allow')
-        $acl.SetAccessRule($rule)
-        Set-Acl -Path $script:SecretPath -AclObject $acl
-    } catch {
-        Write-Warn "Could not restrict ACLs on the secret file: $($_.Exception.Message)"
-    }
+    Protect-File -Path $script:SecretPath
     return $secret
 }
 
@@ -235,6 +225,7 @@ function ConvertTo-Dto {
 
 # Preflight lives in its own file to keep this one within its complexity budget. It is
 # dot-sourced, so it runs in this scope and can use the helpers defined above.
+. (Join-Path $PSScriptRoot 'scripts/Platform.ps1')
 . (Join-Path $PSScriptRoot 'scripts/Apim.ps1')
 . (Join-Path $PSScriptRoot 'scripts/Admin-Preflight.ps1')
 
@@ -460,15 +451,8 @@ function Invoke-Deploy {
         }
         $params | ConvertTo-Json -Depth 6 | Set-Content $paramFile -Encoding UTF8
 
-        try {
-            $acl = Get-Acl $paramFile
-            $acl.SetAccessRuleProtection($true, $false)
-            $acl.SetAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule(
-                [System.Security.Principal.WindowsIdentity]::GetCurrent().Name, 'FullControl', 'Allow')))
-            Set-Acl -Path $paramFile -AclObject $acl
-        } catch {
-            Write-Warn "Could not restrict ACLs on the parameters file: $($_.Exception.Message)"
-        }
+        # The file holds the signing secret in cleartext until the finally block removes it.
+        Protect-File -Path $paramFile
 
         az deployment group create `
             --name $deployName `

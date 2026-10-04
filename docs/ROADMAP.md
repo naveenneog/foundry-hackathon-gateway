@@ -89,6 +89,17 @@ that are actually deployed in the subscription, and serve Claude models to Claud
       copy of the rules and the two disagreed on a classic-tier instance whose path was taken.
       The copy is gone — `Show-DeploymentPlan` now calls `scripts/plan.mjs`.
 
+- [x] **P26** macOS and Linux run the same console
+      *Acceptance:* the suite and a parse of every `.ps1` pass on `ubuntu-latest`,
+      `macos-latest` and `windows-latest`; the signing secret is owner-only on each, measured by
+      creating a file and reading its mode back.
+      *Verified 2026-10-04:* an audit of all six `.ps1` files found exactly two Windows-only
+      blocks, both the same ACL call, and nothing else — so the answer was to make the one
+      implementation portable, not to write a bash twin that would have to agree with it about
+      minting and revocation forever ([ADR-0010](adr/0010-cross-platform-not-a-bash-twin.md)).
+      Found a real defect doing it: the ACL call sat in a `catch` that warned, so off Windows the
+      signing secret kept the default umask (UNKNOWNS U19).
+
 ## Milestone M6 — Only if this outlives one event
 
 - [ ] **P20** Report the budget from the number that enforces it

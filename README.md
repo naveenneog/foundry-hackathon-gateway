@@ -135,6 +135,28 @@ revocation. See [ADR-0006](docs/adr/0006-powershell-7-requirement.md). Install w
 winget install --id Microsoft.PowerShell --source winget
 ```
 
+### Windows, macOS and Linux
+
+There is one implementation, not one per platform. PowerShell 7 is cross-platform, so macOS and
+Linux run the same `admin.ps1`; `admin.sh` is a launcher that checks for `pwsh`, `az` and `node`,
+prints the install command for whatever is missing, and hands over
+([ADR-0010](docs/adr/0010-cross-platform-not-a-bash-twin.md)).
+
+```bash
+./admin.sh          # macOS and Linux
+```
+```powershell
+.\admin.ps1         # Windows
+```
+
+CI runs the suite and parses every `.ps1` on `ubuntu-latest`, `macos-latest` and `windows-latest`.
+The file-permission check creates a real file through `Protect-File` and reads the mode back on
+each platform, rather than asserting it once and assuming the rest
+(`tests/cross-platform.test.mjs`).
+
+Known limit: the end-to-end run against live Azure has been performed from Windows only. The test
+suite and the parse check run on all three.
+
 `admin.ps1` runs a preflight on startup and tells you exactly what is missing:
 
 ```

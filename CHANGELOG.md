@@ -6,6 +6,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · [Semantic Ve
 ## [Unreleased]
 
 ### Added
+- **macOS and Linux run the same console.** PowerShell 7 is cross-platform and was already
+  required, so `admin.ps1` runs on all three platforms rather than acquiring a bash twin that
+  would have to agree with it about minting and revocation forever
+  ([ADR-0010](docs/adr/0010-cross-platform-not-a-bash-twin.md)). `admin.sh` is a 40-line launcher
+  that checks `pwsh`, `az` and `node` and hands over. CI runs the suite, and parses every `.ps1`,
+  on `ubuntu-latest`, `macos-latest` and `windows-latest`. (P26)
 - **A deployment plan, shown before anything is deployed.** Option 1 reads the target and prints
   what exists and what it would do — instance, Foundry account, every pinned model, both routes,
   named values and the role grant — then stops on anything that would fail. An ARM deployment is
@@ -58,6 +64,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · [Semantic Ve
   (P15)
 
 ### Fixed
+- **The signing secret was world-readable on macOS and Linux.** It was restricted with
+  `Get-Acl`/`Set-Acl` and a `FileSystemAccessRule` — all Windows-only — inside a `try`/`catch`
+  that warned and carried on. Off Windows that `catch` fired every time and the file kept the
+  default umask. The same applied to the deployment parameters file, which holds the secret in
+  cleartext. Both now call `Protect-File`, which uses the mechanism the platform has and throws
+  rather than warns. (P26)
 - Deploying onto an instance that already publishes an API at `claude` failed the whole
   deployment. The picker knew about the collision and the deploy did not, so it tried anyway and
   failed with `Cannot create API 'claude-gateway' with the same Path 'claude'` — after it had

@@ -1,6 +1,6 @@
 # Status
 
-**Active packet:** none — P25 complete and verified against a live instance.
+**Active packet:** P26 — macOS and Linux run the same console. Awaiting the CI matrix.
 
 M1, M2, M3 and M5 are complete. M5 (P15–P19) added: adopt an APIM an organisation already runs,
 pick from the models actually deployed in the subscription, serve Claude models to Claude Code,
@@ -19,6 +19,29 @@ and prove it live.
 | Claude backend | `https://ai-contosohub530569751908.services.ai.azure.com/anthropic` |
 | `flash` / `pro` | `deepseek-v4-flash` / `deepseek-v4-pro` |
 | `sonnet-5` / `opus-5` | `claude-sonnet-5` / `claude-opus-5` |
+
+### P26 — macOS and Linux run the same console — IN PROGRESS
+
+The request was "an equivalent script for Mac and Linux, tested in CI". An audit of all six
+`.ps1` files found exactly two Windows-only blocks, both the same ACL call: no `cmd /c`, no
+backslash path building, no registry, no COM. PowerShell 7 is cross-platform and already required
+by ADR-0006, so a bash twin would be a 2,400-line transcription of working code — and this repo
+has already paid for transcription drift twice, most recently in P25. ADR-0010 records the
+decision to make the one implementation portable instead.
+
+Writing the test found a real defect rather than confirming the code was fine. `New-SigningSecret`
+restricted the secret with `Get-Acl`/`Set-Acl` and a `FileSystemAccessRule` — all Windows-only —
+inside a `try`/`catch` that warned and continued. On Linux and macOS that `catch` fires every
+time, so the file kept the default umask while appearing to be protected. The same applied to the
+deployment parameters file, which holds the secret in cleartext until the `finally` removes it.
+
+`Protect-File` (`scripts/Platform.ps1`) replaces both: ACLs on Windows, `chmod 600` elsewhere,
+verified by reading the mode back, and it throws where the old code warned.
+
+**Open until CI confirms it** (UNKNOWNS U19, U20): the Unix branch cannot be exercised on this
+machine — no Docker, no WSL distribution — so the matrix on `ubuntu-latest` and `macos-latest` is
+the evidence. The test fails rather than skips when `pwsh` is absent, and CI prints `pwsh
+--version` as its own step, so neither can pass vacuously.
 
 ### P25 — deploy onto whatever is already there — DONE (`3eab12e`)
 

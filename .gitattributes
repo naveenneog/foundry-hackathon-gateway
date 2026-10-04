@@ -1,0 +1,5 @@
+# A CRLF in a shell script makes the shebang `/usr/bin/env bash\r`, and Linux reports
+# "bad interpreter: no such file or directory" - which reads like bash is missing. The repo is
+# edited on Windows, so without this admin.sh is committed with CRLF and fails on the platform
+# it exists for.
+*.sh text eol=lf

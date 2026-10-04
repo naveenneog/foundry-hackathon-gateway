@@ -8,6 +8,58 @@ on:
   workflow_dispatch:
 
 jobs:
+  platforms:
+    name: Suite on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # UNKNOWNS U20: the cross-platform claim is only worth something if the check actually ran,
+      # and runner images change. Printing the version makes its absence a failure here rather
+      # than a silent skip inside the suite.
+      - name: PowerShell is present
+        shell: bash
+        run: pwsh --version
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund || npm install --no-audit --no-fund
+
+      - name: Every operator script parses on this platform
+        shell: pwsh
+        run: |
+          $bad = 0
+          Get-ChildItem -Recurse -Filter *.ps1 |
+            Where-Object { $_.FullName -notmatch 'node_modules' } |
+            ForEach-Object {
+              $e = $null
+              [void][System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$null, [ref]$e)
+              if ($e.Count) { $bad++; Write-Host "::error file=$($_.Name)::$($e[0].Message)" }
+            }
+          if ($bad) { exit 1 }
+
+      - name: Test suite
+        run: npm test
+
+      - name: The launcher is executable and refuses a missing prerequisite
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          test -x ./admin.sh || { echo 'admin.sh is not executable'; exit 1; }
+          bash -n ./admin.sh
+          # With an empty PATH every prerequisite is missing, so it must exit non-zero and say so.
+          out=$(env PATH=/nonexistent ./admin.sh 2>&1 || true)
+          echo "$out"
+          echo "$out" | grep -q 'PowerShell 7 is not installed' || { echo 'no guidance for a missing pwsh'; exit 1; }
+          env PATH=/nonexistent ./admin.sh >/dev/null 2>&1 && { echo 'exited 0 with nothing installed'; exit 1; } || true
+
   gate:
     name: Ironclad gate (packet)
     runs-on: ubuntu-latest

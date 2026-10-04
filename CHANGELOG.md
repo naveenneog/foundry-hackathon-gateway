@@ -68,8 +68,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · [Semantic Ve
   `Get-Acl`/`Set-Acl` and a `FileSystemAccessRule` — all Windows-only — inside a `try`/`catch`
   that warned and carried on. Off Windows that `catch` fired every time and the file kept the
   default umask. The same applied to the deployment parameters file, which holds the secret in
-  cleartext. Both now call `Protect-File`, which uses the mechanism the platform has and throws
-  rather than warns. (P26)
+  cleartext. Both files are now created empty, restricted by `Protect-File`, and only then
+  written, so there is no window at default permissions; the secret is removed if it cannot be
+  restricted, and the permissions are re-asserted every time it is read. (P26)
+- `./admin.sh` with no arguments would have failed on a stock Mac. macOS ships bash 3.2, where
+  `set -u` treats `"$@"` as unset when there are no arguments — and no arguments is how the menu
+  opens. (P26)
 - Deploying onto an instance that already publishes an API at `claude` failed the whole
   deployment. The picker knew about the collision and the deploy did not, so it tried anyway and
   failed with `Cannot create API 'claude-gateway' with the same Path 'claude'` — after it had

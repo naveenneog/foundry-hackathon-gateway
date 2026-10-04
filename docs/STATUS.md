@@ -51,6 +51,45 @@ check, so with a broken `PATH` it would die before printing the guidance it exis
 fixed; the path is now resolved with bash parameter expansion, and the step resolves `bash`
 before clearing `PATH`.
 
+### Council — P26
+
+Three BLOCKs, all on the same theme: the packet was green on paths nothing executed.
+
+| Seat | Verdict | Finding |
+|---|---|---|
+| Architect | PASS-WITH-NOTES | the detector enforcing "cross-platform" covered 6 of 8 `.ps1` files |
+| Coder | BLOCK | `"$@"` under `set -u` on bash 3.2; unprotected secret persisted; fail-open read-back |
+| QA | BLOCK | the handover line had zero execution coverage on any platform |
+| UX | PASS-WITH-NOTES | Debian-only guidance for every Linux; a throw exited the whole console |
+| Security | BLOCK | the error path re-created U19, and the reuse path never re-protected |
+
+The three that mattered most, because the suite was green over all of them:
+
+1. **macOS ships bash 3.2**, where `set -u` treats `"$@"` as unset with no arguments — so
+   `./admin.sh` with no arguments, the documented way to open the menu, would have died with
+   `$@: unbound variable`. `macos-latest` was green because the only launcher check cleared
+   `PATH` and exited long before the handover line. Fixed with `${1+"$@"}`, and CI now execs
+   that line against a fake `pwsh` with zero arguments, with one argument, and under `/bin/bash`
+   explicitly.
+2. **A failed `Protect-File` left the secret on disk.** `Set-Content` ran first, so the file
+   already existed with the default umask; the throw then aborted the run, and the next run's
+   `Get-SigningSecret` reused it without re-checking and reported success. That is U19 again, on
+   the error path this packet added. The file is now created empty, restricted, then written —
+   no window at all — removed if the restriction fails, and re-asserted on every read.
+3. **The mode read-back failed open.** `stat` exiting non-zero skipped the check and returned
+   success, on exactly the mounts (exFAT, 9p, some SMB and NFS) where `chmod` also returns 0 for
+   a world-readable file — so both halves failed together and silently. Unreadable or
+   unparseable output is now a failure.
+
+Also fixed: the Windows-only-API scan discovers `.ps1` files instead of listing them (it had
+silently stopped covering `scripts/Preflight.ps1`); the menu catches per action rather than
+exiting with a stack trace; the non-macOS install guidance points at the pages that branch by
+distro rather than Debian-only commands; `admin.sh` follows symlinks, since putting a launcher on
+`PATH` by symlink is the usual reason to have one.
+
+Both new ordering assertions were negative-tested: writing before restricting, and dropping the
+cleanup, each turn the test red.
+
 ### P25 — deploy onto whatever is already there — DONE (`3eab12e`)
 
 An operator ran option 1 against their own instance, `apim-claude-gw-fzgql9`, and the deployment

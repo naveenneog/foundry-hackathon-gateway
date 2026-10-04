@@ -68,6 +68,31 @@ jobs:
             echo 'exited 0 with nothing installed'; exit 1
           fi
 
+          # The handover line itself, with ZERO arguments - the documented way to open the menu,
+          # and the case `set -u` breaks on bash 3.2 (which is what macOS ships). The CI check
+          # above never reaches it, so without this the line has no execution coverage anywhere.
+          # A fake pwsh makes the exec succeed without launching the console.
+          fake="$(mktemp -d)"
+          printf '#!/bin/sh\necho "HANDOVER ok args=$#"\n' > "$fake/pwsh"
+          chmod +x "$fake/pwsh"
+          out="$(PATH="$fake:$PATH" ./admin.sh 2>&1)" || { echo "handover failed: $out"; exit 1; }
+          echo "$out"
+          echo "$out" | grep -q 'HANDOVER ok' || { echo 'handover did not reach pwsh'; exit 1; }
+
+          # Same again under the oldest bash on the box, explicitly, so the macOS default is
+          # exercised rather than assumed.
+          if [ -x /bin/bash ]; then
+            out="$(PATH="$fake:$PATH" /bin/bash ./admin.sh 2>&1)" || { echo "/bin/bash handover failed: $out"; exit 1; }
+            echo "/bin/bash ($(/bin/bash -c 'echo $BASH_VERSION')): $out"
+          fi
+
+          # Arguments must still be forwarded. The baseline is 3 (-NoProfile -File <path>), so
+          # one extra argument makes 4.
+          echo "$out" | grep -q 'args=3' || { echo "unexpected baseline argument count: $out"; exit 1; }
+          out="$(PATH="$fake:$PATH" ./admin.sh -NonInteractive 2>&1)"
+          echo "$out" | grep -q 'args=4' || { echo "arguments not forwarded: $out"; exit 1; }
+          rm -rf "$fake"
+
   gate:
     name: Ironclad gate (packet)
     runs-on: ubuntu-latest

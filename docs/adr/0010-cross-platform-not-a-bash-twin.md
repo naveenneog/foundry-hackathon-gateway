@@ -59,7 +59,9 @@ behaviour to drift.
   "cross-platform" is measured per platform rather than asserted once.
 - `Protect-File` now throws where the old code warned. That is a deliberate behaviour change: a
   signing secret left world-readable is not a warning, and the old `catch` is precisely why U19
-  could exist unnoticed. The failure names the file and the platform.
+  could exist unnoticed. The failure names the file and the platform. The menu catches per action
+  so a throw fails the action rather than ending the session, and a secret that cannot be
+  protected is deleted rather than left for the next run to reuse.
 - Someone who genuinely wants bash still cannot have it. If that becomes a real requirement, option
   B is the answer, not option A.
 - macOS and Linux operators are not yet covered by a live end-to-end run; only the test suite and

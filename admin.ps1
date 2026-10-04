@@ -144,6 +144,10 @@ function Save-State($State) {
 
 function Get-SigningSecret {
     if (-not (Test-Path $script:SecretPath)) { return $null }
+    # Re-assert the permissions on every read. A secret written before Protect-File existed, or
+    # copied in, or restored from a backup, is otherwise reused for the life of the gateway with
+    # whatever permissions it happens to carry.
+    Protect-File -Path $script:SecretPath
     return (Get-Content $script:SecretPath -Raw).Trim()
 }
 
@@ -164,11 +168,21 @@ function New-SigningSecret {
     # src/keys.mjs derives its key the same way. See ADR-0005.
     $secret = [Convert]::ToBase64String($bytes)
 
-    Set-Content -Path $script:SecretPath -Value $secret -Encoding ASCII -NoNewline
-
     # Restrict to the current user only. This secret can mint a key for any participant, with
     # any budget, for any model — holding it is total compromise of the governance model.
-    Protect-File -Path $script:SecretPath
+    #
+    # Created empty and restricted BEFORE the secret is written, so there is no window in which
+    # it exists with default permissions. If it cannot be restricted the file is removed rather
+    # than left behind: Get-SigningSecret reuses whatever is on disk without re-checking, so an
+    # unprotected leftover would be reused silently for the life of the gateway.
+    try {
+        New-Item -ItemType File -Path $script:SecretPath -Force | Out-Null
+        Protect-File -Path $script:SecretPath
+        Set-Content -Path $script:SecretPath -Value $secret -Encoding ASCII -NoNewline
+    } catch {
+        Remove-Item -LiteralPath $script:SecretPath -Force -ErrorAction SilentlyContinue
+        throw
+    }
     return $secret
 }
 
@@ -449,10 +463,11 @@ function Invoke-Deploy {
                 revokedKeys          = @{ value = $revoked }
             }
         }
-        $params | ConvertTo-Json -Depth 6 | Set-Content $paramFile -Encoding UTF8
-
-        # The file holds the signing secret in cleartext until the finally block removes it.
+        # The file holds the signing secret in cleartext until the finally block removes it, so
+        # it is created empty and restricted before anything is written into it.
+        New-Item -ItemType File -Path $paramFile -Force | Out-Null
         Protect-File -Path $paramFile
+        $params | ConvertTo-Json -Depth 6 | Set-Content $paramFile -Encoding UTF8
 
         az deployment group create `
             --name $deployName `
@@ -676,21 +691,31 @@ if (-not (Test-Prerequisites)) { exit 1 }
 while ($true) {
     Show-Menu
     $choice = Read-Host '  Choose'
-    switch ($choice) {
-        '1'  { Invoke-Deploy }
-        '2'  { Show-Models }
-        '3'  { Edit-ModelPins }
-        '4'  { Invoke-DeployModel }
-        '5'  { New-ParticipantKey }
-        '6'  { New-BulkKeys }
-        '7'  { Show-Keys }
-        '8'  { Revoke-Key }
-        '9'  { Test-ParticipantKey }
-        '10' { Show-Usage }
-        '11' { Invoke-Verify }
-        '12' { Remove-Gateway }
-        '0'  { Write-Host ''; exit 0 }
-        default { Write-Warn 'Pick a number from the menu.' }
+    # $ErrorActionPreference is 'Stop', so without this a throw anywhere below ends the session
+    # and prints a stack trace at an operator who is mid-deploy. The action fails; the console
+    # does not.
+    try {
+        switch ($choice) {
+            '1'  { Invoke-Deploy }
+            '2'  { Show-Models }
+            '3'  { Edit-ModelPins }
+            '4'  { Invoke-DeployModel }
+            '5'  { New-ParticipantKey }
+            '6'  { New-BulkKeys }
+            '7'  { Show-Keys }
+            '8'  { Revoke-Key }
+            '9'  { Test-ParticipantKey }
+            '10' { Show-Usage }
+            '11' { Invoke-Verify }
+            '12' { Remove-Gateway }
+            '0'  { Write-Host ''; exit 0 }
+            default { Write-Warn 'Pick a number from the menu.' }
+        }
+    } catch {
+        Write-Host ''
+        Write-Err $_.Exception.Message
+        Write-Info "Nothing else was changed. ($($_.InvocationInfo.ScriptName | Split-Path -Leaf):$($_.InvocationInfo.ScriptLineNumber))"
+        if ($NonInteractive) { exit 1 }
     }
     if ($NonInteractive) { break }
 }

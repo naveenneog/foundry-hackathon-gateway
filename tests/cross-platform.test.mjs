@@ -1,7 +1,7 @@
 import { test, describe, before } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -91,23 +91,58 @@ describe("the signing secret is owner-only on this platform", () => {
     assert.notEqual(r.status, 0, "restricting a missing file reported success");
   });
 
-  test("New-SigningSecret and the parameters file both use the helper", () => {
-    // Both write the secret to disk; both have to be covered, and the old code had two copies of
-    // the Windows-only block rather than one call.
+  test("every write of the signing secret restricts the file first", () => {
+    // Position-blind counting was the earlier version of this, which a move could satisfy
+    // without protecting anything. These check the order that matters: the file is restricted
+    // before the secret goes into it, and the reuse path re-asserts it.
     const admin = readFileSync(join(root, "admin.ps1"), "utf8");
     assert.equal(
       /Get-Acl|Set-Acl|FileSystemAccessRule|WindowsIdentity/.test(admin),
       false,
       "admin.ps1 still calls a Windows-only ACL API directly instead of Protect-File"
     );
-    assert.equal((admin.match(/Protect-File\s+-Path/g) || []).length, 2, "expected both secret-bearing writes to call Protect-File");
+
+    const body = (name) => {
+      const i = admin.indexOf(`function ${name} {`);
+      assert.notEqual(i, -1, `${name} not found`);
+      return admin.slice(i, admin.indexOf("\nfunction ", i + 1));
+    };
+
+    for (const fn of ["New-SigningSecret", "Get-SigningSecret"]) {
+      assert.match(body(fn), /Protect-File\s+-Path/, `${fn} does not restrict the secret file`);
+    }
+
+    const mk = body("New-SigningSecret");
+    assert.ok(
+      mk.indexOf("Protect-File") < mk.indexOf("-Value $secret"),
+      "the secret is written before the file is restricted, leaving a window at default permissions"
+    );
+    assert.match(mk, /Remove-Item[^\n]*SecretPath/, "a failed Protect-File leaves the unprotected file on disk");
   });
 
   test("no operator script calls a Windows-only API outside the platform helper", () => {
-    const files = ["admin.ps1", "scripts/Apim.ps1", "scripts/Keys.ps1", "scripts/Models.ps1", "scripts/Test-Governance.ps1", "scripts/Admin-Preflight.ps1"];
+    // Discovered, not listed. A hardcoded list silently stopped covering scripts/Preflight.ps1
+    // when it was added, while still asserting it covered "every operator script".
+    const scripts = [];
+    const walk = (dir) => {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        if (e.name === "node_modules" || e.name.startsWith(".")) continue;
+        const p = join(dir, e.name);
+        if (e.isDirectory()) walk(p);
+        else if (e.name.endsWith(".ps1")) scripts.push(p);
+      }
+    };
+    walk(root);
+
+    // The one file allowed to touch the Windows APIs is the one whose job is platform
+    // differences; it guards them with $IsWindows.
+    const helper = join(root, "scripts", "Platform.ps1");
+    const scanned = scripts.filter((p) => p !== helper);
+    assert.ok(scanned.length >= 6, `expected to find the operator scripts, found ${scanned.length}`);
+
     const offenders = [];
-    for (const rel of files) {
-      const body = readFileSync(join(root, rel), "utf8");
+    for (const path of scanned) {
+      const body = readFileSync(path, "utf8");
       for (const [api, re] of [
         ["Get-Acl", /\bGet-Acl\b/],
         ["Set-Acl", /\bSet-Acl\b/],
@@ -116,7 +151,7 @@ describe("the signing secret is owner-only on this platform", () => {
         ["%USERPROFILE%", /%USERPROFILE%/],
         ["registry provider", /\bHK(LM|CU):/],
       ]) {
-        if (re.test(body)) offenders.push(`${rel}: ${api}`);
+        if (re.test(body)) offenders.push(`${path.slice(root.length)}: ${api}`);
       }
     }
     assert.deepEqual(offenders, [], `Windows-only calls outside scripts/Platform.ps1: ${offenders.join(", ")}`);

@@ -502,14 +502,26 @@ Three things are worth knowing before you start.
 ``Authorization: Bearer``, which is what this gateway checks. The second is sent as
 ``x-api-key``, and the same key in that variable returns a bare 401.
 
-**``ANTHROPIC_MODEL`` is required.** Without it Claude Code asks for its own default model,
-which is not one of the names above, and the gateway returns 403.
+**``ANTHROPIC_MODEL`` is required, and must be one of the names above.** Do not shorten it to
+``sonnet``, ``opus`` or ``haiku``: Claude Code treats those as its own model slots and replaces
+them with its default model id before the request leaves your machine, so the gateway sees a
+model your key does not grant and returns 403.
+
+**If Claude Code is already configured on this machine, its settings win.** A
+``~/.claude/settings.json`` carrying ``model``, ``ANTHROPIC_DEFAULT_*_MODEL`` or
+``CLAUDE_CODE_USE_FOUNDRY`` overrides the variables above, and requests go to the old
+destination. Either run ``claude --settings`` pointing at the included file, or merge the
+``env`` block into your own settings and remove the conflicting keys. ``/status`` shows which
+base URL and credential are actually in use.
 
 **Shell exports do not reach background agents.** The included ``.claude/settings.json`` sets
-all three everywhere Claude Code runs. Copy it into your project, or merge its ``env`` block
+everything everywhere Claude Code runs. Copy it into your project, or merge its ``env`` block
 into ``~/.claude/settings.json``. It contains your key, so do not commit it.
 
-Check it worked with ``/status``: it should show the base URL and an auth token.
+Claude Code will say the model "isn't described by this version's model catalog" and assume a
+200K context window. That is expected for a gateway alias and is safe: it under-reports a larger
+window rather than over-reporting. Set ``CLAUDE_CODE_MAX_CONTEXT_TOKENS`` if you need the real
+one.
 "@
     }
 

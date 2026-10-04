@@ -141,18 +141,43 @@ export function canPin(entry, route) {
 }
 
 /**
+ * Model names Claude Code resolves CLIENT-SIDE to its own default model ids, so a gateway alias
+ * using one never reaches the gateway as typed.
+ *
+ * Found live, 2026-10-04: with `ANTHROPIC_MODEL=sonnet` Claude Code sent `claude-sonnet-5`,
+ * which is not an alias on this gateway, and the key was refused with 403 model_not_permitted.
+ * `ANTHROPIC_MODEL=sonnet-5` was sent literally and the session completed.
+ */
+const RESERVED_CLAUDE_ALIASES = new Set(["sonnet", "opus", "haiku"]);
+
+/**
+ * Whether an alias would be swallowed by Claude Code's model-slot resolution.
+ * The `[1m]` context suffix selects the same slot, so it is stripped before comparing.
+ */
+export function isReservedClaudeAlias(alias) {
+  const name = text(alias).toLowerCase().replace(/\[1m\]$/, "");
+  return RESERVED_CLAUDE_ALIASES.has(name);
+}
+
+/**
  * A short alias to offer the operator. Participants type this, so it is kept small and legal.
  *
  * `;` and `=` are the model map's structural separators and are stripped rather than escaped;
  * see ADR-0007.
+ *
+ * A Claude deployment KEEPS its version — `claude-sonnet-5` becomes `sonnet-5`, not `sonnet` —
+ * because the bare family name is a Claude Code model slot. If the result would still be
+ * reserved, the deployment name itself is offered, which is always sent literally.
  */
 export function suggestAlias(deploymentName) {
   const name = text(deploymentName).toLowerCase();
   if (name === "") return "";
 
-  // claude-sonnet-4-6 -> sonnet, claude-opus-4-8 -> opus
-  const claude = name.match(/^claude-([a-z]+)/);
-  if (claude) return claude[1];
+  const claude = name.match(/^claude-(.+)$/);
+  if (claude) {
+    const stripped = claude[1];
+    return isReservedClaudeAlias(stripped) ? name : stripped;
+  }
 
   return name
     .replace(/^deepseek-v\d+-/, "")

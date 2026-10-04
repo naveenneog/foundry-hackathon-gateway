@@ -52,14 +52,21 @@ that are actually deployed in the subscription, and serve Claude models to Claud
       option 11; option 5 writes `.claude/settings.json` and a card covering both routes.
       **Not yet run against a live Claude route** — see P19.
 
-- [ ] **P19** Verify the Claude route live
-      *Acceptance:* `./admin.ps1` option 11 reports 0 failures for `-Route claude` against a
-      deployed gateway with a Claude deployment pinned, and a real Claude Code session completes
-      a turn with a tool call through it.
-      *Why it is separate:* it needs a Foundry account with a Claude deployment, which requires
-      accepting Azure Marketplace terms and incurs Claude Consumption Unit billing. Everything
-      P17 and P18 build is proven statically and by unit test; the one assumption that only a
-      live call can settle is UNKNOWNS U9, the managed-identity audience.
+- [x] **P19** Verify the Claude route live
+      *Verified 2026-10-04:* 21/21 on `-Route claude`, 15/15 on `-Route openai`, against
+      `apim-hackgwfl4s7jvpxekno` backed by `ai-contosohub530569751908`. A Claude Code 2.1.272
+      session configured only by the generated `.claude/settings.json` completed a turn with
+      tool calls. Closed UNKNOWNS U9; opened U15.
+
+## Milestone M6 — Only if this outlives one event
+
+- [ ] **P20** Meter streamed completions on the Claude route
+      *Acceptance:* a streamed Claude response increments `x-budget-used` by its actual
+      completion tokens, within the tolerance stated in UNKNOWNS U5.
+      *Why:* measured 2026-10-04, a streamed completion counts as zero — 419 tokens recorded
+      non-streamed against 16 for the same request streamed. Claude Code always streams, so the
+      budget on that route runs well behind real spend. Bounded today by the `max_tokens` clamp,
+      the per-minute request limit, and prompt tokens still being counted. See UNKNOWNS U15.
 
 ## Milestone M4 — Hardening (only if this outlives one event)
 

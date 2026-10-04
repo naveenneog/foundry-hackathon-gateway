@@ -19,46 +19,87 @@ assumption is only closed if it names its blast radius and the detector that wou
 | U5 | Streaming token accounting | RESOLVED |
 | U7 | Status-code consistency across budget paths | RESOLVED |
 | U8 | Single-call overshoot on a small budget | MEASURED |
-| U9 | Managed identity audience, `/anthropic` | ASSUMED |
+| U9 | Managed identity audience, `/anthropic` | RESOLVED |
 | U10 | Backend host for the Claude route | RESOLVED |
 | U11 | OpenAI-shaped quota error on the Anthropic route | RESOLVED |
 | U12 | APIM tier required to meter Anthropic tokens | RESOLVED |
 | U13 | Claude Code model ids versus gateway aliases | RESOLVED |
 | U14 | Claude deployment needs provider metadata | RESOLVED |
+| U15 | Streamed completion tokens are not metered on the Claude route | MEASURED |
 
 ---
 
 
 ## Open
 
-### U9 — Managed-identity audience for the Foundry `/anthropic` route — ASSUMED, with a detector
-
-Two sources disagree, so this is recorded rather than guessed.
-
-| Source | Audience |
-|---|---|
-| Microsoft Learn, Claude on Foundry quickstart | `https://ai.azure.com/.default` |
-| Sibling `claude-code-foundry-gateway`, `infra/policy.xml:714-720` | `https://cognitiveservices.azure.com` |
-
-The sibling reaches Foundry through `endpoints['AI Foundry API']`, which is a
-`*.cognitiveservices.azure.com` host; Learn's example uses the `*.services.ai.azure.com` host.
-The audience plausibly tracks the host, which would make both correct for their own route.
-
-**Assumption:** `https://ai.azure.com`, matching Learn and matching what this gateway already
-uses successfully on the `/openai/v1` route (U2b).
-**Blast radius:** a wrong audience produces `401` from the backend on every Claude request.
-Nothing else is affected, and no participant key is invalidated.
-**Detector:** `scripts/Test-Governance.ps1 -Route claude` fails on the first live call, and
-`admin.ps1` option 13 reports the backend status code. A 401 from the backend — as distinct from
-a 401 from `validate-jwt` — means this assumption is wrong and the other audience is correct.
-
-Sources: [Deploy and use Claude models in Microsoft Foundry](https://learn.microsoft.com/en-us/azure/foundry/foundry-models/how-to/use-foundry-models-claude)
-(`get_bearer_token_provider(DefaultAzureCredential(), "https://ai.azure.com/.default")`, retrieved
-2026-10-03) · sibling repo `infra/policy.xml:714-720`.
+_(none)_
 
 ---
 
 ## Closed
+
+### U15 — Streamed completion tokens are not metered on the Claude route — MEASURED, bounded
+
+**Measured live, 2026-10-04**, one participant, one key, three requests in order:
+
+| Request | `max_tokens` | `x-budget-used` after |
+|---|---|---|
+| non-streamed, 200-word essay | 400 | 419 |
+| **streamed**, 200-word essay | 400 | 435 (**+16**) |
+| non-streamed, trivial | 8 | 451 (+16) |
+
+The non-streamed essay counted 419 tokens — prompt plus completion, as expected. The streamed
+essay of the same size added **16**, which is the prompt alone. Completion tokens on a streamed
+Anthropic response are counted as zero.
+
+APIM documents that when `stream: true`, "completion tokens are also estimated when responses are
+streamed". On the Anthropic Messages shape that estimate is evidently zero.
+
+**Why it matters here specifically:** Claude Code always streams. So the route where this is
+worst is the route Claude Code uses, and `x-budget-used` under-reports real spend substantially.
+This differs from the OpenAI route, where a full streamed `opencode` session was tracked
+continuously (U5, 29,157 tokens) — so the two routes are NOT equivalent and U5 does not cover it.
+
+**What still holds.** Every other control was verified live and fires: allowlist, time window,
+revocation, per-minute token and request limits, and the budget's own 403 path. The budget is not
+unbounded either — it is bounded by three things that do work:
+
+- `max_tokens` is clamped to `hackgw-max-output-tokens` (8,192) on every request, so one call has
+  a hard ceiling.
+- `hackgw-calls-per-minute` (240) bounds requests per participant per minute.
+- Prompt tokens ARE counted, and a Claude Code conversation's prompt grows with every turn, so a
+  long session does eventually trip the budget — later than the true spend, not never.
+
+**Residual risk:** for an event, a participant using Claude Code can consume meaningfully more
+than their stated allowance before the cap fires. Acceptable for a time-boxed event with a
+spending cap on the subscription; not acceptable as a billing control.
+
+**Revisit if this outlives one event:** P20. The honest fix is to stop treating the token counter
+as authoritative for streamed traffic and meter from Foundry's own usage telemetry, or disable
+streaming on the route (which would break Claude Code).
+
+Sources: measured as above ·
+[llm-token-limit](https://learn.microsoft.com/en-us/azure/api-management/llm-token-limit-policy)
+("Completion tokens are also estimated when responses are streamed", retrieved 2026-10-03).
+
+### U9 — Managed-identity audience for the Foundry `/anthropic` route — RESOLVED
+
+**`https://ai.azure.com` is correct.** Verified live 2026-10-04: with
+`authentication-managed-identity resource="https://ai.azure.com"`, a participant key returned
+`200` from `claude-sonnet-5` through
+`https://ai-contosohub530569751908.services.ai.azure.com/anthropic/v1/messages`, and a full
+Claude Code session completed with tool calls.
+
+The assumption recorded below held. The detector described — a 401 from the backend as distinct
+from `validate-jwt` — never fired.
+
+The sibling project's use of `https://cognitiveservices.azure.com` is not contradicted: it
+reaches Foundry through `endpoints['AI Foundry API']` on a `*.cognitiveservices.azure.com` host.
+The audience tracks the host, so both are right for their own route.
+
+Source: [Deploy and use Claude models in Microsoft Foundry](https://learn.microsoft.com/en-us/azure/foundry/foundry-models/how-to/use-foundry-models-claude)
+(`get_bearer_token_provider(DefaultAzureCredential(), "https://ai.azure.com/.default")`) ·
+live verification, `scripts/Test-Governance.ps1 -Route claude`, 21/21.
 
 ### U13 — Which model id Claude Code sends, and how it maps to a gateway alias — RESEARCHED
 

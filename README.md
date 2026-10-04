@@ -303,20 +303,28 @@ admin.ps1                    interactive admin console — start here
 src/
   entitlement.mjs            the access decision, as a pure tested function
   keys.mjs                   HS256 key minting and verification (zero dependencies)
+  models.mjs                 the alias map, parsed and built
+  apim.mjs                   which API Management instance can host this, and why not
+  foundry.mjs                the models in the subscription, and the route that serves each
+  anthropic.mjs              the Anthropic error envelope and body rewrites
 infra/
-  main.bicep                 gateway, observability, API, policy, RBAC
-  policy.xml                 the governance policy
+  main.bicep                 gateway, observability, both APIs, policy, RBAC
+  policy.xml                 the governance policy, OpenAI route
+  policy-claude.xml          the governance policy, Claude route
 scripts/
   mint.mjs                   thin shim so admin.ps1 never reimplements JWS
-  Test-Governance.ps1        proves each control fires
-tests/                       70 tests, including tamper and alg:none attacks
+  Apim.ps1                   instance discovery and named-value access
+  Models.ps1                 model discovery and pinning
+  Keys.ps1                   key issuance and handouts
+  Test-Governance.ps1        proves each control fires, per route
+tests/                       317 tests, including tamper and alg:none attacks
 docs/adr/                    architecture decisions and their reasoning
 docs/UNKNOWNS.md             what we did not know, and how each was closed
 ```
 
-`src/entitlement.mjs` is the canonical statement of the access rules; `infra/policy.xml` is its
-transcription into policy expressions. **Change one, change both** — the tests guard the former,
-`Test-Governance.ps1` guards the latter.
+`src/*.mjs` is the canonical statement of the rules; the policies and the PowerShell are
+transcriptions of it. **Change one, change both** — the unit tests guard the modules, static
+parity tests guard the transcriptions, and `Test-Governance.ps1` guards the deployed behaviour.
 
 ```powershell
 npm test                                  # 70 tests
@@ -335,6 +343,14 @@ node .ironclad/gate.mjs --stage packet    # full quality gate
 - **Streaming drifts the counter.** API Management estimates tokens on streamed responses rather
   than reading actual usage, so `x-budget-used` is approximate. The `token-quota` underneath is the
   authoritative cap. See `docs/UNKNOWNS.md` U5.
+- **On the Claude route, a streamed completion is not counted at all.** Measured 2026-10-04: a
+  non-streamed 400-token completion counted 419 tokens; the same request with `stream: true`
+  counted 16 — the prompt only. **Claude Code always streams**, so real spend runs well ahead of
+  `x-budget-used` there. Three things still bound it: `max_tokens` is clamped to
+  `hackgw-max-output-tokens` on every request, `hackgw-calls-per-minute` bounds request rate, and
+  prompt tokens *are* counted and grow with every turn, so a long session does eventually trip the
+  budget — later than the true spend, not never. Fine for a time-boxed event with a subscription
+  spending cap; not a billing control. See `docs/UNKNOWNS.md` U15.
 - **The budget counter uses the internal cache**, which is best-effort and not atomic under
   concurrency. The quota backstop bounds the damage. Move to external Redis if this outlives one
   event — roadmap P11.

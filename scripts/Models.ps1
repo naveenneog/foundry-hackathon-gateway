@@ -166,11 +166,28 @@ function Test-CanPin {
     return [pscustomobject]@{ allowed = $true; reason = '' }
 }
 
+# Model names Claude Code resolves CLIENT-SIDE to its own default model ids, so an alias using
+# one never reaches the gateway as typed. Found live on 2026-10-04: ANTHROPIC_MODEL=sonnet sent
+# 'claude-sonnet-5' and the key was refused; ANTHROPIC_MODEL=sonnet-5 was sent literally and the
+# session completed. Mirrors RESERVED_CLAUDE_ALIASES in src/foundry.mjs.
+$script:ReservedClaudeAliases = @('sonnet', 'opus', 'haiku')
+
+function Test-ReservedClaudeAlias {
+    param([string]$Alias)
+    $name = ([string]$Alias).Trim().ToLowerInvariant() -replace '\[1m\]$', ''
+    return ($script:ReservedClaudeAliases -contains $name)
+}
+
 function Get-SuggestedAlias {
     param([string]$DeploymentName)
     $name = ([string]$DeploymentName).Trim().ToLowerInvariant()
     if ($name -eq '') { return '' }
-    if ($name -match '^claude-([a-z]+)') { return $Matches[1] }
+    # A Claude deployment keeps its version: the bare family name is a Claude Code model slot.
+    if ($name -match '^claude-(.+)$') {
+        $stripped = $Matches[1]
+        if (Test-ReservedClaudeAlias $stripped) { return $name }
+        return $stripped
+    }
     return ($name -replace '^deepseek-v\d+-', '' -replace '[^a-z0-9-]', '')
 }
 
@@ -283,6 +300,13 @@ function Edit-ModelPins {
 
                 if ($alias -eq '') { Write-Warn 'Alias cannot be empty.'; break }
                 if ($alias -match '[;=]') { Write-Warn "Alias cannot contain ';' or '='."; break }
+                if ($route -eq 'claude' -and (Test-ReservedClaudeAlias $alias)) {
+                    Write-Err "'$alias' is a Claude Code model slot name."
+                    Write-Info "Claude Code resolves sonnet, opus and haiku to its own model ids before the"
+                    Write-Info "request leaves the machine, so a key granting '$alias' is refused with 403."
+                    Write-Info "Use a versioned name such as '$(Get-SuggestedAlias $entry.deployment)'."
+                    break
+                }
                 if (@($pins | Where-Object { $_.alias -eq $alias }).Count -gt 0) {
                     Write-Warn "Alias '$alias' is already pinned. Remove it first."
                     break

@@ -1,28 +1,62 @@
 # Status
 
-**Active packet:** P19 — verify the Claude route against a live deployment.
+**Active packet:** none — M5 complete and verified live.
 
-M1, M2 and M3 are complete and verified live. M5 (P15–P18) was requested after that: adopt an
-APIM an organisation already runs, pick from the models actually deployed in the subscription,
-and serve Claude models to Claude Code. P15–P18 are done; P19 is the live proof.
+M1, M2, M3 and M5 are complete. M5 (P15–P19) added: adopt an APIM an organisation already runs,
+pick from the models actually deployed in the subscription, serve Claude models to Claude Code,
+and prove it live.
 
-### What is NOT yet proven
+## Live deployment (verified 2026-10-04)
 
-The Claude route has never served a request. Everything about it is proven statically and by
-unit test, which is not the same thing — this project's own history says so: live testing
-disproved a documented model limitation (ADR-0003) and caught a policy expression that no static
-check could see.
+| | |
+|---|---|
+| Subscription | `MCAPS-Hybrid-REQ-67471-2023-navg` |
+| Resource group | `rg-hackathon-gateway` (eastus2) |
+| API Management | `apim-hackgwfl4s7jvpxekno` (BasicV2, adopted rather than recreated) |
+| Foundry account | `ai-contosohub530569751908` (`rg-contosohub`, eastus2) |
+| OpenAI route | `https://apim-hackgwfl4s7jvpxekno.azure-api.net/v1` |
+| Claude route | `https://apim-hackgwfl4s7jvpxekno.azure-api.net/claude` |
+| Claude backend | `https://ai-contosohub530569751908.services.ai.azure.com/anthropic` |
+| `flash` / `pro` | `deepseek-v4-flash` / `deepseek-v4-pro` |
+| `sonnet-5` / `opus-5` | `claude-sonnet-5` / `claude-opus-5` |
 
-One command closes it, against a gateway with a Claude deployment pinned:
+### P19 — verify the Claude route live — DONE
 
-```powershell
-./admin.ps1        # 11  Verify the controls
+```
+Test-Governance.ps1 -Route claude   21 passed, 0 failed
+Test-Governance.ps1 -Route openai   15 passed, 0 failed
 ```
 
-The single assumption it settles is **UNKNOWNS U9**, the managed-identity audience for the
-`/anthropic` endpoint. A 401 from the backend — as opposed to from `validate-jwt` — means
-`https://ai.azure.com` is wrong for this route and `https://cognitiveservices.azure.com` is
-right.
+A real Claude Code session (v2.1.272), configured only by the `.claude/settings.json` that
+option 5 generates, created a file through tool calls and exited 0:
+
+```
+> Create hello.py with add(a,b)... then read it back and reply DONE.
+DONE
+hello.py  ->  def add(a, b):
+                  return a + b
+```
+
+### What live testing changed, again
+
+| Finding | Consequence |
+|---|---|
+| **`sonnet`, `opus` and `haiku` are Claude Code model slots.** With `ANTHROPIC_MODEL=sonnet` the client sent `claude-sonnet-5` instead, and the key was refused. | `suggestAlias` now keeps the version (`claude-sonnet-5` → `sonnet-5`), pinning refuses a reserved alias, and the card says why. Nothing static could have caught this. |
+| **A machine with Claude Code already configured overrides the participant's variables.** A `settings.json` carrying `model`, `ANTHROPIC_DEFAULT_*_MODEL` or `CLAUDE_CODE_USE_FOUNDRY` wins over the env, and requests go to the old destination. | Documented in the card with the fix (`claude --settings`, or merge and remove the conflicting keys). |
+| **Streamed completions are not metered on the Claude route.** 419 tokens counted non-streamed; 16 for the same request streamed. Claude Code always streams. | Recorded as UNKNOWNS U15 with its bound, and in the README's known limits. The cap is not a billing control on this route. |
+| The gateway's configured Foundry account held no deployments at all | The OpenAI route had been returning 404 on every call. Repointing it at the account that actually has the models fixed it. |
+
+### Council — P19
+
+| Seat | Verdict |
+|---|---|
+| Architect | PASS — one Foundry account serves both routes, so no second account or role grant was needed. |
+| Coder | PASS-WITH-NOTES — the reserved-alias fix is in `src/foundry.mjs` with the PowerShell transcribing it, and a parity test pins the list on both sides. |
+| QA | PASS — both routes verified against the live gateway, then re-verified after the alias change. The end-to-end run used the generated handout verbatim rather than hand-written settings. |
+| UX | PASS — the three failures a participant can hit (wrong variable, slot-name alias, pre-existing config) are each named in the card with the fix. |
+| Security | PASS — no participant credential reaches Foundry; the managed-identity audience is confirmed correct by a 200. |
+
+---
 
 ### P18 — Claude Code setup and verification harness — DONE
 
@@ -42,7 +76,7 @@ right.
 | UX | PASS — the card leads with the two mistakes that produce a bare 401 and a 403: the wrong credential variable, and a missing `ANTHROPIC_MODEL`. |
 | Security | PASS — `handouts/` is gitignored, which covers the new `.claude/settings.json`. The token is printed once, as before. |
 
-### P17 — Claude route, the Anthropic Messages API — DONE (not yet verified live)
+### P17 — Claude route, the Anthropic Messages API — DONE
 
 | Criterion | Evidence |
 |---|---|
@@ -116,16 +150,12 @@ nothing. The register now has a status table, and the check was negative-tested 
 `OPEN` and confirming the warning.
 
 
-## Live deployment (verified 2026-08-31)
+## Earlier live deployment (2026-08-31, superseded)
 
-| | |
-|---|---|
-| Subscription | `MCAPS-Hybrid-REQ-67471-2023-navg` |
-| Resource group | `rg-hackathon-gateway` (eastus2) |
-| Gateway | `https://apim-hackgwfl4s7jvpxekno.azure-api.net/v1` |
-| Foundry account | `foundry-plus-resource` (`rg-contosohub`, eastus2) |
-| `flash` | `deepseek-v4-flash` → `DeepSeek-V4-Flash-0731` (2026-07-31) |
-| `pro` | `deepseek-v4-pro` → `DeepSeek-V4-Pro` (2026-04-23) |
+The gateway was first verified against `foundry-plus-resource`. By 2026-10-04 its configured
+account was `aif-gfsrxqjqqzije`, which held **no deployments at all**, so the OpenAI route had
+been returning 404 on every call. P19 repointed it at `ai-contosohub530569751908`, which holds
+both the DeepSeek and the Claude models, and both routes now pass.
 
 ## Packets
 
@@ -141,14 +171,18 @@ nothing. The register now has a status table, and the check was negative-tested 
 | P8 **opencode verified** | **done** | real agent session, Write + Read tool calls |
 | P9 **control verification** | **done** | 15/15 controls pass live |
 | P10 documentation | done | README, 5 ADRs, unknowns register |
+| P15 adopt an existing APIM | done | `src/apim.mjs`, `scripts/Apim.ps1`, ADR-0008 |
+| P16 subscription-wide models | done | `src/foundry.mjs`, route-aware pinning |
+| P17 Claude route | done | `infra/policy-claude.xml`, ADR-0009 |
+| P18 Claude Code handout + harness | done | `.claude/settings.json`, `-Route claude` |
+| P19 **live verification** | **done** | 21/21 claude, 15/15 openai, real Claude Code session |
 
 ## Commands that prove it
 
 ```powershell
-npm test                                   # 70 passing
+npm test                                   # 317 passing
 node .ironclad/gate.mjs --stage packet     # PASS
-./scripts/Test-Governance.ps1 -GatewayUrl https://apim-hackgwfl4s7jvpxekno.azure-api.net/v1 `
-    -SecretPath .gateway\secret.txt        # 15 passed, 0 failed
+./admin.ps1                                # 11  Verify the controls (runs both routes)
 ```
 
 ## Live verification output

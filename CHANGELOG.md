@@ -40,10 +40,21 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · [Semantic Ve
   (P15)
 
 ### Fixed
+- Claude-route aliases no longer collide with Claude Code's model slots. `sonnet`, `opus` and
+  `haiku` are resolved client-side to Claude Code's own model ids, so a key granting them was
+  refused with 403. Suggested aliases keep the version (`claude-sonnet-5` → `sonnet-5`) and
+  pinning a reserved name is refused. Found by running Claude Code against the live gateway.
+  (P19, UNKNOWNS U13)
 - Option 9 reads both routes' alias maps. With one map per route it read only the OpenAI map, so
   a key granting a Claude alias was reported as "not pinned" — the confidently wrong answer that
   tool exists to prevent. (P16)
 - ADR-0007 is written. `admin.ps1` and `scripts/Models.ps1` cited it, but the file did not exist.
   (P15)
+
+### Known
+- On the Claude route a streamed completion is not metered: 419 tokens counted non-streamed
+  against 16 for the same request streamed. Claude Code always streams. Bounded by the
+  `max_tokens` clamp, the per-minute request limit, and prompt tokens still counting.
+  (UNKNOWNS U15, roadmap P20)
 
 ### Removed

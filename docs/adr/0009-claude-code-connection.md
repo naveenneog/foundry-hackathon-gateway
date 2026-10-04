@@ -88,14 +88,24 @@ error object, so it leads the message instead. `src/anthropic.mjs` holds the env
 **Negative**
 - Per-participant attribution comes from the key, not an Entra identity. Correct for an event,
   wrong for an enterprise — which is what the sibling project is for.
-- A participant must set `ANTHROPIC_MODEL`. Without it Claude Code sends its own default model id
-  (`claude-opus-4-8`), which is not an alias on this gateway, and the key refuses it. The
-  rejection message says so explicitly rather than leaving them to guess.
-- Claude Code assumes a 200K context window for an unrecognised model id such as a short alias.
-  It under-reports a 1M-window model rather than over-reporting, so it fails safe.
+- **A participant must set `ANTHROPIC_MODEL`, and the alias must not be `sonnet`, `opus` or
+  `haiku`.** Verified live 2026-10-04: Claude Code resolves those three *client-side* to its own
+  default model ids, so `ANTHROPIC_MODEL=sonnet` left the machine as `claude-sonnet-5` and the
+  gateway refused it. `ANTHROPIC_MODEL=sonnet-5` was sent literally and worked. `suggestAlias`
+  therefore keeps the version, and pinning a reserved name to the Claude route is refused.
+- **A machine that already has Claude Code configured overrides the participant's variables.** A
+  `settings.json` carrying `model`, `ANTHROPIC_DEFAULT_*_MODEL` or `CLAUDE_CODE_USE_FOUNDRY` wins
+  over the environment, and requests go to the old destination. Observed on the development
+  machine, which was configured for the sibling project's Foundry mode: three attempts failed
+  before the profile was isolated. The participant card names the symptom and the fix.
+- Claude Code assumes a 200K context window for an unrecognised model id such as a short alias,
+  and says so on every session. It under-reports a 1M-window model rather than over-reporting,
+  so it fails safe.
 - The route needs a v2 API Management tier. `llm-token-limit` parses the Anthropic Messages shape
   on v2 tiers only; on a classic tier it meters zero and the budget never fires, so the route is
   simply not published there (UNKNOWNS U12).
+- **Streamed completions are not metered on this route** (UNKNOWNS U15). Claude Code always
+  streams, so the budget runs behind real spend. Bounded, but not a billing control.
 
 ## References
 

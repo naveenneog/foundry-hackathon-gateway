@@ -10,6 +10,7 @@ import {
   routeFor,
   canPin,
   suggestAlias,
+  isReservedClaudeAlias,
   WIRE,
 } from "../src/foundry.mjs";
 import { parseModelMap, resolveAlias, mergeModelMaps, EMPTY_MAP } from "../src/models.mjs";
@@ -285,6 +286,22 @@ describe("the PowerShell transcription knows the same formats as the module", ()
     assert.equal(wireFormatOf({ properties: { model: { format: "Anthropic", name: "x" } } }), WIRE.ANTHROPIC);
   });
 
+  test("both sides reserve the same Claude Code slot names", () => {
+    const psReserved = new Set(
+      (ps.match(/\$script:ReservedClaudeAliases\s*=\s*@\(([^)]*)\)/)?.[1] ?? "")
+        .split(",")
+        .map((s) => s.trim().replace(/^'|'$/g, ""))
+        .filter(Boolean)
+    );
+    assert.ok(psReserved.size >= 3, `Found ${psReserved.size} reserved aliases in Models.ps1.`);
+    for (const name of psReserved) {
+      assert.equal(isReservedClaudeAlias(name), true, `src/foundry.mjs does not reserve '${name}'`);
+    }
+    for (const name of ["sonnet", "opus", "haiku"]) {
+      assert.ok(psReserved.has(name), `scripts/Models.ps1 does not reserve '${name}'`);
+    }
+  });
+
   test("both sides route a Claude-named model by name when the format is missing", () => {
     assert.match(
       ps,
@@ -295,15 +312,73 @@ describe("the PowerShell transcription knows the same formats as the module", ()
   });
 });
 
+describe("a Claude-route alias must not collide with Claude Code's model slots", () => {
+  /**
+   * Found live, 2026-10-04. Claude Code resolves `sonnet`, `opus` and `haiku` CLIENT-SIDE to
+   * its own default model ids: with `ANTHROPIC_MODEL=sonnet` it sent `claude-sonnet-5`, which
+   * is not an alias on this gateway, so the key was refused with 403 model_not_permitted.
+   * `ANTHROPIC_MODEL=sonnet-5` was sent literally and the session worked.
+   *
+   * The alias a participant types therefore has to be a name Claude Code does NOT recognise.
+   */
+  test("the bare slot names are reserved", () => {
+    for (const name of ["sonnet", "opus", "haiku"]) {
+      assert.equal(isReservedClaudeAlias(name), true, `${name} is a Claude Code slot name`);
+    }
+  });
+
+  test("case does not matter", () => {
+    assert.equal(isReservedClaudeAlias("Sonnet"), true);
+    assert.equal(isReservedClaudeAlias("OPUS"), true);
+  });
+
+  test("the [1m] context variant is the same slot", () => {
+    assert.equal(isReservedClaudeAlias("sonnet[1m]"), true);
+  });
+
+  test("a versioned name is not reserved — it is sent literally", () => {
+    for (const name of ["sonnet-5", "opus-5-5", "haiku-4-5", "sonnet5"]) {
+      assert.equal(isReservedClaudeAlias(name), false, `${name} should be usable`);
+    }
+  });
+
+  test("junk is not reserved", () => {
+    for (const value of [null, undefined, "", 42]) {
+      assert.equal(isReservedClaudeAlias(value), false);
+    }
+  });
+});
+
 describe("the suggested alias is short, legal and stable", () => {
   test("a DeepSeek deployment name loses its prefix", () => {
     assert.equal(suggestAlias("deepseek-v4-flash"), "flash");
   });
 
-  test("a Claude deployment keeps a recognisable short name", () => {
-    assert.equal(suggestAlias("claude-sonnet-4-6"), "sonnet");
-    assert.equal(suggestAlias("claude-opus-4-8"), "opus");
-    assert.equal(suggestAlias("claude-haiku-4-5"), "haiku");
+  test("a Claude deployment keeps its version, so it is not a slot name", () => {
+    assert.equal(suggestAlias("claude-sonnet-5"), "sonnet-5");
+    assert.equal(suggestAlias("claude-opus-5"), "opus-5");
+    assert.equal(suggestAlias("claude-opus-5-5"), "opus-5-5");
+    assert.equal(suggestAlias("claude-haiku-4-5"), "haiku-4-5");
+  });
+
+  test("no Claude deployment ever suggests a reserved alias", () => {
+    const deployments = [
+      "claude-sonnet-5", "claude-opus-5", "claude-opus-5-5", "claude-haiku-4-5",
+      "claude-sonnet-4-6", "claude-sonnet", "claude-opus", "claude-haiku",
+    ];
+    for (const d of deployments) {
+      const alias = suggestAlias(d);
+      assert.equal(
+        isReservedClaudeAlias(alias),
+        false,
+        `${d} suggested '${alias}', which Claude Code resolves to its own model id`
+      );
+    }
+  });
+
+  test("an unversioned Claude name falls back to the full deployment name", () => {
+    // 'sonnet' would be reserved, so the deployment name itself is offered instead.
+    assert.equal(suggestAlias("claude-sonnet"), "claude-sonnet");
   });
 
   test("an alias never contains the map's structural separators", () => {

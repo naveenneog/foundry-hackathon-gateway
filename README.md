@@ -250,11 +250,13 @@ What a route can serve is decided by the wire format the model speaks, not by pr
 | `v1` | `https://<gw>.azure-api.net/v1` | OpenAI Chat Completions | `/openai/v1` |
 | `claude` | `https://<gw>.azure-api.net/claude` | Anthropic Messages | `/anthropic` |
 
-Option 3 lists every deployment in the subscription with the route that serves it, and refuses a
-pin that crosses routes — a Claude model on the OpenAI route reaches a backend that has never
-heard of it and returns an opaque 404.
+Option 3 lists the deployments in the gateway's Foundry account with the route that serves each,
+and refuses a pin that crosses routes — a Claude model on the OpenAI route reaches a backend that
+has never heard of it and returns an opaque 404. Deployments in other accounts are not listed,
+because both routes point at the one account
+([ADR-0011](docs/adr/0011-pin-from-the-gateways-account.md)).
 
-The default DeepSeek pins:
+New installations start with no pins. The DeepSeek pins on the reference deployment:
 
 | Alias | Foundry deployment | Best for |
 |---|---|---|

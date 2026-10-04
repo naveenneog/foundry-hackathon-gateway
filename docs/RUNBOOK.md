@@ -103,10 +103,13 @@ the gateway can only reach deployments in that single account.
 
 Option **3**.
 
-![Models across the subscription](images/models-both-routes.png)
+![Models in the gateway's Foundry account](images/models-both-routes.png)
 
-The picker lists deployments from every Foundry account in the subscription, grouped by account,
-with the route that can serve each one. The route is decided by the model's wire format, not by
+The picker lists the deployments in the gateway's Foundry account — the account chosen in step 2
+— with the route that can serve each one. Deployments in other accounts are not listed: both
+routes point at the one account, so a deployment elsewhere answers 404
+([ADR-0011](adr/0011-pin-from-the-gateways-account.md)). If no account has been chosen yet,
+option 3 asks for one first. The route is decided by the model's wire format, not by
 preference: Claude models speak the Anthropic Messages API and are reachable only on the `claude`
 route; everything else speaks OpenAI Chat Completions and is reachable only on `v1`. A pin that
 crosses routes is refused.
@@ -116,8 +119,8 @@ Two rules for Claude aliases:
 - Keep the version. `sonnet-5` works; a bare `sonnet` does not. Claude Code resolves `sonnet`,
   `opus` and `haiku` to its own model ids before the request leaves the machine, so the gateway
   never sees the alias you pinned ([UNKNOWNS](UNKNOWNS.md) U13). The picker refuses those names.
-- Only deployments in the gateway's own Foundry account are reachable. The picker warns before
-  pinning one from elsewhere.
+- A pin whose deployment is not in the gateway's account is shown as `MISSING` in option 2, and
+  the deployment plan in option 1 marks it `BLOCKED`.
 
 Saving pushes the alias map to the live gateway. No redeployment is needed
 ([ADR-0007](adr/0007-model-map-named-value.md)).

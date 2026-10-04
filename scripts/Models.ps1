@@ -97,11 +97,16 @@ function Get-RouteForWire {
 
 function Get-FoundryCatalogue {
     <#
-        Every model deployment in every Foundry account in the subscription.
+        The model deployments the gateway could serve: those in its own Foundry account.
 
-        The gateway's own account is not special here: an organisation routinely keeps Claude in
-        one account and everything else in another, and a picker limited to one account makes
-        half the subscription look empty.
+        One account, because the gateway reaches one - both routes point at it, so a deployment in
+        any other account answers 404 however it is pinned. An earlier version listed every account
+        in the subscription, reasoning that an organisation keeps Claude in one account and the
+        rest in another; the gateway cannot serve that split, so the extra rows were deployments
+        that could not work, offered behind a "Pin it anyway?" prompt. See ADR-0011.
+
+        Without -ThisAccountOnly it still lists the whole subscription. Option 2 uses that before
+        an account has been chosen, to help choose one.
     #>
     param([switch]$ThisAccountOnly, $State)
 
@@ -136,6 +141,41 @@ function Get-FoundryCatalogue {
         }
     }
     return $out
+}
+
+function Select-FoundryAccount {
+    <#
+        Choose the Foundry account the gateway uses, and record it on the state. Every model
+        pinned afterwards comes from this account.
+
+        Returns $false when there is nothing to choose or the answer is not a listed number; the
+        state is left untouched in that case.
+    #>
+    param($State)
+
+    Write-Info 'Looking for Foundry accounts...'
+    $accounts = @(az cognitiveservices account list --query "[?kind=='AIServices']" -o json 2>$null | ConvertFrom-Json)
+    if ($accounts.Count -eq 0) {
+        Write-Warn 'No Foundry (AIServices) accounts were found in this subscription.'
+        return $false
+    }
+
+    $i = 1
+    foreach ($a in $accounts) { Write-Host "    [$i] $($a.name)  (rg: $($a.resourceGroup), $($a.location))"; $i++ }
+    $pick = Read-Default 'Pick a Foundry account by number' '1'
+    $n = 0
+    if (-not [int]::TryParse($pick, [ref]$n) -or $n -lt 1 -or $n -gt $accounts.Count) {
+        Write-Warn 'Not a valid number.'
+        return $false
+    }
+
+    $chosen = $accounts[$n - 1]
+    # Add-Member rather than assignment: a state file written by an older version may lack the
+    # property, and ConvertFrom-Json objects throw on assignment to one that is absent.
+    $State | Add-Member -NotePropertyName foundryAccount -NotePropertyValue ([string]$chosen.name) -Force
+    $State | Add-Member -NotePropertyName foundryResourceGroup -NotePropertyValue ([string]$chosen.resourceGroup) -Force
+    Write-Ok "Using $($chosen.name). Models are pinned from this account."
+    return $true
 }
 
 function Test-CanPin {
@@ -196,7 +236,11 @@ function Show-Models {
     Write-Head 'Models'
 
     $pinned = @($state.models)
-    $catalogue = @(Get-FoundryCatalogue)
+    # Once the gateway has an account, that account is all it can reach, so it is all this shows.
+    # Before one is chosen the whole subscription is listed, to help choose.
+    $scoped = [bool]$state.foundryAccount
+    $catalogue = @(if ($scoped) { Get-FoundryCatalogue -ThisAccountOnly -State $state } else { Get-FoundryCatalogue })
+    $where = if ($scoped) { "in $($state.foundryAccount)" } else { 'in this subscription' }
 
     Write-Host '  Pinned on the gateway (what participants can ask for):'
     if ($pinned.Count -eq 0) {
@@ -205,20 +249,21 @@ function Show-Models {
         foreach ($p in $pinned) {
             $r = if ($p.PSObject.Properties.Name -contains 'route' -and $p.route) { $p.route } else { 'openai' }
             $exists = @($catalogue | Where-Object { $_.deployment -eq $p.deployment }).Count -gt 0
-            $mark = if ($exists) { 'ok' } else { 'MISSING in this subscription' }
+            $mark = if ($exists) { 'ok' } else { "MISSING $where" }
             $colour = if ($exists) { 'Green' } else { 'Red' }
             Write-Host ("    {0,-10} {1,-14} -> {2,-28} {3}" -f $r, $p.alias, $p.deployment, $mark) -ForegroundColor $colour
         }
     }
 
     Write-Host ''
-    Write-Host '  Deployments in this subscription:'
+    Write-Host "  Deployments ${where}:"
     if ($catalogue.Count -eq 0) {
         Write-Info '    none'
     } else {
         $byAccount = $catalogue | Group-Object account
         foreach ($g in $byAccount) {
-            Write-Host ("    {0}" -f $g.Name) -ForegroundColor Cyan
+            # Scoped to one account, the heading above already names it.
+            if (-not $scoped) { Write-Host ("    {0}" -f $g.Name) -ForegroundColor Cyan }
             foreach ($d in $g.Group) {
                 # Match on account AND name: the gateway can only reach deployments in its own
                 # account, and the same deployment name often exists in several accounts.
@@ -241,9 +286,17 @@ function Edit-ModelPins {
     $state = Get-State
     Write-Head 'Pin models'
 
-    $catalogue = @(Get-FoundryCatalogue)
+    # Pins come from the gateway's account and nowhere else: both routes point at that one
+    # account, so a deployment anywhere else answers 404. With no account chosen yet, choosing
+    # one is the first step rather than something to discover after pinning.
+    if (-not $state.foundryAccount) {
+        if (-not (Select-FoundryAccount -State $state)) { return }
+    }
+
+    $catalogue = @(Get-FoundryCatalogue -ThisAccountOnly -State $state)
     if ($catalogue.Count -eq 0) {
-        Write-Warn 'No model deployments found in this subscription. Use option 4 to deploy one.'
+        Write-Warn "No model deployments were found in '$($state.foundryAccount)'."
+        Write-Info 'Deploy one with option 4, or choose a different account with option 1.'
         return
     }
 
@@ -268,11 +321,12 @@ function Edit-ModelPins {
         switch ($action) {
             'a' {
                 Write-Host ''
+                Write-Info "Deployments in $($state.foundryAccount):"
                 $i = 1
                 foreach ($d in $catalogue) {
                     $route = if ($d.route) { $d.route } else { 'unroutable' }
                     $colour = if ($d.ready -and $d.route) { 'Gray' } else { 'DarkYellow' }
-                    Write-Host ("    [{0}] {1,-26} {2,-24} {3,-11} {4}" -f $i, $d.deployment, $d.account, $route, $d.state) -ForegroundColor $colour
+                    Write-Host ("    [{0}] {1,-26} {2,-26} {3,-11} {4}" -f $i, $d.deployment, $d.model, $route, $d.state) -ForegroundColor $colour
                     $i++
                 }
                 $pick = Read-Default 'Deployment number' ''
@@ -292,12 +346,6 @@ function Edit-ModelPins {
                 }
                 $verdict = Test-CanPin $entry $route
                 if (-not $verdict.allowed) { Write-Err $verdict.reason; break }
-
-                if ($entry.account -ne $state.foundryAccount) {
-                    Write-Warn "'$($entry.deployment)' lives in '$($entry.account)', not the gateway's account '$($state.foundryAccount)'."
-                    Write-Info 'The gateway can only reach deployments in the account it was deployed against.'
-                    if (-not (Confirm-Action 'Pin it anyway?')) { break }
-                }
 
                 $alias = (Read-Default 'Alias participants will use' (Get-SuggestedAlias $entry.deployment)).Trim().ToLowerInvariant()
 

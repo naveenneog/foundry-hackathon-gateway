@@ -41,7 +41,7 @@ credential with a signed, self-expiring entitlement.
 - Two routes: OpenAI Chat Completions (`/v1`) and Anthropic Messages (`/claude`).
 - Participant keys: signed JWT carrying model allowlist, activation time, expiry, one-time token
   budget and a revocation id. Issued singly or in bulk, offline.
-- Model selection from any Foundry account in the subscription, with the route that serves each.
+- Model selection from the deployments in the chosen Foundry account, with the route that serves each.
 - Per-participant usage attribution to Application Insights.
 - Control verification harness that proves each control fires against the live gateway.
 - Participant handouts: configuration files and a one-page card per participant.

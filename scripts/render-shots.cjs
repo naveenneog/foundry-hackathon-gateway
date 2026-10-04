@@ -107,7 +107,7 @@ const shots = [
   {
     file: "models-both-routes.png",
     title: "PowerShell — ./admin.ps1 → 2  (Show models)",
-    subtitle: "every Foundry account in the subscription",
+    subtitle: "the gateway's Foundry account",
     src: "models.txt",
     trim: (t) => t.trim(),
   },

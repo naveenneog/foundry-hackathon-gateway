@@ -281,16 +281,8 @@ function Invoke-Deploy {
     }
 
     if (-not $state.foundryAccount) {
-        Write-Info 'Looking for Foundry accounts...'
-        $accounts = az cognitiveservices account list --query "[?kind=='AIServices'].{name:name,rg:resourceGroup,loc:location}" -o json 2>$null | ConvertFrom-Json
-        if ($accounts) {
-            $i = 1
-            foreach ($a in $accounts) { Write-Host "    [$i] $($a.name)  (rg: $($a.rg), $($a.loc))"; $i++ }
-            $pick = Read-Default 'Pick a Foundry account by number' '1'
-            $chosen = $accounts[[int]$pick - 1]
-            $state.foundryAccount = $chosen.name
-            $state.foundryResourceGroup = $chosen.rg
-        }
+        # The account decides which models can be pinned, so it is chosen before pinning.
+        [void](Select-FoundryAccount -State $state)
     }
     $state.foundryAccount       = Read-Default 'Foundry account name' $state.foundryAccount
     $state.foundryResourceGroup = Read-Default 'Foundry resource group' (Coalesce $state.foundryResourceGroup $state.resourceGroup)
@@ -301,7 +293,7 @@ function Invoke-Deploy {
     # redeployment. The current pins are carried through to the deployment below.
     Write-Head 'Models to pin'
     if (@($state.models).Count -eq 0) {
-        Write-Info 'Nothing pinned yet. Pin from what is deployed in this subscription now.'
+        Write-Info "Nothing pinned yet. Pin from what is deployed in '$($state.foundryAccount)' now."
         # Save first: Edit-ModelPins re-reads state from disk and needs the Foundry account
         # chosen above.
         Save-State $state

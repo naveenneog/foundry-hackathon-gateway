@@ -20,7 +20,7 @@ and prove it live.
 | `flash` / `pro` | `deepseek-v4-flash` / `deepseek-v4-pro` |
 | `sonnet-5` / `opus-5` | `claude-sonnet-5` / `claude-opus-5` |
 
-### P25 — deploy onto whatever is already there — DONE
+### P25 — deploy onto whatever is already there — DONE (`3eab12e`)
 
 An operator ran option 1 against their own instance, `apim-claude-gw-fzgql9`, and the deployment
 failed. ARM deployments are atomic, so it also left the instance half-built. Three separate

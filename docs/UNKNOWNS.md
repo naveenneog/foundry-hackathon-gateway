@@ -25,7 +25,8 @@ assumption is only closed if it names its blast radius and the detector that wou
 | U12 | APIM tier required to meter Anthropic tokens | RESOLVED |
 | U13 | Claude Code model ids versus gateway aliases | RESOLVED |
 | U14 | Claude deployment needs provider metadata | RESOLVED |
-| U15 | Streamed completion tokens are not metered on the Claude route | MEASURED |
+| U15 | Streamed traffic: the budget stops, but the counter lies | MEASURED |
+| U16 | Revocation latency | MEASURED |
 
 ---
 
@@ -38,49 +39,67 @@ _(none)_
 
 ## Closed
 
-### U15 — Streamed completion tokens are not metered on the Claude route — MEASURED, bounded
+### U15 — Streamed traffic: the budget still stops, but the counter lies — MEASURED
 
-**Measured live, 2026-10-04**, one participant, one key, three requests in order:
+**Measured live, 2026-10-04.** Same key shape, same prompt, same 2,000-token budget, 500
+`max_tokens` per request. The only difference is `stream`.
 
-| Request | `max_tokens` | `x-budget-used` after |
-|---|---|---|
-| non-streamed, 200-word essay | 400 | 419 |
-| **streamed**, 200-word essay | 400 | 435 (**+16**) |
-| non-streamed, trivial | 8 | 451 (+16) |
+| | Stopped after | Real tokens spent | Overshoot | `x-budget-used` at the end |
+|---|---|---|---|---|
+| `stream: false` | 5th request | **2,080** | +4% | 2,080 — exact |
+| `stream: true` | 7th request | **3,120** | **+56%** | 108 — wrong by 29× |
 
-The non-streamed essay counted 419 tokens — prompt plus completion, as expected. The streamed
-essay of the same size added **16**, which is the prompt alone. Completion tokens on a streamed
-Anthropic response are counted as zero.
+Real tokens are the model's own `usage.input_tokens + usage.output_tokens`, read from the
+response.
 
-APIM documents that when `stream: true`, "completion tokens are also estimated when responses are
-streamed". On the Anthropic Messages shape that estimate is evidently zero.
+**Two separate mechanisms, and only one of them is broken.**
 
-**Why it matters here specifically:** Claude Code always streams. So the route where this is
-worst is the route Claude Code uses, and `x-budget-used` under-reports real spend substantially.
-This differs from the OpenAI route, where a full streamed `opencode` session was tracked
-continuously (U5, 29,157 tokens) — so the two routes are NOT equivalent and U5 does not cover it.
+- The **cache counter**, which drives the fast 403 and the `x-budget-used` header, is fed by
+  `tokens-consumed-variable-name` on the first `llm-token-limit`. On a streamed response that
+  reports the prompt only — 18 tokens per request above, against 520 actually spent.
+- The **`token-quota`**, which is APIM's own accounting and the authoritative cap, *does* charge
+  for streamed completions. It is what refused the 7th request. Its estimate is lower than
+  reality, which is why the overshoot is 56% rather than 4%.
 
-**What still holds.** Every other control was verified live and fires: allowlist, time window,
-revocation, per-minute token and request limits, and the budget's own 403 path. The budget is not
-unbounded either — it is bounded by three things that do work:
+So the earlier framing — "completion tokens count as zero, the budget trips late rather than
+never" — was right about the header and wrong about enforcement. The budget is enforced on both
+paths. What streaming costs is **accuracy**, not the control.
 
-- `max_tokens` is clamped to `hackgw-max-output-tokens` (8,192) on every request, so one call has
-  a hard ceiling.
-- `hackgw-calls-per-minute` (240) bounds requests per participant per minute.
-- Prompt tokens ARE counted, and a Claude Code conversation's prompt grows with every turn, so a
-  long session does eventually trip the budget — later than the true spend, not never.
+**Consequences, in order of practical weight:**
 
-**Residual risk:** for an event, a participant using Claude Code can consume meaningfully more
-than their stated allowance before the cap fires. Acceptable for a time-boxed event with a
-spending cap on the subscription; not acceptable as a billing control.
+1. `x-budget-used` must not be shown to a participant as authoritative on the Claude route. It is
+   a floor, not a figure. The participant card and README say so.
+2. A streamed budget overshoots by roughly half again. For a 500,000-token event budget that is
+   a few hundred thousand tokens, not an unbounded spend.
+3. Claude Code always streams, so the Claude route is the one where this applies in practice.
 
-**Revisit if this outlives one event:** P20. The honest fix is to stop treating the token counter
-as authoritative for streamed traffic and meter from Foundry's own usage telemetry, or disable
-streaming on the route (which would break Claude Code).
+Bounded by the same three things as before: `max_tokens` is clamped to
+`hackgw-max-output-tokens` per request, `hackgw-calls-per-minute` bounds the rate, and the quota
+does eventually fire — demonstrated above, at request 7.
+
+**Revisit if this outlives one event:** P20. Source `x-budget-used` from
+`remaining-quota-tokens-variable-name` instead of the cache counter, so the number shown and the
+number enforced are the same number.
 
 Sources: measured as above ·
 [llm-token-limit](https://learn.microsoft.com/en-us/azure/api-management/llm-token-limit-policy)
 ("Completion tokens are also estimated when responses are streamed", retrieved 2026-10-03).
+
+### U16 — Revocation latency — MEASURED
+
+**Within seconds.** Measured live 2026-10-04 on both routes: a key returning 200, its `jti` added
+to `hackgw-revoked-keys`, then polled every 5 seconds until refused. The Claude route refused on
+the first poll (1s); the OpenAI route on the second (7s). The polling interval is the resolution
+here, so the honest statement is "under ten seconds", not "one second".
+
+Matching is exact, not substring: the denylist is wrapped in sentinel commas and the policy looks
+for `,<jti>,`, so revoking one key cannot revoke another whose id contains it. Verified in both
+runs — a key issued immediately after the revocation still returned 200.
+
+`scripts/Test-Governance.ps1` now checks this whenever `-ApimName` and `-ResourceGroup` are
+supplied, and reports `NOT CHECKED` rather than passing silently when they are not. It restores
+the original denylist in a `finally` block; verified after both runs that the live value was
+byte-for-byte what it had been.
 
 ### U9 — Managed-identity audience for the Foundry `/anthropic` route — RESOLVED
 

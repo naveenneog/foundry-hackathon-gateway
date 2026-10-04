@@ -11,6 +11,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · [Semantic Ve
   at it with `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN` — the same key, the same allowlist,
   time window, one-time budget, revocation and attribution, and no Azure identity on their
   machine. (P17, ADR-0009)
+- **Revocation is now part of the control harness.** It was never tested. `Test-Governance.ps1`
+  mints a key, revokes it, polls until the gateway refuses it, and confirms other keys are
+  unaffected — measured at 1 second. It reports NOT CHECKED rather than passing when run without
+  `-ApimName` and `-ResourceGroup`. (P22, UNKNOWNS U16)
 - **A worked example.** `examples/claude-agent.ipynb` builds a two-tool agent on a Claude model
   with the ordinary `anthropic` SDK. The committed copy holds the output of a real run against
   the live gateway — two parallel tool calls, a chained calculation, and the gateway's budget
@@ -57,9 +61,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · [Semantic Ve
   (P15)
 
 ### Known
-- On the Claude route a streamed completion is not metered: 419 tokens counted non-streamed
-  against 16 for the same request streamed. Claude Code always streams. Bounded by the
-  `max_tokens` clamp, the per-minute request limit, and prompt tokens still counting.
-  (UNKNOWNS U15, roadmap P20)
+- On the Claude route a streamed budget overshoots by about half again: measured, a 2,000-token
+  budget stopped at 3,120 real tokens streamed against 2,080 non-streamed. The cap is enforced
+  either way; `x-budget-used` is what breaks, reading 108 where 3,120 had been spent. Treat it as
+  a floor on that route. (UNKNOWNS U15, roadmap P20)
 
 ### Removed

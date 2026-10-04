@@ -64,15 +64,22 @@ that are actually deployed in the subscription, and serve Claude models to Claud
       and the gateway's budget headers. `tests/example-notebook.test.mjs` keeps a key out of the
       committed outputs and pins the two mistakes the example exists to prevent.
 
+- [x] **P22** Prove the three guarantees a key makes
+      *Verified 2026-10-04:* budget, time window and revocation each measured against the live
+      gateway. Revocation is now part of `Test-Governance.ps1` (24/24 on the Claude route) and
+      reports NOT CHECKED rather than passing when it cannot run. UNKNOWNS U15 corrected, U16
+      added.
+
 ## Milestone M6 — Only if this outlives one event
 
-- [ ] **P20** Meter streamed completions on the Claude route
-      *Acceptance:* a streamed Claude response increments `x-budget-used` by its actual
-      completion tokens, within the tolerance stated in UNKNOWNS U5.
-      *Why:* measured 2026-10-04, a streamed completion counts as zero — 419 tokens recorded
-      non-streamed against 16 for the same request streamed. Claude Code always streams, so the
-      budget on that route runs well behind real spend. Bounded today by the `max_tokens` clamp,
-      the per-minute request limit, and prompt tokens still being counted. See UNKNOWNS U15.
+- [ ] **P20** Report the budget from the number that enforces it
+      *Acceptance:* `x-budget-used` on the Claude route tracks real consumption on a streamed
+      response within the tolerance stated in UNKNOWNS U5.
+      *Why:* measured 2026-10-04, a streamed 2,000-token budget stopped at 3,120 real tokens
+      (+56%) while the header read 108. The cap is enforced by APIM's own quota; the header is
+      fed by the cache counter, and the two disagree. Sourcing the header from
+      `remaining-quota-tokens-variable-name` would make the number shown and the number enforced
+      the same number. See UNKNOWNS U15.
 
 ## Milestone M4 — Hardening (only if this outlives one event)
 

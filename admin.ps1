@@ -647,13 +647,15 @@ function Invoke-Verify {
     if ($openaiPins.Count -ge 1) {
         & (Join-Path $script:Root 'scripts/Test-Governance.ps1') `
             -GatewayUrl $state.gatewayUrl -SecretPath $script:SecretPath -Route 'openai' `
-            -Model $openaiPins[0].alias -SecondModel (Coalesce $openaiPins[1].alias $openaiPins[0].alias)
+            -Model $openaiPins[0].alias -SecondModel (Coalesce $openaiPins[1].alias $openaiPins[0].alias) `
+            -ApimName $state.apimName -ResourceGroup $state.resourceGroup
     }
 
     if ($state.claudeGatewayUrl -and $claudePins.Count -ge 1) {
         & (Join-Path $script:Root 'scripts/Test-Governance.ps1') `
             -GatewayUrl $state.claudeGatewayUrl -SecretPath $script:SecretPath -Route 'claude' `
-            -Model $claudePins[0].alias -SecondModel (Coalesce $claudePins[1].alias $claudePins[0].alias)
+            -Model $claudePins[0].alias -SecondModel (Coalesce $claudePins[1].alias $claudePins[0].alias) `
+            -ApimName $state.apimName -ResourceGroup $state.resourceGroup
     } elseif ($state.claudeGatewayUrl) {
         Write-Info 'Claude route is deployed but has no pinned models; skipping its checks (option 3 to pin one).'
     }

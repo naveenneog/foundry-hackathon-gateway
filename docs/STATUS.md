@@ -20,6 +20,45 @@ and prove it live.
 | `flash` / `pro` | `deepseek-v4-flash` / `deepseek-v4-pro` |
 | `sonnet-5` / `opus-5` | `claude-sonnet-5` / `claude-opus-5` |
 
+### P22 — prove the three guarantees a key makes — DONE
+
+Asked directly: does a key spend only its budget, only within its window, and stop on revocation?
+Each measured against the live gateway rather than asserted from the policy.
+
+**Budget — enforced, accuracy depends on streaming.** Same key shape, same prompt, 2,000-token
+budget, 500 `max_tokens` per request:
+
+| | Stopped after | Real tokens spent | `x-budget-used` |
+|---|---|---|---|
+| `stream: false` | 5th request | 2,080 (+4%) | 2,080 — exact |
+| `stream: true` | 7th request | 3,120 (+56%) | 108 — wrong by 29× |
+
+The cap fires on both. The header is the part that breaks: it is fed by the cache counter, while
+the cap is enforced by APIM's own quota. This **corrects** yesterday's U15, which said streamed
+completions were not metered at all — they are, by the quota, just not by the counter.
+
+**Time window — enforced with nothing running.** `exp` and `nbf` are checked by `validate-jwt`
+on every request; expired and not-yet-active keys both return 401, verified on both routes. The
+gateway's clock decides, with 60 seconds of permitted skew.
+
+**Revocation — under ten seconds, and only the key named.** Previously untested: the harness had
+no revocation check at all, which is why this packet exists. It now mints a key, confirms 200,
+adds its `jti` to the denylist, polls until refused, and confirms a second key is unaffected. It
+refused on the first poll on the Claude route and the second on the OpenAI route, against a
+five-second polling interval — so "under ten seconds", not "one second".
+
+The check needs to edit a named value, so it runs only when `-ApimName` and `-ResourceGroup` are
+supplied and reports **NOT CHECKED** otherwise. It restores the denylist in a `finally` block, so
+an interrupted run cannot leave real keys un-revoked.
+
+```
+Test-Governance.ps1 -Route claude ... -ApimName ... -ResourceGroup ...
+  [PASS] key works before revocation        -> 200
+  [PASS] revoked key rejected               -> 403     revocation took effect in 1s
+  [PASS] other keys unaffected by revocation -> 200
+  24 passed, 0 failed
+```
+
 ### P21 — a worked example: a Claude agent with tool calls — DONE
 
 `examples/claude-agent.ipynb`, executed against the live gateway and committed with its output.

@@ -144,15 +144,16 @@ winget install --id Microsoft.PowerShell --source winget
 
 ## The controls
 
-| Control | Participant sees |
-|---|---|
-| Model allowlist | **403** `model_not_permitted` |
-| Access window (start and expiry) | **401** — self-enforcing, no cleanup job |
-| One-time spend cap | **403** `budget_exhausted` — stops immediately |
-| Tokens per minute | **429** + `Retry-After` |
-| Requests per minute | **429** |
-| Per-participant attribution | `x-budget-used` header + App Insights |
-| No credential sprawl | nothing to leak — gateway uses its managed identity |
+| Control | Participant sees | Measured |
+|---|---|---|
+| Model allowlist | **403** `model_not_permitted` | exact match; an unpinned alias is refused |
+| Access window (start and expiry) | **401** — self-enforcing, no cleanup job | `exp`/`nbf` checked by `validate-jwt`, 60s clock skew |
+| One-time spend cap | **403** `budget_exhausted` — stops immediately | stops at **+4%** non-streamed, **+56%** streamed (U15) |
+| Revocation | **403** `revoked` | takes effect in **under 10s**; exact id match (U16) |
+| Tokens per minute | **429** + `Retry-After` | |
+| Requests per minute | **429** | |
+| Per-participant attribution | `x-budget-used` header + App Insights | accurate non-streamed; a floor when streaming |
+| No credential sprawl | nothing to leak — gateway uses its managed identity | |
 
 Every response carries the live budget:
 
@@ -162,14 +163,31 @@ x-budget-total: 500000
 x-budget-remaining: 470843
 ```
 
+### What "the key only spends its budget" actually means
+
+Three questions worth separating, because the answers differ:
+
+- **Does it stop at the budget?** Yes. Measured against a 2,000-token budget, it stopped after
+  2,080 real tokens non-streamed and 3,120 streamed. The cap is enforced on both; streaming costs
+  accuracy, not the control. A single request can always cross the line and finish — the budget
+  is checked *before* a call, and the clamp on `max_tokens` is what bounds that last one.
+- **Does it stop at the time limit?** Yes, and without anything running. `exp` and `nbf` are
+  validated on every request, so a key starts and dies on its own. There is 60 seconds of
+  permitted clock skew, and the gateway's clock decides — not the participant's.
+- **Does revocation work?** Yes, within seconds (1s and 7s in two measurements, against a 5s
+  polling interval), and only on the key you name.
+
 ### Verify the controls yourself
 
-`./admin.ps1` → option 8. It mints deliberately broken keys — expired, forged, wrong model,
-exhausted — and asserts the gateway rejects each for the right reason.
+`./admin.ps1` → option 11. It mints deliberately broken keys — expired, not yet active, forged,
+wrong model, exhausted, revoked — and asserts the gateway rejects each for the right reason, on
+every route that has models pinned.
 
 ![Governance controls verified](docs/images/governance-checks.png)
 
-A control that never fires is not a control.
+A control that never fires is not a control. The revocation check needs to edit the denylist on
+the instance, so it reports **NOT CHECKED** rather than passing when it is run without
+`-ApimName` and `-ResourceGroup`.
 
 ---
 
@@ -363,14 +381,13 @@ node .ironclad/gate.mjs --stage packet    # full quality gate
 - **Streaming drifts the counter.** API Management estimates tokens on streamed responses rather
   than reading actual usage, so `x-budget-used` is approximate. The `token-quota` underneath is the
   authoritative cap. See `docs/UNKNOWNS.md` U5.
-- **On the Claude route, a streamed completion is not counted at all.** Measured 2026-10-04: a
-  non-streamed 400-token completion counted 419 tokens; the same request with `stream: true`
-  counted 16 — the prompt only. **Claude Code always streams**, so real spend runs well ahead of
-  `x-budget-used` there. Three things still bound it: `max_tokens` is clamped to
-  `hackgw-max-output-tokens` on every request, `hackgw-calls-per-minute` bounds request rate, and
-  prompt tokens *are* counted and grow with every turn, so a long session does eventually trip the
-  budget — later than the true spend, not never. Fine for a time-boxed event with a subscription
-  spending cap; not a billing control. See `docs/UNKNOWNS.md` U15.
+- **On the Claude route a streamed budget overshoots by about half again.** Measured 2026-10-04
+  with a 2,000-token budget and 500-token requests: non-streamed stopped at **2,080** real tokens
+  (+4%), streamed stopped at **3,120** (+56%). The budget is enforced on both — what streaming
+  costs is accuracy, not the control. `x-budget-used` is the part that genuinely breaks: it read
+  108 where 3,120 had been spent, because the header is fed by the cache counter and the cap is
+  enforced by APIM's own quota. **Treat `x-budget-used` as a floor on the Claude route, not a
+  figure.** Claude Code always streams. See `docs/UNKNOWNS.md` U15 and roadmap P20.
 - **The budget counter uses the internal cache**, which is best-effort and not atomic under
   concurrency. The quota backstop bounds the damage. Move to external Redis if this outlives one
   event — roadmap P11.

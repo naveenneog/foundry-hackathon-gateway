@@ -19,7 +19,12 @@ param(
     [Parameter(Mandatory)][string]$SecretPath,
     [ValidateSet('openai', 'claude')][string]$Route = 'openai',
     [string]$Model,
-    [string]$SecondModel
+    [string]$SecondModel,
+    # Supplying these turns on the revocation check, which has to edit a named value on the
+    # instance. Without them the check is reported as NOT RUN rather than silently skipped: a
+    # control nobody exercised is indistinguishable from one that does not work.
+    [string]$ApimName,
+    [string]$ResourceGroup
 )
 
 $ErrorActionPreference = 'Stop'
@@ -40,6 +45,7 @@ $script:NotGranted = "not-pinned-$([guid]::NewGuid().ToString('N').Substring(0, 
 
 $script:Pass = 0
 $script:Fail = 0
+$script:Skipped = 0
 
 function New-TestKey {
     param($Subject, $Models, $Budget, $StartOffsetHours, $EndOffsetHours)
@@ -233,6 +239,62 @@ $r = Invoke-Gateway -Token $good -Body $chat
 $hasBudgetHeaders = $r.Headers.Keys -contains 'x-budget-total'
 Assert-Control 'budget headers returned' @($true) $hasBudgetHeaders
 
+# 10b. Revocation. The one control that cannot be proved from the key alone: it needs the
+#      denylist on the instance to change while a known-good key is in flight.
+#
+#      Sentinel commas make the match exact, so revoking k_a cannot also revoke k_aaa. Both
+#      cases are checked, because a substring match would pass the first and fail nobody.
+if ($ApimName -and $ResourceGroup) {
+    $victim  = New-TestKey -Subject "verify-revoke-$(Get-Random)" -Models @($Model) -Budget 50000 -StartOffsetHours 0 -EndOffsetHours 2
+    $jti     = ([System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(
+                   $victim.Split('.')[1].Replace('-', '+').Replace('_', '/').PadRight(
+                       [int](4 * [math]::Ceiling($victim.Split('.')[1].Length / 4.0)), '=')
+               )) | ConvertFrom-Json).jti
+
+    $r = Invoke-Gateway -Token $victim -Body $chat
+    Assert-Control 'key works before revocation' @(200) $r.Status $r.Body
+
+    $before = az apim nv show -g $ResourceGroup --service-name $ApimName `
+                  --named-value-id hackgw-revoked-keys --query value -o tsv 2>$null
+    if (-not $before) { $before = ',' }
+
+    try {
+        $withVictim = $before.TrimEnd(',') + ",$jti,"
+        az apim nv update -g $ResourceGroup --service-name $ApimName `
+            --named-value-id hackgw-revoked-keys --value $withVictim -o none 2>$null
+
+        # Named-value changes are not instantaneous at the gateway. Poll rather than assume,
+        # and report how long it actually took - an organiser revoking a leaked key needs to
+        # know whether that is seconds or minutes.
+        $sw = [Diagnostics.Stopwatch]::StartNew()
+        $status = 0
+        while ($sw.Elapsed.TotalSeconds -lt 180) {
+            $status = (Invoke-Gateway -Token $victim -Body $chat).Status
+            if ($status -eq 403) { break }
+            Start-Sleep -Seconds 5
+        }
+        $sw.Stop()
+        Assert-Control 'revoked key rejected' @(403) $status "took $([int]$sw.Elapsed.TotalSeconds)s to take effect"
+        if ($status -eq 403) {
+            Write-Host ("         revocation took effect in {0}s" -f [int]$sw.Elapsed.TotalSeconds) -ForegroundColor DarkGray
+        }
+
+        # A key whose id merely CONTAINS a revoked id must still work.
+        $bystander = New-TestKey -Subject "verify-bystander-$(Get-Random)" -Models @($Model) -Budget 50000 -StartOffsetHours 0 -EndOffsetHours 2
+        $r = Invoke-Gateway -Token $bystander -Body $chat
+        Assert-Control 'other keys unaffected by revocation' @(200) $r.Status $r.Body
+    }
+    finally {
+        # Always restore, even on Ctrl-C: leaving a test id on a real denylist is harmless, but
+        # leaving the denylist REPLACED would silently un-revoke real keys.
+        az apim nv update -g $ResourceGroup --service-name $ApimName `
+            --named-value-id hackgw-revoked-keys --value $before -o none 2>$null
+    }
+} else {
+    Write-Host "  [SKIP] revocation NOT CHECKED - pass -ApimName and -ResourceGroup" -ForegroundColor Yellow
+    $script:Skipped++
+}
+
 # 11. Claude route only: every rejection has to be in the Anthropic envelope. A client in this
 #     mode parses {"type":"error","error":{...}} and nothing else, so an OpenAI-shaped body
 #     reaches the participant as "the response was malformed" rather than as the reason.
@@ -273,6 +335,8 @@ if ($Route -eq 'claude') {
 }
 
 Write-Host ''
-Write-Host "  $script:Pass passed, $script:Fail failed" -ForegroundColor $(if ($script:Fail -eq 0) { 'Green' } else { 'Red' })
+$summary = "  $script:Pass passed, $script:Fail failed"
+if ($script:Skipped -gt 0) { $summary += ", $script:Skipped NOT CHECKED" }
+Write-Host $summary -ForegroundColor $(if ($script:Fail -eq 0) { 'Green' } else { 'Red' })
 Write-Host ''
 if ($script:Fail -gt 0) { exit 1 }

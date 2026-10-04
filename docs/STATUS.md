@@ -1,6 +1,6 @@
 # Status
 
-**Active packet:** none — M5 complete and verified live.
+**Active packet:** none — P25 complete and verified against a live instance.
 
 M1, M2, M3 and M5 are complete. M5 (P15–P19) added: adopt an APIM an organisation already runs,
 pick from the models actually deployed in the subscription, serve Claude models to Claude Code,
@@ -19,6 +19,50 @@ and prove it live.
 | Claude backend | `https://ai-contosohub530569751908.services.ai.azure.com/anthropic` |
 | `flash` / `pro` | `deepseek-v4-flash` / `deepseek-v4-pro` |
 | `sonnet-5` / `opus-5` | `claude-sonnet-5` / `claude-opus-5` |
+
+### P25 — deploy onto whatever is already there — DONE
+
+An operator ran option 1 against their own instance, `apim-claude-gw-fzgql9`, and the deployment
+failed. ARM deployments are atomic, so it also left the instance half-built. Three separate
+defects, all of them the same mistake — code that assumed an empty target:
+
+| | What happened | Fix |
+|---|---|---|
+| Path collision | Another product already published an API at `/claude`, so `claude-gateway` could not be created there. The picker knew; the deploy did not. | `claudeApiPath` is a Bicep parameter; `suggestFreePath` offers `claude-hackgw` |
+| Role grant | The account already had the role, from a different assignment name, so `guid()` determinism did not help. `RoleAssignmentExists`. | `grantFoundryRole` parameter, set from `Test-FoundryRoleNeeded` |
+| Default pins | A new install started pinned to two DeepSeek deployments that need not exist. | Pins start empty; option 1 pins from the subscription |
+
+The general fix is that option 1 now **reads the target before it writes to it** and prints what
+it found:
+
+```
+    API Management   REUSE    apim-claude-gw-fzgql9 (BasicV2) is reused as-is.
+    Foundry account  OK       ai-contosohub530569751908, 29 deployment(s).
+    Model: sonnet-5  OK       claude-sonnet-5 (claude).
+    Model: ghost     BLOCKED  'not-deployed-anywhere' is not deployed in ...
+    OpenAI route     UPDATE   'deepseek-gateway' is already published; policy and operations are updated.
+    Claude route     CREATE   'claude-gateway' will be added at /claude-hackgw.
+    Named values     UPDATE   7 already present; values are refreshed.
+    Foundry access   OK       Already granted; not re-granting.
+```
+
+That output is from the real failing instance. The 7 named values and the published
+`deepseek-gateway` are what its half-applied deployment left behind; the plan reports them as
+UPDATE rather than CREATE, which is the checkpoint behaviour asked for. A BLOCKED row stops the
+deployment unless the operator confirms.
+
+`buildDeploymentPlan` in `src/apim.mjs` holds the decision logic and is tested in isolation
+(`tests/deployment-plan.test.mjs`, 23 tests). `Show-DeploymentPlan` gathers the facts and renders
+the answer, reaching the decision through `scripts/plan.mjs` — the same stdin-JSON shim pattern
+`mint.mjs` and `diagnose.mjs` already use.
+
+Council found that the first cut of this did **not** work that way: the PowerShell carried its own
+transcription of the rules, and the two copies drifted in the worst direction. On an instance that
+was both on a classic tier *and* had `/claude` taken, the tested copy said BLOCKED and the shipping
+copy said CREATE — it would have published a Claude route whose token cap meters nothing, which is
+exactly what ADR-0009 exists to prevent. The blockers arrive in one array and the path workaround
+masked the tier. Fixed in both the rule (a path collision is curable, a tier is not, so the tier is
+judged first) and the structure (the transcription is deleted; there is one copy now).
 
 ### P22 — prove the three guarantees a key makes — DONE
 

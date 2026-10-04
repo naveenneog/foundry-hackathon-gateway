@@ -117,7 +117,7 @@ function Test-ApimSuitable {
         }
     } elseif ($Route -eq 'claude' -and $sku -notmatch 'V2$') {
         $blockers += 'classic_tier'
-        $reasons  += "The Claude route needs a v2 tier (BasicV2, StandardV2 or PremiumV2). $sku accepts the token policy and meters zero Anthropic tokens, so budgets would never fire."
+        $reasons  += "The Claude route is published only on a v2 tier (BasicV2, StandardV2 or PremiumV2), which is where API Management supports Anthropic Messages token metering. $sku is not one of them, and on an unsupported tier the token policy is accepted and meters zero, so budgets would never fire."
     }
 
     if ([string]$Instance.provisioningState -and [string]$Instance.provisioningState -ne 'Succeeded') {
@@ -196,9 +196,14 @@ function Select-ApimInstance {
         Offer the instances in the subscription. Returns the chosen instance object, or $null
         to mean "create a new one".
 
-        An instance that cannot serve the requested route is listed with its reason but cannot
-        be chosen: a classic tier would accept the Claude policy and meter nothing, which is a
-        control that reports itself as present and enforces nothing.
+        BOTH routes are shown per instance, because deploying publishes both. Listing only the
+        route named in -Route produced a picker that said "'deepseek-gateway' would be added"
+        against every instance while the deployment also added 'claude-gateway' - or silently
+        did not, on a classic tier, which the operator only discovered several prompts later.
+
+        -Route is the route that MUST work: an instance that cannot serve it is listed with its
+        reason and cannot be chosen. A route that merely happens to be unusable is a warning at
+        selection time, not after.
     #>
     param([ValidateSet('openai', 'claude')][string]$Route = 'openai')
 
@@ -217,14 +222,25 @@ function Select-ApimInstance {
     }
 
     Write-Host ''
-    Write-Host '  API Management instances in this subscription:'
+    Write-Host '  API Management instances in this subscription.'
+    Write-Host '  Deploying publishes BOTH routes, so both are shown:' -ForegroundColor DarkGray
+    Write-Host ''
     $i = 1
     foreach ($c in $candidates) {
-        $v = $c.$Route
-        $colour = if ($v.suitable) { 'Green' } else { 'DarkGray' }
-        $tag = if ($v.suitable) { $v.action } else { 'unusable' }
-        Write-Host ("    [{0}] {1,-28} {2,-12} {3,-10} {4}" -f $i, $c.name, $c.sku, $c.location, $tag) -ForegroundColor $colour
-        Write-Host ("         {0}" -f $v.reason) -ForegroundColor Gray
+        $headColour = if ($c.$Route.suitable) { 'Green' } else { 'DarkGray' }
+        Write-Host ("    [{0}] {1,-28} {2,-12} {3}" -f $i, $c.name, $c.sku, $c.location) -ForegroundColor $headColour
+
+        foreach ($r in @('openai', 'claude')) {
+            $v = $c.$r
+            $api = $script:ApiIdForRoute[$r]
+            $path = $script:ApiPathForRoute[$r]
+            if ($v.suitable) {
+                $what = if ($v.action -eq 'update') { "updates '$api' in place" } else { "adds '$api'" }
+                Write-Host ("         /{0,-7} {1,-7} {2}" -f $path, $v.action, $what) -ForegroundColor Gray
+            } else {
+                Write-Host ("         /{0,-7} {1,-7} {2}" -f $path, 'SKIPPED', $v.reason) -ForegroundColor DarkYellow
+            }
+        }
         $i++
     }
     Write-Host ("    [{0}] Create a new instance" -f $i)
@@ -247,8 +263,158 @@ function Select-ApimInstance {
         return (Select-ApimInstance -Route $Route)
     }
 
+    # Say now, not after five more prompts, that a route will not be published. A path collision
+    # is excluded: Invoke-Deploy offers an alternative path for that, so calling it terminal here
+    # would talk an operator out of an instance that works.
+    foreach ($r in @('openai', 'claude')) {
+        if ($r -eq $Route) { continue }
+        $other = $chosen.$r
+        $incurable = @($other.blockers | Where-Object { $_ -ne 'path_taken' })
+        if ($incurable.Count -gt 0) {
+            Write-Warn "The '$r' route will NOT be published on $($chosen.name)."
+            Write-Info $other.reason
+            if (-not (Confirm-Action "Continue with the '$Route' route only?")) {
+                return (Select-ApimInstance -Route $Route)
+            }
+        } elseif ($other.blockers -contains 'path_taken') {
+            Write-Info "The path '/$($script:ApiPathForRoute[$r])' is taken on $($chosen.name); the '$r' route will be offered another path."
+        }
+    }
+
     Write-Ok "Using $($chosen.name) in $($chosen.resourceGroup)."
     return $chosen
+}
+
+function Get-RouteVerdict {
+    <#
+        Judge a live instance for one route, fetching the instance and its published APIs.
+
+        Select-ApimInstance works this out at selection time, but Invoke-Deploy runs again on
+        every update and the instance can change underneath it. Re-reading is cheap and means
+        the deployment never attempts what discovery already knows is impossible.
+
+        Returns the verdict plus `freePath`, a path nothing else on the instance is using.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$ApimName,
+        [Parameter(Mandatory)][string]$ResourceGroup,
+        [ValidateSet('openai', 'claude')][string]$Route = 'claude'
+    )
+
+    $inst = az apim show -g $ResourceGroup -n $ApimName -o json 2>$null | ConvertFrom-Json
+    if (-not $inst) {
+        return [pscustomobject]@{ suitable = $false; blockers = @('malformed'); reason = "Could not read $ApimName."; action = 'none'; freePath = $script:ApiPathForRoute[$Route] }
+    }
+
+    $paths = @()
+    $listed = az apim api list -g $ResourceGroup --service-name $ApimName --query '[].{name:name,path:path}' -o json 2>$null | ConvertFrom-Json
+    if ($LASTEXITCODE -eq 0 -and $listed) { $paths = @($listed) }
+    $apis = @($paths | ForEach-Object { [string]$_.name } | Where-Object { $_ })
+
+    $v = Test-ApimSuitable -Instance $inst -Route $Route -ExistingApis $apis -ExistingPaths $paths
+    $v | Add-Member -NotePropertyName freePath -NotePropertyValue (Get-FreeApiPath -ExistingPaths $paths -Preferred $script:ApiPathForRoute[$Route] -OwnApiId $script:ApiIdForRoute[$Route]) -Force
+    return $v
+}
+
+function Get-FreeApiPath {
+    <# Transcription of suggestFreePath in src/apim.mjs. #>
+    param($ExistingPaths, [string]$Preferred, [string]$OwnApiId)
+
+    $wanted = ([string]$Preferred).Trim('/').ToLowerInvariant()
+    $taken = @($ExistingPaths | Where-Object { $_ -and [string]$_.name -cne $OwnApiId } |
+        ForEach-Object { ([string]$_.path).Trim('/').ToLowerInvariant() } | Where-Object { $_ })
+
+    if ($taken -notcontains $wanted) { return $wanted }
+    $alt = "$wanted-hackgw"
+    if ($taken -notcontains $alt) { return $alt }
+    for ($n = 2; $n -lt 100; $n++) {
+        if ($taken -notcontains "$alt-$n") { return "$alt-$n" }
+    }
+    return "$alt-$(Get-Random)"
+}
+
+function Show-DeploymentPlan {
+    <#
+        Gathers what is actually on the target and prints what the deployment would do, before
+        it runs. An ARM deployment is atomic: one resource that cannot be created fails the
+        whole thing and leaves behind whatever it already made. Returns the number of blocked
+        rows so the caller can stop.
+
+        The decision itself is buildDeploymentPlan in src/apim.mjs, reached through
+        scripts/plan.mjs. This function only gathers facts and renders the answer. It used to
+        carry its own copy of the rules, which drifted: the tested copy blocked a route on a
+        classic tier that this copy reported as CREATE.
+    #>
+    param($State, [bool]$DeployClaude, [string]$ClaudePath, [bool]$GrantRole)
+
+    Write-Head 'Deployment plan'
+
+    $apimExists = $false; $sku = ''; $apis = @(); $paths = @(); $nvs = @()
+    if ($State.existingApimName) {
+        $inst = az apim show -g $State.resourceGroup -n $State.existingApimName -o json 2>$null | ConvertFrom-Json
+        if ($inst) {
+            $apimExists = $true
+            $sku = [string]$inst.sku.name
+            $listed = az apim api list -g $State.resourceGroup --service-name $State.existingApimName --query '[].{name:name,path:path}' -o json 2>$null | ConvertFrom-Json
+            if ($LASTEXITCODE -eq 0 -and $listed) { $paths = @($listed); $apis = @($paths | ForEach-Object { [string]$_.name }) }
+            $nvList = az apim nv list -g $State.resourceGroup --service-name $State.existingApimName --query '[].name' -o tsv 2>$null
+            if ($LASTEXITCODE -eq 0 -and $nvList) { $nvs = @($nvList -split '\r?\n' | Where-Object { $_ }) }
+        }
+    }
+
+    $deps = @()
+    $acctOk = $false
+    $found = az cognitiveservices account show -n $State.foundryAccount -g $State.foundryResourceGroup -o json 2>$null | ConvertFrom-Json
+    if ($found) {
+        $acctOk = $true
+        $raw = az cognitiveservices account deployment list -n $State.foundryAccount -g $State.foundryResourceGroup -o json 2>$null | ConvertFrom-Json
+        if ($raw) { $deps = @($raw | ForEach-Object { [string]$_.name }) }
+    }
+
+    # A Claude route the caller has already decided against is withheld from the plan the same
+    # way it is withheld from the deployment: by having no Claude pins to publish.
+    $pins = @($State.models | ForEach-Object {
+        $r = if ($_.PSObject.Properties.Name -contains 'route' -and $_.route) { [string]$_.route } else { 'openai' }
+        [pscustomobject]@{ alias = [string]$_.alias; deployment = [string]$_.deployment; route = $r }
+    })
+    if (-not $DeployClaude) { $pins = @($pins | Where-Object { $_.route -ne 'claude' }) }
+
+    $facts = [pscustomobject]@{
+        apim          = [pscustomobject]@{
+            name        = if ($State.existingApimName) { [string]$State.existingApimName } else { [string]$State.apimName }
+            exists      = $apimExists
+            sku         = $sku
+            hasIdentity = $true
+        }
+        existingApis  = $apis
+        existingPaths = $paths
+        namedValues   = $nvs
+        roleAssigned  = (-not $GrantRole)
+        claudePath    = $ClaudePath
+        foundry       = [pscustomobject]@{ name = [string]$State.foundryAccount; exists = $acctOk; deployments = $deps }
+        pins          = $pins
+    }
+
+    $planJson = $facts | ConvertTo-Json -Depth 6 -Compress
+    $result = $planJson | node (Join-Path $script:Root 'scripts/plan.mjs') 2>$null | ConvertFrom-Json
+    if (-not $result -or $result.PSObject.Properties.Name -contains 'error') {
+        Write-Err "The deployment plan could not be worked out$(if ($result.error) { ": $($result.error)" })."
+        Write-Info 'Deploying blind is how the half-built gateway happened, so this stops here.'
+        return 1
+    }
+
+    foreach ($r in @($result.rows)) {
+        $colour = switch ($r.action) {
+            'blocked' { 'Red' }
+            'create'  { 'Green' }
+            'update'  { 'Cyan' }
+            'skip'    { 'DarkYellow' }
+            default   { 'Gray' }
+        }
+        Write-Host ("    {0,-16} {1,-8} {2}" -f $r.component, $r.action.ToUpperInvariant(), $r.detail) -ForegroundColor $colour
+    }
+
+    return [int]$result.blocked
 }
 
 function Test-FoundryRoleNeeded {

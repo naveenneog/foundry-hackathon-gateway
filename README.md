@@ -102,24 +102,28 @@ for the participant.
 Option 1 lists every API Management instance in the subscription before it creates one:
 
 ```
-  API Management instances in this subscription:
-    [1] apim-corp                    StandardV2   eastus2    add
-        StandardV2. Usable; 'deepseek-gateway' would be added alongside anything
-        already published here.
-    [2] apim-legacy                  Developer    eastus2    unusable
-        The Claude route needs a v2 tier (BasicV2, StandardV2 or PremiumV2). Developer
-        accepts the token policy and meters zero Anthropic tokens, so budgets would
-        never fire.
+  API Management instances in this subscription.
+  Deploying publishes BOTH routes, so both are shown:
+
+    [1] apim-corp                    StandardV2   East US 2
+         /v1      add     adds 'deepseek-gateway'
+         /claude  add     adds 'claude-gateway'
+    [2] apim-legacy                  Developer    East US 2
+         /v1      add     adds 'deepseek-gateway'
+         /claude  SKIPPED The Claude route is published only on a v2 tier ... on an
+                  unsupported tier the token policy is accepted and meters zero, so
+                  budgets would never fire.
     [3] Create a new instance
 ```
 
-Picking one adds this gateway's API, policy and named values to it and creates nothing else. The
-instance keeps its SKU, publisher details and identity. Everything written at instance scope is
-prefixed `hackgw-`, so it cannot collide with another API published there.
+Picking an existing instance adds this gateway's API, policy and named values to it and creates
+nothing else. Everything written at instance scope is prefixed `hackgw-`, so it cannot collide
+with another API published there ([ADR-0008](docs/adr/0008-adopt-existing-apim.md)).
 
-An instance is refused rather than flagged when it cannot enforce the controls: a classic tier for
-the Claude route, the Consumption tier, an instance that is not `Succeeded`, or one with no
-system-assigned managed identity. See [ADR-0008](docs/adr/0008-adopt-existing-apim.md).
+An instance is refused outright when it cannot serve the route being deployed: the Consumption
+tier, an instance that is not `Succeeded`, or one with no system-assigned managed identity. A
+route that cannot be served is marked `SKIPPED` with its reason, and picking that instance asks
+for confirmation first.
 
 **Requirements:** an Azure subscription, a Microsoft Foundry (`AIServices`) account, the Azure CLI,
 Node 20+, and **PowerShell 7.0 or later**.

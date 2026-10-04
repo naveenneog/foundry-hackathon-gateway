@@ -77,6 +77,18 @@ that are actually deployed in the subscription, and serve Claude models to Claud
       same-named deployment in another account as pinned, and `render-shots.cjs` only ran on one
       machine.
 
+- [x] **P25** Deploy onto whatever is already there
+      *Verified 2026-10-04:* option 1 reads the target first and prints a plan — instance,
+      Foundry account, each pinned model, both routes, named values, role grant — then refuses
+      to deploy over anything BLOCKED. Rendered against `apim-claude-gw-fzgql9`, the instance a
+      previous attempt had failed on: it correctly reported the OpenAI route as UPDATE and the 7
+      named values that attempt left behind, routed the Claude route around the `/claude` path
+      another product owns, skipped the role grant that already existed, and blocked a model
+      that is not deployed. Pins no longer default to DeepSeek. 23 new tests in
+      `tests/deployment-plan.test.mjs`. Council blocked the first cut: the PowerShell had its own
+      copy of the rules and the two disagreed on a classic-tier instance whose path was taken.
+      The copy is gone — `Show-DeploymentPlan` now calls `scripts/plan.mjs`.
+
 ## Milestone M6 — Only if this outlives one event
 
 - [ ] **P20** Report the budget from the number that enforces it

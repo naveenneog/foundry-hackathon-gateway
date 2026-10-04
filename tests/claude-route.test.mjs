@@ -25,7 +25,12 @@ const code = policy.replace(/<!--[\s\S]*?-->/g, "");
 describe("the gateway publishes the endpoints a Claude client calls", () => {
   test("the API is published at the `claude` path", () => {
     assert.match(bicep, /path: claudeApiPath/);
-    assert.match(bicep, /var claudeApiPath = 'claude'/);
+    assert.match(
+      bicep,
+      /param claudeApiPath string = 'claude'/,
+      "The path must be overridable: an instance already running another Claude gateway owns " +
+      "'claude', and APIM requires paths to be unique."
+    );
   });
 
   test("POST /v1/messages exists — without it nothing works at all", () => {

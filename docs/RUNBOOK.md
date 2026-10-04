@@ -61,28 +61,38 @@ first deployment it says "Not deployed yet".
 
 Option **1**.
 
-It lists every API Management instance in the subscription with a verdict for each, then offers
-to create a new one as the last choice:
+It lists every API Management instance in the subscription, shows what deploying would do to
+**each route**, then offers to create a new one as the last choice:
 
 ```
-  API Management instances in this subscription:
-    [1] apim-corp                    StandardV2   eastus2    add
-        StandardV2. Usable; 'deepseek-gateway' would be added alongside anything
-        already published here.
-    [2] apim-legacy                  Developer    eastus2    unusable
-        The Claude route needs a v2 tier (BasicV2, StandardV2 or PremiumV2). Developer
-        accepts the token policy and meters zero Anthropic tokens, so budgets would
-        never fire.
-    [3] Create a new instance
+  API Management instances in this subscription.
+  Deploying publishes BOTH routes, so both are shown:
+
+    [1] apim-corp                    StandardV2   East US 2
+         /v1      add     adds 'deepseek-gateway'
+         /claude  add     adds 'claude-gateway'
+    [2] apim-legacy                  Developer    East US 2
+         /v1      add     adds 'deepseek-gateway'
+         /claude  SKIPPED The Claude route is published only on a v2 tier (BasicV2,
+                  StandardV2 or PremiumV2) ... on an unsupported tier the token policy
+                  is accepted and meters zero, so budgets would never fire.
+    [3] apim-other                   BasicV2      East US 2
+         /v1      add     adds 'deepseek-gateway'
+         /claude  SKIPPED The API 'claude-foundry' already serves the path 'claude' on
+                  this instance, and APIM requires paths to be unique.
+    [4] Create a new instance
 ```
 
-Picking an existing instance adds this gateway's API, policy and named values to it and creates
+Deploying publishes both APIs, so both are shown per instance. A route marked `SKIPPED` will not
+be published and the reason says why — a tier that cannot meter Anthropic tokens, or another API
+already occupying the path. Picking an instance where the Claude route is skipped asks for
+confirmation before continuing.
+
+Picking an existing instance adds this gateway's APIs, policy and named values to it and creates
 nothing else. Everything written at instance scope is prefixed `hackgw-`, so it cannot collide
 with another API published there ([ADR-0008](adr/0008-adopt-existing-apim.md)).
 
-An instance is refused rather than warned about when it cannot enforce the controls: a classic
-tier for the Claude route, the Consumption tier, an instance that is not `Succeeded`, or one
-without a system-assigned managed identity.
+The instance that already carries this gateway shows `update` rather than `add` on each route.
 
 You are then asked for the Foundry account. Pick the one holding the models you intend to use —
 the gateway can only reach deployments in that single account.

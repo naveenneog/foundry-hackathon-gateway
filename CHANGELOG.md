@@ -6,6 +6,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · [Semantic Ve
 ## [Unreleased]
 
 ### Added
+- **A deployment plan, shown before anything is deployed.** Option 1 reads the target and prints
+  what exists and what it would do — instance, Foundry account, every pinned model, both routes,
+  named values and the role grant — then stops on anything that would fail. An ARM deployment is
+  all-or-nothing, so one impossible resource used to take the whole thing down and leave behind
+  whatever it had already created. (P25)
 - **An operator runbook and a statement of work.** `docs/RUNBOOK.md` walks the whole path with
   screenshots from live runs: deploy or adopt, pin, issue, verify, use, revoke, tear down.
   `docs/SOW.md` states scope, deliverables, acceptance criteria that are commands rather than
@@ -53,6 +58,17 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · [Semantic Ve
   (P15)
 
 ### Fixed
+- Deploying onto an instance that already publishes an API at `claude` failed the whole
+  deployment. The picker knew about the collision and the deploy did not, so it tried anyway and
+  failed with `Cannot create API 'claude-gateway' with the same Path 'claude'` — after it had
+  already created the other API. The Claude path is now a parameter, and a collision offers an
+  alternative path instead of failing. (P25)
+- Deploying onto a Foundry account another gateway already had access to failed with
+  `RoleAssignmentExists`. `Test-FoundryRoleNeeded` existed but was never called; the role grant
+  is now conditional. (P25)
+- New installations no longer assume two DeepSeek deployments exist. Pins start empty and option
+  1 pins from what is actually deployed in the subscription, because defaulting sent people
+  straight into a deployment that could only return 404. (P25)
 - The admin menu shows the Claude route and the route of each pinned model. It showed neither.
   (P24)
 - `Show-Models` marked a deployment as pinned when another Foundry account happened to hold a

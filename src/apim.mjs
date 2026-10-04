@@ -54,7 +54,7 @@ const BLOCKER_REASON = {
   [UNSUITABLE.UNKNOWN_ROUTE]:
     "Unknown route. A new route has to state its own tier requirements before an instance can be judged against it.",
   [UNSUITABLE.CLASSIC_TIER]:
-    "The Claude route needs a v2 tier (BasicV2, StandardV2 or PremiumV2). A classic tier accepts the token policy and meters zero Anthropic tokens, so budgets would never fire and the cap would silently not exist.",
+    "The Claude route is published only on a v2 tier (BasicV2, StandardV2 or PremiumV2), which is where API Management supports Anthropic Messages token metering. This SKU is not one of them, and on an unsupported tier the token policy is accepted and meters zero, so budgets would never fire.",
   [UNSUITABLE.CONSUMPTION_TIER]:
     "The Consumption tier supports neither named values nor a managed identity, which this gateway needs for the model map, the signing key and backend authentication.",
   [UNSUITABLE.NOT_READY]:
@@ -242,4 +242,165 @@ export function apiIdForRoute(route) {
 /** The APIM path a route publishes at. */
 export function apiPathForRoute(route) {
   return API_PATH[text(route)] ?? null;
+}
+
+/**
+ * What a deployment would do to a target, worked out before it runs.
+ *
+ * An ARM deployment is atomic: one resource that cannot be created fails the whole thing. That
+ * happened live — an instance already published an API at `claude`, and an unrelated gateway had
+ * already granted the Foundry role. The deployment failed on both and left behind the API it had
+ * already created, so the operator had a wall of ARM JSON and a half-built gateway.
+ *
+ * This answers what that wall did not: what is already here, what will be added, and what cannot
+ * be done and why. The caller shows it and stops on any BLOCKED row.
+ */
+export const PLAN = {
+  CREATE: "create",
+  UPDATE: "update",
+  REUSE: "reuse",
+  OK: "ok",
+  SKIP: "skip",
+  BLOCKED: "blocked",
+};
+
+export function buildDeploymentPlan(facts) {
+  const f = facts && typeof facts === "object" ? facts : {};
+  const apim = f.apim ?? {};
+  const foundry = f.foundry ?? {};
+  const pins = Array.isArray(f.pins) ? f.pins : [];
+  const existingApis = Array.isArray(f.existingApis) ? f.existingApis : [];
+  const existingPaths = Array.isArray(f.existingPaths) ? f.existingPaths : [];
+  const namedValues = Array.isArray(f.namedValues) ? f.namedValues : [];
+  const rows = [];
+
+  const add = (component, action, detail) => rows.push({ component, action, detail });
+
+  // --- the instance ---
+  if (apim.exists) {
+    add("API Management", PLAN.REUSE, `${text(apim.name)} (${text(apim.sku) || "unknown SKU"}) is reused as-is.`);
+  } else {
+    add("API Management", PLAN.CREATE, `${text(apim.name) || "a new instance"} will be created. This takes 30-45 minutes.`);
+  }
+
+  // --- the Foundry account and every pinned model ---
+  const deployments = Array.isArray(foundry.deployments) ? foundry.deployments.map(text) : [];
+  if (foundry.exists === false) {
+    add("Foundry account", PLAN.BLOCKED, `'${text(foundry.name)}' was not found. Every model call would return 404.`);
+  } else {
+    add("Foundry account", PLAN.OK, `${text(foundry.name)}, ${deployments.length} deployment(s).`);
+  }
+
+  for (const pin of pins) {
+    const dep = text(pin?.deployment);
+    const label = `Model: ${text(pin?.alias)}`;
+    if (foundry.exists === false) {
+      add(label, PLAN.BLOCKED, `'${dep}' cannot be checked: the account is missing.`);
+    } else if (deployments.includes(dep)) {
+      add(label, PLAN.OK, `${dep} (${text(pin?.route) || "openai"}).`);
+    } else {
+      add(label, PLAN.BLOCKED, `'${dep}' is not deployed in ${text(foundry.name)}. Calls would return 404 DeploymentNotFound.`);
+    }
+  }
+
+  // --- the two routes ---
+  for (const route of [ROUTE.OPENAI, ROUTE.CLAUDE]) {
+    const label = route === ROUTE.OPENAI ? "OpenAI route" : "Claude route";
+    const apiId = API_ID[route];
+    const wanted = pins.filter((p) => (text(p?.route) || ROUTE.OPENAI) === route);
+
+    if (route === ROUTE.CLAUDE && wanted.length === 0) {
+      add(label, PLAN.SKIP, "No Claude models pinned, so the route is not published.");
+      continue;
+    }
+
+    // The path the deployment will actually use, which is not always the default: a collision
+    // can be worked around by publishing elsewhere, and the caller passes the path it settled
+    // on. Judging the default here would report a route blocked that is about to be published.
+    const resolvedPath =
+      route === ROUTE.CLAUDE && text(f.claudePath) ? normalisePath(f.claudePath) : normalisePath(API_PATH[route]);
+
+    const verdict = classifyApim(
+      {
+        name: apim.name,
+        // classifyApim reads the ARM shape, where the SKU is an object.
+        sku: { name: apim.sku },
+        provisioningState: "Succeeded",
+        identity: apim.hasIdentity === false ? { type: "None" } : { type: "SystemAssigned" },
+      },
+      { route, existingApis, existingPaths }
+    );
+
+    // A path collision is the one blocker a different path fixes. Everything else - the tier
+    // above all - travels with the instance, so it has to be judged on its own. These arrive in
+    // the same array, and an earlier version let the path branch mask the tier: an instance that
+    // was BOTH on a classic tier and had the path taken was reported CREATE, which would have
+    // published a Claude route whose token cap meters nothing.
+    const incurable = (verdict.blockers ?? []).filter((b) => b !== UNSUITABLE.PATH_TAKEN);
+    const clash = existingPaths.find((p) => normalisePath(p?.path) === resolvedPath && text(p?.name) !== apiId);
+
+    if (apim.exists && incurable.length > 0) {
+      add(label, PLAN.BLOCKED, verdict.reason);
+    } else if (apim.exists && clash) {
+      add(label, PLAN.BLOCKED, `'${text(clash.name)}' already serves the path '${resolvedPath}', and APIM requires paths to be unique.`);
+    } else if (existingApis.includes(apiId)) {
+      add(label, PLAN.UPDATE, `'${apiId}' is already published; its policy and operations are updated.`);
+    } else {
+      add(label, PLAN.CREATE, `'${apiId}' will be added at /${resolvedPath}.`);
+    }
+  }
+
+  // --- configuration and access ---
+  const ours = namedValues.filter((n) => text(n).startsWith("hackgw-"));
+  add(
+    "Named values",
+    ours.length > 0 ? PLAN.UPDATE : PLAN.CREATE,
+    ours.length > 0 ? `${ours.length} already present; values are refreshed.` : "The gateway's named values will be created."
+  );
+
+  add(
+    "Foundry access",
+    f.roleAssigned ? PLAN.OK : PLAN.CREATE,
+    f.roleAssigned
+      ? "The gateway identity already has Cognitive Services User; not re-granting."
+      : "Cognitive Services User will be granted to the gateway identity."
+  );
+
+  return rows;
+}
+
+/**
+ * A path on the instance that nothing else is using.
+ *
+ * APIM requires paths to be unique. An instance already running another Claude gateway owns
+ * `claude`, and refusing outright means that instance can never serve this route — the wrong
+ * answer when the operator chose it deliberately. The caller offers the result rather than
+ * applying it silently, because the path is in every participant's base URL.
+ *
+ * @param {{name: string, path: string}[]} existingPaths  from `az apim api list`
+ * @param {string} preferred  the route's normal path
+ * @param {string} [ownApiId] an API with this id holding the path is ours, not a collision
+ */
+export function suggestFreePath(existingPaths, preferred, ownApiId) {
+  const wanted = normalisePath(preferred);
+  const list = Array.isArray(existingPaths) ? existingPaths : [];
+  const mine = text(ownApiId);
+
+  const taken = new Set(
+    list
+      .filter((p) => p && typeof p === "object" && text(p.name) !== mine)
+      .map((p) => normalisePath(p.path))
+      .filter((p) => p !== "")
+  );
+
+  if (!taken.has(wanted)) return wanted;
+
+  const alt = `${wanted}-hackgw`;
+  if (!taken.has(alt)) return alt;
+
+  for (let n = 2; n < 100; n++) {
+    const candidate = `${alt}-${n}`;
+    if (!taken.has(candidate)) return candidate;
+  }
+  return `${alt}-${Date.now()}`;
 }

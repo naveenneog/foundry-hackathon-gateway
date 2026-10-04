@@ -28,13 +28,36 @@ assumption is only closed if it names its blast radius and the detector that wou
 | U15 | Streamed traffic: the budget stops, but the counter lies | MEASURED |
 | U16 | Revocation latency | MEASURED |
 | U17 | Foundry rejects some `anthropic-beta` values Claude Code sends | MEASURED |
+| U18 | Does the AIGateway SKU meter Anthropic tokens? | ASSUMED |
 
 ---
 
 
 ## Open
 
-_(none)_
+---
+
+### U18 — Does the AIGateway SKU meter Anthropic tokens? — ASSUMED, with a detector
+
+API Management now offers an `AIGateway` SKU, and one exists in the subscription this gateway was
+verified against. The suitability check matches `v2$` on the SKU name, so `AIGateway` is treated
+as unsupported and the Claude route is not published on it.
+
+That is the fail-safe direction — an unsupported tier accepts the token policy and meters zero,
+which is the one failure this project will not ship. But it is a guess about a SKU that may well
+support Anthropic metering, in which case the gateway is refusing a usable instance.
+
+**Assumption:** `AIGateway` does not meter Anthropic Messages tokens.
+**Blast radius:** an organisation with only an AIGateway instance is told to create a new one, or
+runs the Claude route nowhere. No incorrect enforcement either way.
+**Detector:** deploy the Claude route onto an AIGateway instance with the tier check relaxed, run
+`Test-Governance.ps1 -Route claude`, and read `one-time budget exhausts (403)`. If it passes, the
+SKU meters and the check should accept it.
+
+[llm-token-limit](https://learn.microsoft.com/en-us/azure/api-management/llm-token-limit-policy)
+lists "Developer | Basic | Basic v2 | Standard | Standard v2 | Premium | Premium v2" and says the
+Anthropic Messages schema is "currently supported in API Management v2 tiers". It does not mention
+`AIGateway` at all, which is why this is recorded rather than assumed in either direction.
 
 ---
 

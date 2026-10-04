@@ -65,10 +65,15 @@ function Read-KeySettings {
     }
 
     Write-Host ''
-    Write-Host '  Pinned models:'
+    Write-Host '  Pinned models — pick the ones THIS key may use:'
     $i = 1
-    foreach ($p in $pinned) { Write-Host ("    [{0}] {1,-14} -> {2}" -f $i, $p.alias, $p.deployment); $i++ }
-    Write-Info "    a  all of them"
+    foreach ($p in $pinned) {
+        $r = if ($p.PSObject.Properties.Name -contains 'route' -and $p.route) { $p.route } else { 'openai' }
+        Write-Host ("    [{0}] {1,-10} {2,-14} -> {3}" -f $i, $r, $p.alias, $p.deployment)
+        $i++
+    }
+    Write-Info '    a  all of them'
+    Write-Info 'Each key can grant a different set. Pin everything once, then choose per key.'
 
     $pick = (Read-Default 'Grant which models (numbers separated by commas, or a)' 'a').Trim().ToLowerInvariant()
 

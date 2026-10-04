@@ -129,12 +129,11 @@ function Get-State {
         existingApimName     = $null
         gatewayUrl           = $null
         claudeGatewayUrl     = $null
-        # Alias -> deployment pins. Any number of models; see ADR-0007. `route` says which wire
-        # format the deployment speaks, and therefore which gateway route can serve it.
-        models               = @(
-            [pscustomobject]@{ alias = 'flash'; deployment = 'deepseek-v4-flash'; route = 'openai' }
-            [pscustomobject]@{ alias = 'pro';   deployment = 'deepseek-v4-pro';   route = 'openai' }
-        )
+        # No default pins. Which models exist is a property of the Foundry account the operator
+        # picks, not something this file can know - defaulting to two DeepSeek deployments sent
+        # people into a deployment that fails with DeploymentNotFound on an account that has
+        # neither. Option 3 fills this in from what is actually deployed.
+        models               = @()
     }
 }
 
@@ -297,10 +296,21 @@ function Invoke-Deploy {
     # redeployment. The current pins are carried through to the deployment below.
     Write-Head 'Models to pin'
     if (@($state.models).Count -eq 0) {
-        Write-Warn 'No models pinned yet. Deploying with none means every request returns 403.'
-        Write-Info 'You can pin them after deploying with menu option 3.'
+        Write-Info 'Nothing pinned yet. Pin from what is deployed in this subscription now.'
+        # Save first: Edit-ModelPins re-reads state from disk and needs the Foundry account
+        # chosen above.
+        Save-State $state
+        Edit-ModelPins
+        $state = Get-State
+    }
+    if (@($state.models).Count -eq 0) {
+        Write-Warn 'Still nothing pinned. Deploying with none means every request returns 403.'
+        Write-Info 'You can pin later with menu option 3.'
     } else {
-        foreach ($m in $state.models) { Write-Info "    $($m.alias) -> $($m.deployment)" }
+        foreach ($m in $state.models) {
+            $r = if ($m.PSObject.Properties.Name -contains 'route' -and $m.route) { $m.route } else { 'openai' }
+            Write-Info ("    {0,-10} {1,-14} -> {2}" -f $r, $m.alias, $m.deployment)
+        }
     }
 
     $secret = Get-SigningSecret
@@ -312,53 +322,12 @@ function Invoke-Deploy {
     }
 
     # ------------------------------------------------------------------------------------
-    # Validate the target BEFORE deploying.
-    #
-    # A gateway pointed at a Foundry account that lacks the pinned deployments deploys
-    # "successfully" and then returns DeploymentNotFound on every call - an opaque 404 that
-    # looks like a gateway bug. This has already happened once. Catch it here.
+    # Repointing an existing gateway at a different Foundry account breaks every key in
+    # flight, and is almost never intended. Everything else the deployment would do is shown
+    # by the plan below.
     # ------------------------------------------------------------------------------------
-    Write-Head 'Checking the target Foundry account'
-
-    $acctOk = $true
     $found = az cognitiveservices account show -n $state.foundryAccount -g $state.foundryResourceGroup -o json 2>$null | ConvertFrom-Json
-    if (-not $found) {
-        Write-Err "Foundry account '$($state.foundryAccount)' not found in resource group '$($state.foundryResourceGroup)'."
-        return
-    }
-    Write-Ok "$($state.foundryAccount) ($($found.location))"
-
-    $existing = @()
-    $raw = az cognitiveservices account deployment list -n $state.foundryAccount -g $state.foundryResourceGroup -o json 2>$null | ConvertFrom-Json
-    if ($raw) { $existing = @($raw | ForEach-Object { $_.name }) }
-
-    foreach ($pin in @($state.models)) {
-        if ($existing -contains $pin.deployment) {
-            Write-Ok "$($pin.alias) -> $($pin.deployment)"
-        } else {
-            Write-Err "$($pin.alias) -> '$($pin.deployment)' does NOT exist in $($state.foundryAccount)."
-            $acctOk = $false
-        }
-    }
-
-    if (-not $acctOk) {
-        Write-Host ''
-        if ($existing.Count -gt 0) {
-            Write-Info "Deployments that DO exist in this account:"
-            foreach ($e in $existing) { Write-Info "    $e" }
-        } else {
-            Write-Info 'This account has no model deployments at all.'
-        }
-        Write-Host ''
-        Write-Warn 'Deploying now would produce a gateway that returns 404 DeploymentNotFound on every call.'
-        Write-Info 'Use menu option 3 to deploy the DeepSeek models, or re-run option 1 and choose'
-        Write-Info 'a different Foundry account or deployment names.'
-        if (-not (Confirm-Action 'Deploy anyway?')) { Write-Info 'Cancelled.'; return }
-    }
-
-    # Warn if this would repoint an existing gateway at a different Foundry account - that
-    # breaks every key in flight and is almost never intended.
-    if ($state.apimName) {
+    if ($state.apimName -and $found) {
         $liveUrl = az apim api show -g $state.resourceGroup --service-name $state.apimName `
             --api-id deepseek-gateway --query serviceUrl -o tsv 2>$null
         if ($liveUrl -and $liveUrl -notmatch [regex]::Escape($found.properties.customSubDomainName)) {
@@ -371,34 +340,81 @@ function Invoke-Deploy {
     }
 
     # ------------------------------------------------------------------------------------
-    # The Claude route is published only where it can actually enforce a budget.
+    # The Claude route is published only where it can actually work.
     #
-    # llm-token-limit parses the Anthropic Messages shape on v2 tiers only; a classic tier
-    # accepts the identical policy and meters zero tokens. Publishing it there would advertise
-    # a cap that silently never fires. See docs/UNKNOWNS.md U12.
+    # Two separate reasons it cannot, and BOTH have to be checked here rather than only the
+    # tier: the picker knew about a path collision and this did not, so a deployment went ahead
+    # and failed with "Cannot create API 'claude-gateway' with the same Path 'claude' as API
+    # 'claude-foundry'", taking the whole thing down with it.
     # ------------------------------------------------------------------------------------
     $claudePins = @($state.models | Where-Object {
         $_.PSObject.Properties.Name -contains 'route' -and $_.route -eq 'claude'
     })
     $deployClaude = $true
+    $claudePath = 'claude'
+
     if ($state.existingApimName) {
-        $sku = az apim show -g $state.resourceGroup -n $state.existingApimName --query sku.name -o tsv 2>$null
-        if ($LASTEXITCODE -eq 0 -and $sku -and $sku -notmatch 'V2$') {
+        $verdict = Get-RouteVerdict -ApimName $state.existingApimName -ResourceGroup $state.resourceGroup -Route 'claude'
+
+        # Order matters. A path collision is the one blocker a different path fixes; everything
+        # else travels with the instance. Both arrive in the same array, so checking the path
+        # first would let a workaround mask a classic tier - and publish a Claude route whose
+        # token cap meters nothing, which is the outcome ADR-0009 exists to prevent.
+        $incurable = @($verdict.blockers | Where-Object { $_ -ne 'path_taken' })
+
+        if ($incurable.Count -gt 0) {
             $deployClaude = $false
-            Write-Warn "$($state.existingApimName) is $sku, which meters zero Anthropic tokens."
-            Write-Info 'The Claude route will not be published on it; budgets there could never fire.'
+            Write-Warn "The Claude route will NOT be published on $($state.existingApimName)."
+            Write-Info $verdict.reason
             if ($claudePins.Count -gt 0) {
-                Write-Warn "$($claudePins.Count) Claude pin(s) will be unreachable until the gateway moves to a v2 instance."
+                Write-Warn "$($claudePins.Count) Claude pin(s) will be unreachable until the gateway moves to a suitable instance."
+            }
+        } elseif ($verdict.blockers -contains 'path_taken') {
+            $free = $verdict.freePath
+            Write-Warn "Another API already serves the path 'claude' on $($state.existingApimName)."
+            Write-Info 'APIM requires paths to be unique, so the Claude route needs a different one.'
+            if (Confirm-Action "Publish the Claude route at '/$free' instead?") {
+                $claudePath = $free
+                Write-Ok "Claude route will be published at '/$free'."
+            } else {
+                $deployClaude = $false
+                Write-Info 'The Claude route will not be published.'
             }
         }
     }
     if ($deployClaude) {
-        Write-Info ("Claude route : {0} pinned model(s)" -f $claudePins.Count)
+        Write-Info ("Claude route : {0} pinned model(s) at /{1}" -f $claudePins.Count, $claudePath)
+    }
+
+    # ------------------------------------------------------------------------------------
+    # Creating a role assignment that already exists fails the deployment with
+    # RoleAssignmentExists, and `what-if` does not predict it. Another gateway on the same
+    # Foundry account will already have granted this.
+    # ------------------------------------------------------------------------------------
+    $grantRole = $true
+    if ($state.existingApimName) {
+        $principal = az apim show -g $state.resourceGroup -n $state.existingApimName --query identity.principalId -o tsv 2>$null
+        if ($LASTEXITCODE -eq 0 -and $principal) {
+            $scope = "/subscriptions/$(az account show --query id -o tsv)/resourceGroups/$($state.foundryResourceGroup)/providers/Microsoft.CognitiveServices/accounts/$($state.foundryAccount)"
+            $grantRole = Test-FoundryRoleNeeded -PrincipalId $principal -Scope $scope
+            if (-not $grantRole) {
+                Write-Info 'The gateway identity already has Cognitive Services User on this account; not re-granting.'
+            }
+        }
+    }
+
+    # The plan replaces the old "check the target Foundry account" block: it covers the account
+    # AND the instance, the routes, the named values and the role grant, which is the set that
+    # can fail a deployment.
+    $blocked = Show-DeploymentPlan -State $state -DeployClaude $deployClaude -ClaudePath $claudePath -GrantRole $grantRole
+    if ($blocked -gt 0) {
+        Write-Host ''
+        Write-Err "$blocked item(s) above would fail. A deployment is all-or-nothing: it would stop partway and leave behind whatever it had already created."
+        if (-not (Confirm-Action 'Deploy anyway?')) { Write-Info 'Cancelled.'; return }
     }
 
     Write-Head 'Deploying'
     az group create -n $state.resourceGroup -l $state.location -o none
-
     # Alert 3 fix: revoked-keys is a Bicep-declared named value, so a redeploy would ARM-PUT it
     # back to the default and silently un-revoke every key. Menu option 1 is explicitly
     # "Deploy / update", so this WILL be re-run. Read the live value and pass it through.
@@ -437,6 +453,8 @@ function Invoke-Deploy {
                 modelMap             = @{ value = (ConvertTo-ModelMapString $state.models -Route 'openai') }
                 claudeModelMap       = @{ value = (Coalesce (ConvertTo-ModelMapString $state.models -Route 'claude') ';') }
                 deployClaudeRoute    = @{ value = $deployClaude }
+                claudeApiPath        = @{ value = $claudePath }
+                grantFoundryRole     = @{ value = $grantRole }
                 revokedKeys          = @{ value = $revoked }
             }
         }

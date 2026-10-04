@@ -47,6 +47,12 @@ param claudeModelMap string = ';'
 @description('Whether to publish the Claude route. A classic API Management tier meters zero Anthropic tokens, so a budget on one would be configured and never fire - admin.ps1 passes false rather than publishing a control that cannot work. See docs/UNKNOWNS.md U12.')
 param deployClaudeRoute bool = true
 
+@description('APIM path for the Claude route. Paths are unique per instance, so an instance already running another Claude gateway needs a different one here. It appears in every participant ANTHROPIC_BASE_URL.')
+param claudeApiPath string = 'claude'
+
+@description('Whether to grant the gateway identity Cognitive Services User on the Foundry account. Set false when an equivalent assignment already exists: creating a duplicate fails the whole deployment with RoleAssignmentExists, and what-if does not predict it.')
+param grantFoundryRole bool = true
+
 @description('HS256 signing secret for participant keys. Generate with admin.ps1; never commit it.')
 @secure()
 param signingKey string
@@ -70,7 +76,6 @@ var workspaceName = 'log-${namePrefix}'
 var apiId = 'deepseek-gateway'
 var apiPath = 'v1'
 var claudeApiId = 'claude-gateway'
-var claudeApiPath = 'claude'
 
 // Defence in depth for UNKNOWNS U12. admin.ps1 refuses to publish this route onto a classic
 // tier, but a direct `az deployment group create` bypasses admin.ps1 entirely. On a tier that
@@ -404,7 +409,7 @@ resource claudeDiagnostic 'Microsoft.ApiManagement/service/apis/diagnostics@2024
 // The gateway identity is the only principal that may call Foundry
 // ---------------------------------------------------------------------------
 
-module foundryRole 'foundry-role.bicep' = {
+module foundryRole 'foundry-role.bicep' = if (grantFoundryRole) {
   name: 'grant-apim-cognitive-services-user'
   scope: resourceGroup(foundryResourceGroup)
   params: {

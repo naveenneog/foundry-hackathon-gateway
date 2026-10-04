@@ -8,6 +8,7 @@ import {
   classifyApim,
   rankApim,
   needsRoleAssignment,
+  suggestFreePath,
   apiIdForRoute,
   apiPathForRoute,
   ROUTE,
@@ -226,6 +227,48 @@ describe("an API path already in use on the instance blocks the deploy", () => {
   test("no path information at all does not invent a collision", () => {
     const v = classifyApim(apim(), { route: ROUTE.OPENAI });
     assert.equal(v.suitable, true);
+  });
+});
+
+describe("a taken path can be worked around rather than only refused", () => {
+  /**
+   * An instance already running another Claude gateway owns `/claude`. Refusing outright means
+   * that instance can never serve this route, which is the wrong answer when the operator
+   * deliberately chose it. Offering a free path makes it usable; the participant's base URL
+   * changes, which is why it is offered rather than taken silently.
+   */
+  test("the preferred path is returned when it is free", () => {
+    assert.equal(suggestFreePath([], "claude"), "claude");
+    assert.equal(suggestFreePath([{ name: "other", path: "v1" }], "claude"), "claude");
+  });
+
+  test("a taken path yields a suffixed alternative", () => {
+    assert.equal(suggestFreePath([{ name: "claude-foundry", path: "claude" }], "claude"), "claude-hackgw");
+  });
+
+  test("it keeps going when the alternative is taken too", () => {
+    const taken = [
+      { name: "a", path: "claude" },
+      { name: "b", path: "claude-hackgw" },
+    ];
+    assert.equal(suggestFreePath(taken, "claude"), "claude-hackgw-2");
+  });
+
+  test("comparison ignores case and surrounding slashes, as APIM does", () => {
+    assert.equal(suggestFreePath([{ name: "a", path: "/CLAUDE/" }], "claude"), "claude-hackgw");
+  });
+
+  test("our own API holding the path is not a collision", () => {
+    assert.equal(
+      suggestFreePath([{ name: "claude-gateway", path: "claude" }], "claude", "claude-gateway"),
+      "claude"
+    );
+  });
+
+  test("junk input returns the preferred path rather than throwing", () => {
+    assert.equal(suggestFreePath(null, "claude"), "claude");
+    assert.equal(suggestFreePath(undefined, "claude"), "claude");
+    assert.equal(suggestFreePath([null, {}, "x"], "claude"), "claude");
   });
 });
 

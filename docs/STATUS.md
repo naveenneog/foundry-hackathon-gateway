@@ -20,6 +20,18 @@ and prove it live.
 | `flash` / `pro` | `deepseek-v4-flash` / `deepseek-v4-pro` |
 | `sonnet-5` / `opus-5` | `claude-sonnet-5` / `claude-opus-5` |
 
+### P21 — a worked example: a Claude agent with tool calls — DONE
+
+`examples/claude-agent.ipynb`, executed against the live gateway and committed with its output.
+Forty lines of agent loop on the ordinary `anthropic` SDK: two parallel `get_order_status`
+calls, a chained `calculate`, a correct final answer, and the gateway's budget headers.
+
+The notebook reads the key from the environment and never writes it to a cell.
+`tests/example-notebook.test.mjs` enforces that — negative-tested by injecting a JWT into a cell
+output and confirming the failure — and pins the two mistakes the example exists to prevent:
+`ANTHROPIC_API_KEY` instead of `ANTHROPIC_AUTH_TOKEN`, and shortening the alias to a Claude Code
+model slot.
+
 ### P19 — verify the Claude route live — DONE
 
 ```
@@ -176,11 +188,12 @@ both the DeepSeek and the Claude models, and both routes now pass.
 | P17 Claude route | done | `infra/policy-claude.xml`, ADR-0009 |
 | P18 Claude Code handout + harness | done | `.claude/settings.json`, `-Route claude` |
 | P19 **live verification** | **done** | 21/21 claude, 15/15 openai, real Claude Code session |
+| P21 worked example | done | `examples/claude-agent.ipynb`, executed against the live gateway |
 
 ## Commands that prove it
 
 ```powershell
-npm test                                   # 317 passing
+npm test                                   # 328 passing
 node .ironclad/gate.mjs --stage packet     # PASS
 ./admin.ps1                                # 11  Verify the controls (runs both routes)
 ```

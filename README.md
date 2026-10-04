@@ -56,6 +56,24 @@ A real `opencode` session through the gateway — tool calls and all:
 
 ![opencode session through the gateway](docs/images/opencode-session.png)
 
+And a Claude agent, in a notebook: **[`examples/claude-agent.ipynb`](examples/claude-agent.ipynb)**
+builds a two-tool agent on a Claude model in about forty lines of Python, using the ordinary
+`anthropic` SDK pointed at the gateway. The committed copy carries the output of a real run
+against the live gateway:
+
+```
+[turn 1] get_order_status({"order_id": "A-1001"}) -> {"customer": "Ada Lovelace", "total": 129.5, ...}
+[turn 1] get_order_status({"order_id": "A-1002"}) -> {"customer": "Alan Turing",  "total": 74.25, ...}
+[turn 2] calculate({"expression": "129.5 + 74.25"}) -> {"result": 203.75}
+[turn 3] Combined total: $203.75. A-1002 has not yet shipped.
+
+x-governed-by       foundry-hackathon-gateway
+x-budget-remaining  197257
+```
+
+The notebook reads the key from the environment and never writes it to a cell, which
+`tests/example-notebook.test.mjs` enforces.
+
 ---
 
 ## Quickstart
@@ -317,7 +335,9 @@ scripts/
   Models.ps1                 model discovery and pinning
   Keys.ps1                   key issuance and handouts
   Test-Governance.ps1        proves each control fires, per route
-tests/                       317 tests, including tamper and alg:none attacks
+examples/
+  claude-agent.ipynb         a tool-calling Claude agent, with a real recorded run
+tests/                       328 tests, including tamper and alg:none attacks
 docs/adr/                    architecture decisions and their reasoning
 docs/UNKNOWNS.md             what we did not know, and how each was closed
 ```

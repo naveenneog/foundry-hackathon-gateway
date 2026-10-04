@@ -50,13 +50,19 @@ that are actually deployed in the subscription, and serve Claude models to Claud
 - [x] **P18** Claude Code setup documented, and the harness extended to the Claude route
       *Verified 2026-10-03:* `scripts/Test-Governance.ps1 -Route claude` exists and is wired into
       option 11; option 5 writes `.claude/settings.json` and a card covering both routes.
-      **Not yet run against a live Claude route** — see P19.
+      Run live in P19.
 
 - [x] **P19** Verify the Claude route live
       *Verified 2026-10-04:* 21/21 on `-Route claude`, 15/15 on `-Route openai`, against
       `apim-hackgwfl4s7jvpxekno` backed by `ai-contosohub530569751908`. A Claude Code 2.1.272
       session configured only by the generated `.claude/settings.json` completed a turn with
       tool calls. Closed UNKNOWNS U9; opened U15.
+
+- [x] **P21** A worked example: a Claude agent with tool calls
+      *Verified 2026-10-04:* `examples/claude-agent.ipynb`, executed against the live gateway.
+      Two parallel `get_order_status` calls, a chained `calculate` call, a correct final answer,
+      and the gateway's budget headers. `tests/example-notebook.test.mjs` keeps a key out of the
+      committed outputs and pins the two mistakes the example exists to prevent.
 
 ## Milestone M6 — Only if this outlives one event
 

@@ -11,6 +11,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · [Semantic Ve
   at it with `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN` — the same key, the same allowlist,
   time window, one-time budget, revocation and attribution, and no Azure identity on their
   machine. (P17, ADR-0009)
+- **A worked example.** `examples/claude-agent.ipynb` builds a two-tool agent on a Claude model
+  with the ordinary `anthropic` SDK. The committed copy holds the output of a real run against
+  the live gateway — two parallel tool calls, a chained calculation, and the gateway's budget
+  headers. `tests/example-notebook.test.mjs` keeps a key from ever being committed in its
+  outputs. (P21)
 - **The handout configures Claude Code.** Options 5 and 6 write a `.claude/settings.json` with
   the three variables, which is also what makes them apply to Claude Code's background agents,
   and a card that leads with the two mistakes producing a bare 401 or 403. (P18)

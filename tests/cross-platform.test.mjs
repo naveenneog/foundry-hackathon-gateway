@@ -91,6 +91,22 @@ describe("the signing secret is owner-only on this platform", () => {
     assert.notEqual(r.status, 0, "restricting a missing file reported success");
   });
 
+  // Get-SigningSecret re-applies Protect-File on every read, so the second call on the same file
+  // is the normal case, not an edge case. It failed on Windows for every non-elevated user:
+  // Set-Acl's retry compares the new descriptor's AreAuditRulesProtected with the existing file's
+  // AreAccessRulesProtected, so once the first call has protected the DACL, every later call
+  // tries to write the audit section and needs SeSecurityPrivilege. Every test above calls it
+  // once per file, which is why the suite was green while option 1 could not read its secret.
+  test("Protect-File can be applied again to a file it already protected", () => {
+    const f = join(dir, "twice.txt");
+    writeFileSync(f, "not-a-real-secret");
+    const p = f.replace(/\\/g, "\\\\");
+    const r = run(`Protect-File -Path '${p}'; Protect-File -Path '${p}'; Protect-File -Path '${p}'; 'third ok'`);
+    assert.equal(r.status, 0, `a repeat call failed: ${r.stderr}`);
+    assert.match(r.stdout, /third ok/);
+    assert.doesNotMatch(r.stderr, /SeSecurityPrivilege/);
+  });
+
   test("every write of the signing secret restricts the file first", () => {
     // Position-blind counting was the earlier version of this, which a move could satisfy
     // without protecting anything. These check the order that matters: the file is restricted

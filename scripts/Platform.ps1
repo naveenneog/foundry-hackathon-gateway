@@ -22,19 +22,38 @@ function Protect-File {
     #>
     param([Parameter(Mandatory)][string]$Path)
 
+    # Every failure in here has to reach the caller. Platform.ps1 is dot-sourced into scripts
+    # with their own preference, and a non-terminating error from an ACL call would otherwise
+    # print and carry on - leaving the file unprotected behind a function that returned.
+    $ErrorActionPreference = 'Stop'
+
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
         throw "Cannot restrict permissions on '$Path': the file does not exist."
     }
     $full = (Resolve-Path -LiteralPath $Path).Path
 
     if ($IsWindows) {
-        $acl = Get-Acl -LiteralPath $full
+        # Not Get-Acl/Set-Acl. Set-Acl writes every section of the descriptor; when that fails
+        # for want of a privilege it retries without the audit section only if the new
+        # descriptor's AreAuditRulesProtected equals the EXISTING file's AreAccessRulesProtected
+        # (PowerShell FileSystemSecurity.cs, SetSecurityDescriptor). Once a first call has
+        # protected the DACL those differ, so every later call tries to write the SACL and
+        # fails with SeSecurityPrivilege - which is what Get-SigningSecret hit on every read.
+        #
+        # Reading only the Access section and persisting through .NET writes only the sections
+        # that changed (FileSystemSecurity.Persist, GetAccessControlSectionsFromChanges), so the
+        # owner and audit sections are never touched and no privilege is needed.
+        $info = [System.IO.FileInfo]::new($full)
+        $acl = [System.IO.FileSystemAclExtensions]::GetAccessControl($info, [System.Security.AccessControl.AccessControlSections]::Access)
         $acl.SetAccessRuleProtection($true, $false)
-        foreach ($ace in @($acl.Access)) { [void]$acl.RemoveAccessRule($ace) }
-        $me = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
-        $acl.SetAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule(
-            $me, 'FullControl', 'Allow')))
-        Set-Acl -LiteralPath $full -AclObject $acl
+        $sid = [System.Security.Principal.SecurityIdentifier]
+        foreach ($ace in @($acl.GetAccessRules($true, $false, $sid))) { $acl.RemoveAccessRuleSpecific($ace) }
+        $me = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+        $acl.AddAccessRule([System.Security.AccessControl.FileSystemAccessRule]::new(
+            $me,
+            [System.Security.AccessControl.FileSystemRights]::FullControl,
+            [System.Security.AccessControl.AccessControlType]::Allow))
+        [System.IO.FileSystemAclExtensions]::SetAccessControl($info, $acl)
         return
     }
 

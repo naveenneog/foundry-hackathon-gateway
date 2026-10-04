@@ -30,6 +30,7 @@ assumption is only closed if it names its blast radius and the detector that wou
 | U17 | Foundry rejects some `anthropic-beta` values Claude Code sends | MEASURED || U18 | Does the AIGateway SKU meter Anthropic tokens? | ASSUMED |
 | U19 | File permissions for the signing secret on macOS and Linux | RESOLVED |
 | U20 | Is `pwsh` present on the GitHub-hosted macOS and Linux runners? | RESOLVED |
+| U21 | Why `Set-Acl` needs `SeSecurityPrivilege` on the second call | RESOLVED |
 
 ---
 
@@ -37,6 +38,35 @@ assumption is only closed if it names its blast radius and the detector that wou
 ## Open
 
 _None._
+
+---
+
+### U21 — Why `Set-Acl` needs `SeSecurityPrivilege` on the second call — RESOLVED
+
+Reported by an operator on 2026-10-04: option 1 stopped with *"The process does not possess the
+'SeSecurityPrivilege' privilege which is required for this operation"* at
+`Platform.ps1:37`, the `Set-Acl` in `Protect-File`. P26 had made `Get-SigningSecret` re-apply
+`Protect-File` on every read.
+
+Reproduced on Windows, not elevated: the first call on a file succeeds and every later call on
+the same file fails. The cause is in PowerShell's `Set-Acl`
+([`FileSystemSecurity.cs`, `SetSecurityDescriptor`](https://github.com/PowerShell/PowerShell/blob/master/src/System.Management.Automation/namespaces/FileSystemSecurity.cs),
+read 2026-10-04). It first writes every section of the descriptor. When that fails with
+`PrivilegeNotHeldException`, it retries without the audit section only if
+`sd.AreAuditRulesProtected == existingDescriptor.AreAccessRulesProtected` — the new descriptor's
+*audit* flag against the existing file's *access* flag. On a new file both are `false`, so the
+retry works. After the first call has protected the DACL, the existing flag is `true`, so the
+retry still includes the SACL, and writing a SACL requires `SeSecurityPrivilege`.
+
+The suite was green because every test called `Protect-File` once per file.
+
+**Fix:** `Protect-File` reads only the `Access` section through
+`System.IO.FileSystemAclExtensions` and persists through .NET, which writes only the sections that
+changed
+([`FileSystemSecurity.Persist`, `GetAccessControlSectionsFromChanges`](https://github.com/dotnet/runtime/blob/main/src/libraries/System.IO.FileSystem.AccessControl/src/System/Security/AccessControl/FileSystemSecurity.cs),
+read 2026-10-04). Owner and SACL are never written. `tests/cross-platform.test.mjs` now applies it
+three times to one file. Verified against the real signing secret, which the pre-P26 code had
+already protected: three reads, owner unchanged, one access rule.
 
 ---
 

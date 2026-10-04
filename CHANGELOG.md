@@ -64,6 +64,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · [Semantic Ve
   (P15)
 
 ### Fixed
+- **Option 1 stopped with "The process does not possess the 'SeSecurityPrivilege' privilege"**
+  on Windows, for every operator who was not elevated. P26 made `Get-SigningSecret` re-apply
+  the file restriction on every read, and PowerShell's `Set-Acl` succeeds on a file the first
+  time and fails every time after: once the DACL is protected, its retry tries to write the
+  audit section, which needs a privilege ordinary users do not hold. `Protect-File` now writes
+  the DACL through .NET, which persists only what changed. See UNKNOWNS U21. (P27)
 - **The signing secret was world-readable on macOS and Linux.** It was restricted with
   `Get-Acl`/`Set-Acl` and a `FileSystemAccessRule` — all Windows-only — inside a `try`/`catch`
   that warned and carried on. Off Windows that `catch` fired every time and the file kept the

@@ -136,7 +136,7 @@ describe("the signing secret is owner-only on this platform", () => {
   // AreAccessRulesProtected, so once the first call has protected the DACL, every later call
   // tries to write the audit section and needs SeSecurityPrivilege. Every test above calls it
   // once per file, which is why the suite was green while option 1 could not read its secret.
-  test("Protect-File can be applied again to a file it already protected", () => {
+  test("Protect-File can be applied again to a file it already protected", (t) => {
     const f = join(dir, "twice.txt");
     writeFileSync(f, "not-a-real-secret");
     const p = q(f);
@@ -144,6 +144,9 @@ describe("the signing secret is owner-only on this platform", () => {
 Protect-File -Path ${p}; Protect-File -Path ${p}; Protect-File -Path ${p}; 'third ok'`);
     if (isWindows) {
       assert.match(r.stdout, /PRIV (0|1300)\b/, `could not drop SeSecurityPrivilege: ${r.stdout} ${r.stderr}`);
+      // Recorded so a CI log shows which case ran: an elevated runner holds the privilege and
+      // has it removed; an operator who is not elevated never held it.
+      t.diagnostic(/PRIV 0\b/.test(r.stdout) ? "SeSecurityPrivilege was held and has been removed" : "SeSecurityPrivilege was not held");
     }
     assert.equal(r.status, 0, `a repeat call failed: ${r.stderr}`);
     assert.match(r.stdout, /third ok/);

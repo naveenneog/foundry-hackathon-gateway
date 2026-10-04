@@ -4,7 +4,11 @@
 # second implementation to drift.
 set -euo pipefail
 
-here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+here="${BASH_SOURCE[0]}"
+case "$here" in
+  */*) here="$(cd "${here%/*}" && pwd)" ;;
+  *)   here="$(pwd)" ;;
+esac
 missing=0
 
 need() {

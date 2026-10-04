@@ -28,41 +28,48 @@ assumption is only closed if it names its blast radius and the detector that wou
 | U15 | Streamed traffic: the budget stops, but the counter lies | MEASURED |
 | U16 | Revocation latency | MEASURED |
 | U17 | Foundry rejects some `anthropic-beta` values Claude Code sends | MEASURED || U18 | Does the AIGateway SKU meter Anthropic tokens? | ASSUMED |
-| U19 | File permissions for the signing secret on macOS and Linux | OPEN |
-| U20 | Is `pwsh` present on the GitHub-hosted macOS and Linux runners? | OPEN |
+| U19 | File permissions for the signing secret on macOS and Linux | RESOLVED |
+| U20 | Is `pwsh` present on the GitHub-hosted macOS and Linux runners? | RESOLVED |
 
 ---
 
 
 ## Open
 
-### U19 — File permissions for the signing secret on macOS and Linux — OPEN
+_None._
 
-`New-SigningSecret` restricts `.gateway-secret` with `Get-Acl` / `Set-Acl` and a
+---
+
+### U19 — File permissions for the signing secret on macOS and Linux — RESOLVED
+
+`New-SigningSecret` restricted `.gateway-secret` with `Get-Acl` / `Set-Acl` and a
 `FileSystemAccessRule`. All three are Windows-only: `Get-Acl` is not present in PowerShell on
 Linux or macOS, and `System.Security.AccessControl` throws `PlatformNotSupportedException` there.
 
-The call sits inside a `try`/`catch` that warns and continues, so on a non-Windows host the secret
-would be written with the default umask — world-readable on a typical Linux box. This secret mints
-a key for any participant, any budget, any model, so that is total compromise of the governance
-model behind a warning an operator may not read.
+The call sat inside a `try`/`catch` that warned and continued, so on a non-Windows host the secret
+was written with the default umask — world-readable on a typical Linux box. This secret mints a
+key for any participant, any budget, any model. The same pattern guarded the deployment parameters
+file, which contains the secret in cleartext.
 
-The same pattern guards the deployment parameters file, which contains the secret in cleartext.
+**Resolved by measurement, not by inspection.** `Protect-File` (`scripts/Platform.ps1`) uses ACLs
+on Windows and `chmod 600` elsewhere, then reads the mode back. `tests/cross-platform.test.mjs`
+creates a real file through it and asserts the result: no group or other bits on Unix, inheritance
+off with one ACE on Windows.
 
-**To close:** exercise the restriction under `pwsh` on Linux and macOS and assert the resulting
-mode is owner-only, rather than asserting the code looks right.
+Run [37207259672](https://github.com/naveenneog/foundry-hackathon-gateway/actions/runs/37207259672),
+2026-10-04 — `ok 2 - the file is readable only by its owner`, 364/364 on `ubuntu-latest`,
+`macos-latest` and `windows-latest`.
 
-### U20 — Is `pwsh` present on the GitHub-hosted macOS and Linux runners? — OPEN
+### U20 — Is `pwsh` present on the GitHub-hosted macOS and Linux runners? — RESOLVED
 
-The cross-platform check is only worth anything if it actually runs. The runner images have
-historically shipped PowerShell on all three platforms, and the Ubuntu 26.04 migration notes list
-removed packages without naming PowerShell
-([actions/runner-images](https://github.com/actions/runner-images#available-images-and-included-software),
-read 2026-10-04) — but image contents change, and a test that quietly skips when `pwsh` is missing
-is worse than no test.
+A permission test that quietly skips when `pwsh` is missing is worse than no test, so this had to
+be established rather than assumed.
 
-**To close:** have CI print `pwsh --version` as its own step, and make the permission test fail
-rather than skip when `pwsh` cannot be found.
+Present on all three images, confirmed by the `pwsh --version` step in run
+[37207259672](https://github.com/naveenneog/foundry-hackathon-gateway/actions/runs/37207259672)
+(2026-10-04). The step is kept as its own line in the workflow so a future image change fails
+there, loudly, instead of silently hollowing out the suite. The test itself asserts `pwsh` was
+found rather than skipping.
 
 ---
 

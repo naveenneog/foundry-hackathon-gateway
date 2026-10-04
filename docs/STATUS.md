@@ -20,7 +20,7 @@ and prove it live.
 | `flash` / `pro` | `deepseek-v4-flash` / `deepseek-v4-pro` |
 | `sonnet-5` / `opus-5` | `claude-sonnet-5` / `claude-opus-5` |
 
-### P26 — macOS and Linux run the same console — IN PROGRESS
+### P26 — macOS and Linux run the same console — DONE
 
 The request was "an equivalent script for Mac and Linux, tested in CI". An audit of all six
 `.ps1` files found exactly two Windows-only blocks, both the same ACL call: no `cmd /c`, no
@@ -38,10 +38,18 @@ deployment parameters file, which holds the secret in cleartext until the `final
 `Protect-File` (`scripts/Platform.ps1`) replaces both: ACLs on Windows, `chmod 600` elsewhere,
 verified by reading the mode back, and it throws where the old code warned.
 
-**Open until CI confirms it** (UNKNOWNS U19, U20): the Unix branch cannot be exercised on this
-machine — no Docker, no WSL distribution — so the matrix on `ubuntu-latest` and `macos-latest` is
-the evidence. The test fails rather than skips when `pwsh` is absent, and CI prints `pwsh
---version` as its own step, so neither can pass vacuously.
+**Measured** on run
+[37207259672](https://github.com/naveenneog/foundry-hackathon-gateway/actions/runs/37207259672):
+364/364 on `ubuntu-latest`, `macos-latest` and `windows-latest`, with `ok 2 - the file is readable
+only by its owner` present in the Linux log — the mode assertion executed rather than skipped.
+UNKNOWNS U19 and U20 closed.
+
+The first run also failed the launcher check, for a reason worth keeping: the step cleared `PATH`,
+which meant `/usr/bin/env bash` could not be resolved and `admin.sh` never ran at all. It also
+showed `admin.sh` used `dirname` — an external command — before reaching its own prerequisite
+check, so with a broken `PATH` it would die before printing the guidance it exists to print. Both
+fixed; the path is now resolved with bash parameter expansion, and the step resolves `bash`
+before clearing `PATH`.
 
 ### P25 — deploy onto whatever is already there — DONE (`3eab12e`)
 

@@ -54,11 +54,19 @@ jobs:
         run: |
           test -x ./admin.sh || { echo 'admin.sh is not executable'; exit 1; }
           bash -n ./admin.sh
-          # With an empty PATH every prerequisite is missing, so it must exit non-zero and say so.
-          out=$(env PATH=/nonexistent ./admin.sh 2>&1 || true)
+          # Resolve bash first: with PATH cleared the shebang itself cannot be resolved, so the
+          # script would never run and the check would pass for the wrong reason.
+          BASH_BIN="$(command -v bash)"
+          # Nothing on PATH means every prerequisite is missing. admin.sh uses only builtins
+          # until it execs pwsh, so it must still print guidance and exit non-zero.
+          out="$(env PATH=/nonexistent "$BASH_BIN" ./admin.sh 2>&1 || true)"
           echo "$out"
-          echo "$out" | grep -q 'PowerShell 7 is not installed' || { echo 'no guidance for a missing pwsh'; exit 1; }
-          env PATH=/nonexistent ./admin.sh >/dev/null 2>&1 && { echo 'exited 0 with nothing installed'; exit 1; } || true
+          for want in 'PowerShell 7 is not installed' 'Azure CLI is not installed' 'Node.js 20+ is not installed'; do
+            echo "$out" | grep -q "$want" || { echo "missing guidance: $want"; exit 1; }
+          done
+          if env PATH=/nonexistent "$BASH_BIN" ./admin.sh >/dev/null 2>&1; then
+            echo 'exited 0 with nothing installed'; exit 1
+          fi
 
   gate:
     name: Ironclad gate (packet)

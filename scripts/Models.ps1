@@ -220,7 +220,10 @@ function Show-Models {
         foreach ($g in $byAccount) {
             Write-Host ("    {0}" -f $g.Name) -ForegroundColor Cyan
             foreach ($d in $g.Group) {
-                $isPinned = @($pinned | Where-Object { $_.deployment -eq $d.deployment }).Count -gt 0
+                # Match on account AND name: the gateway can only reach deployments in its own
+                # account, and the same deployment name often exists in several accounts.
+                $isPinned = @($pinned | Where-Object { $_.deployment -eq $d.deployment }).Count -gt 0 `
+                            -and $d.account -eq $state.foundryAccount
                 $tag = if ($isPinned) { '  (pinned)' } else { '' }
                 $route = if ($d.route) { $d.route } else { 'unroutable' }
                 $colour = if ($d.ready -and $d.route) { 'Gray' } else { 'DarkYellow' }

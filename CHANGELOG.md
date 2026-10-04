@@ -6,6 +6,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · [Semantic Ve
 ## [Unreleased]
 
 ### Added
+- **An operator runbook and a statement of work.** `docs/RUNBOOK.md` walks the whole path with
+  screenshots from live runs: deploy or adopt, pin, issue, verify, use, revoke, tear down.
+  `docs/SOW.md` states scope, deliverables, acceptance criteria that are commands rather than
+  opinions, and the measured risks. (P24)
 - **Claude models, through the same key.** A second route speaks the Anthropic Messages API at
   `{gateway}/claude`, backed by Foundry's `/anthropic` endpoint. A participant points Claude Code
   at it with `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN` — the same key, the same allowlist,
@@ -49,6 +53,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · [Semantic Ve
   (P15)
 
 ### Fixed
+- The admin menu shows the Claude route and the route of each pinned model. It showed neither.
+  (P24)
+- `Show-Models` marked a deployment as pinned when another Foundry account happened to hold a
+  deployment of the same name. It now matches on account as well, since the gateway can only
+  reach its own account. (P24)
+- `render-shots.cjs` resolved Playwright from one hardcoded absolute path and failed anywhere
+  else. It now searches, and falls back to the installed Edge rather than requiring a 130MB
+  browser download to regenerate a screenshot. (P24)
 - Claude-route aliases no longer collide with Claude Code's model slots. `sonnet`, `opus` and
   `haiku` are resolved client-side to Claude Code's own model ids, so a key granting them was
   refused with 403. Suggested aliases keep the version (`claude-sonnet-5` → `sonnet-5`) and

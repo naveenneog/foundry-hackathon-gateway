@@ -27,6 +27,7 @@ assumption is only closed if it names its blast radius and the detector that wou
 | U14 | Claude deployment needs provider metadata | RESOLVED |
 | U15 | Streamed traffic: the budget stops, but the counter lies | MEASURED |
 | U16 | Revocation latency | MEASURED |
+| U17 | Foundry rejects some `anthropic-beta` values Claude Code sends | MEASURED |
 
 ---
 
@@ -85,7 +86,42 @@ Sources: measured as above ·
 [llm-token-limit](https://learn.microsoft.com/en-us/azure/api-management/llm-token-limit-policy)
 ("Completion tokens are also estimated when responses are streamed", retrieved 2026-10-03).
 
-### U16 — Revocation latency — MEASURED
+### U17 — Foundry rejects some `anthropic-beta` values Claude Code sends — MEASURED
+
+**Observed live, 2026-10-04.** A Claude Code session on a machine with its usual configuration
+failed with:
+
+```
+API Error: 400 Unexpected value(s) `advisor-tool-2026-03-01` for the `anthropic-beta` header.
+```
+
+The same Claude Code version, same gateway, same key, run against a scratch config directory
+succeeded. The difference is the feature set the machine's configuration enables: Claude Code
+advertises each capability as a value in `anthropic-beta`, and Foundry's Anthropic endpoint
+rejects values it does not recognise with a 400 rather than ignoring them.
+
+**Why the gateway forwards it anyway.** The Claude Code gateway protocol is explicit: "Forward
+the header verbatim; don't allowlist individual values, because the set changes with Claude Code
+releases." A gateway that filters betas breaks the features that depend on them, silently, on
+every Claude Code upgrade. So forwarding is correct, and the incompatibility is between Claude
+Code's release cadence and Foundry's.
+
+**Consequence:** a participant whose Claude Code has a newer capability enabled than Foundry
+supports gets a 400 naming the offending value. It is self-describing — the message says exactly
+which value — but it does not look like a gateway problem, and it is.
+
+**Workaround today:** run the gateway session against a scratch config directory, which is the
+recommended setup anyway because it also keeps the participant's own Claude Code configuration
+untouched:
+
+```powershell
+$env:CLAUDE_CONFIG_DIR = "$env:TEMP\gw-claude"
+```
+
+**Revisit:** P23. The honest fix is for the gateway to retry once without `anthropic-beta` when
+the backend returns a 400 naming that header — self-healing, and it cannot break a feature that
+was already being rejected.
+
 
 **Within seconds.** Measured live 2026-10-04 on both routes: a key returning 200, its `jti` added
 to `hackgw-revoked-keys`, then polled every 5 seconds until refused. The Claude route refused on

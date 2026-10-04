@@ -70,6 +70,13 @@ that are actually deployed in the subscription, and serve Claude models to Claud
       reports NOT CHECKED rather than passing when it cannot run. UNKNOWNS U15 corrected, U16
       added.
 
+- [x] **P24** Operator runbook and statement of work
+      *Verified 2026-10-04:* `docs/RUNBOOK.md` and `docs/SOW.md`, with five new screenshots
+      rendered from live captures. Found and fixed three display defects while capturing them:
+      the menu showed neither the Claude route nor per-model routes, `Show-Models` marked a
+      same-named deployment in another account as pinned, and `render-shots.cjs` only ran on one
+      machine.
+
 ## Milestone M6 — Only if this outlives one event
 
 - [ ] **P20** Report the budget from the number that enforces it

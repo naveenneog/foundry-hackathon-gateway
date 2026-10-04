@@ -89,6 +89,11 @@ az login
 #  5  Issue a participant key
 ```
 
+**[→ Operator runbook](docs/RUNBOOK.md)** — the whole path with screenshots: deploy or adopt, pin
+models, issue keys, prove the controls, hand out, revoke, tear down.
+**[→ Statement of work](docs/SOW.md)** — scope, deliverables, acceptance criteria, risks and the
+measured limits, for anyone signing this off.
+
 Option 5 writes `handouts/<team>/` containing a ready-to-paste `opencode.json` and a one-page card
 for the participant.
 
@@ -317,18 +322,21 @@ instead of the gateway's one-size-fits-all message.
 
 | Item | Approx |
 |---|---|
-| API Management Basic v2, 1 unit | ~$250/month |
+| API Management Basic v2, 1 unit | ~$250/month — **nothing if you adopt an instance you already run** |
 | Log Analytics + Application Insights | ingestion-based, small at this volume |
 | DeepSeek tokens | pay-per-token, unchanged by the gateway |
+| Claude tokens | billed as Claude Consumption Units through Azure Marketplace |
 
 The gateway bills whether or not anyone uses it. Tear it down when the event ends:
 
 ```powershell
-./admin.ps1   # option 9
+./admin.ps1   # option 12
 az apim deletedservice purge --service-name <apim-name> --location <region>
 ```
 
 `purge` matters — a soft-deleted API Management instance keeps its globally unique name.
+
+Model deployments in the Foundry account are left alone; the gateway did not create them.
 
 ---
 
@@ -391,8 +399,14 @@ node .ironclad/gate.mjs --stage packet    # full quality gate
 - **The budget counter uses the internal cache**, which is best-effort and not atomic under
   concurrency. The quota backstop bounds the damage. Move to external Redis if this outlives one
   event — roadmap P11.
+- **A Claude Code release can advertise a capability Foundry rejects.** Claude Code lists each
+  feature as a value in `anthropic-beta`, and the gateway forwards that header verbatim because
+  the protocol requires it. Foundry returns **400** naming any value it does not recognise —
+  observed with `advisor-tool-2026-03-01`. Running against a scratch `CLAUDE_CONFIG_DIR` avoids
+  it, and is the recommended setup anyway. See `docs/UNKNOWNS.md` U17 and roadmap P23.
 - **JWTs cannot be revoked before `exp`** — the trade for offline issuance. The `jti` denylist
-  covers it at the cost of one named-value update.
+  covers it at the cost of one named-value update, which takes effect in under ten seconds
+  (measured; `docs/UNKNOWNS.md` U16).
 
 ---
 

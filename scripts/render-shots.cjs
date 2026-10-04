@@ -3,7 +3,32 @@
 
 const fs = require("fs");
 const path = require("path");
-const { chromium } = require("C:/Users/navg/DailyApps/work/CLAUDE/node_modules/playwright");
+
+// Playwright is a devDependency of this repo, but these images are regenerated rarely and the
+// install is large. Resolve it from here first, then from a sibling checkout, so a machine that
+// already has it does not need a second copy. An absolute path with no fallback used to live
+// here, which made this script work on exactly one machine.
+function loadChromium() {
+  const candidates = [
+    "playwright",
+    path.join(__dirname, "..", "node_modules", "playwright"),
+    "C:/Users/navg/DailyApps/work/CLAUDE/node_modules/playwright",
+  ];
+  for (const c of candidates) {
+    try {
+      return require(c).chromium;
+    } catch {
+      /* try the next one */
+    }
+  }
+  console.error(
+    "\n  Playwright not found. Install it here:\n" +
+      "    npm i -D playwright && npx playwright install chromium\n"
+  );
+  process.exit(1);
+}
+
+const { chromium } = { chromium: loadChromium() };
 
 const CAPTURE = path.join(__dirname, "..", ".capture");
 const OUT = path.join(__dirname, "..", "docs", "images");
@@ -60,7 +85,7 @@ function html(title, subtitle, body) {
 const shots = [
   {
     file: "governance-checks.png",
-    title: "PowerShell — ./admin.ps1 → 8  (Verify the controls)",
+    title: "PowerShell — ./admin.ps1 → 11  (Verify the controls)",
     subtitle: "live gateway",
     src: "governance.txt",
     trim: (t) => t.split(/\r?\n/).filter((l) => l.trim() !== "" || true).join("\n").trim(),
@@ -79,16 +104,67 @@ const shots = [
     src: "opencode.txt",
     trim: (t) => t.trim(),
   },
+  {
+    file: "models-both-routes.png",
+    title: "PowerShell — ./admin.ps1 → 2  (Show models)",
+    subtitle: "every Foundry account in the subscription",
+    src: "models.txt",
+    trim: (t) => t.trim(),
+  },
+  {
+    file: "key-claude.png",
+    title: "PowerShell — ./admin.ps1 → 5  (Issue a participant key)",
+    subtitle: "the key itself is masked in this screenshot",
+    src: "key.txt",
+    trim: (t) => t.trim(),
+  },
+  {
+    file: "verify-claude-route.png",
+    title: "PowerShell — ./admin.ps1 → 11  (Verify the controls, Claude route)",
+    subtitle: "24 checks against the live gateway",
+    src: "verify-claude.txt",
+    trim: (t) => t.trim(),
+  },
+  {
+    file: "claude-code-session.png",
+    title: "PowerShell — claude",
+    subtitle: "Claude Code through the gateway, on a participant key",
+    src: "claude-code.txt",
+    trim: (t) => t.trim(),
+  },
+  {
+    file: "notebook-agent.png",
+    title: "examples/claude-agent.ipynb",
+    subtitle: "tool-calling agent on a Claude model in Foundry",
+    src: "notebook.txt",
+    trim: (t) => t.trim(),
+  },
 ];
 
 (async () => {
-  const browser = await chromium.launch();
+  // Launch the bundled Chromium if its exact build is present, otherwise drive the Edge that
+  // ships with Windows. Rendering styled text needs a browser, not a specific browser, and a
+  // 130MB download to regenerate a screenshot is a poor trade.
+  let browser;
+  try {
+    browser = await chromium.launch();
+  } catch (err) {
+    console.log("bundled chromium unavailable, falling back to the msedge channel");
+    browser = await chromium.launch({ channel: "msedge" });
+  }
   // Narrow viewport so the terminal window hugs its content instead of floating in
   // a sea of background.
   const page = await browser.newPage({ deviceScaleFactor: 2, viewport: { width: 1080, height: 800 } });
 
   for (const s of shots) {
-    const raw = fs.readFileSync(path.join(CAPTURE, s.src), "utf8");
+    const srcPath = path.join(CAPTURE, s.src);
+    if (!fs.existsSync(srcPath)) {
+      // Captures are gitignored, so a fresh clone has none. Render what is there rather than
+      // failing on the first missing one.
+      console.log("skip ", s.file, `(no .capture/${s.src})`);
+      continue;
+    }
+    const raw = fs.readFileSync(srcPath, "utf8");
     const body = colourise(s.trim(raw));
     await page.setContent(html(s.title, s.subtitle, body));
     const el = await page.$(".win");

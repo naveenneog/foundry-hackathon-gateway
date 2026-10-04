@@ -508,11 +508,16 @@ them with its default model id before the request leaves your machine, so the ga
 model your key does not grant and returns 403.
 
 **If Claude Code is already configured on this machine, its settings win.** A
-``~/.claude/settings.json`` carrying ``model``, ``ANTHROPIC_DEFAULT_*_MODEL`` or
-``CLAUDE_CODE_USE_FOUNDRY`` overrides the variables above, and requests go to the old
-destination. Either run ``claude --settings`` pointing at the included file, or merge the
-``env`` block into your own settings and remove the conflicting keys. ``/status`` shows which
-base URL and credential are actually in use.
+``~/.claude/settings.json`` carrying ``model``, ``availableModels``, ``ANTHROPIC_DEFAULT_*_MODEL``
+or ``CLAUDE_CODE_USE_FOUNDRY`` overrides everything above, including a project settings file, and
+requests go to the old destination. The reliable fix is a scratch config directory, which also
+leaves your own setup untouched:
+
+    `$env:CLAUDE_CONFIG_DIR = "`$env:TEMP\gw-claude"     # PowerShell
+    export CLAUDE_CONFIG_DIR="/tmp/gw-claude"           # bash/zsh
+
+Closing that terminal restores everything. ``/status`` shows which base URL and credential are
+actually in use.
 
 **Shell exports do not reach background agents.** The included ``.claude/settings.json`` sets
 everything everywhere Claude Code runs. Copy it into your project, or merge its ``env`` block
@@ -576,6 +581,7 @@ Every response carries headers:
 | Status | Code | Meaning |
 |--------|------|---------|
 | 403 | budget_exhausted    | You spent your whole allowance. It does **not** reset - retrying will not help. This is NOT a broken key. |
+| 400 | (anthropic-beta)    | Claude Code advertised a capability Foundry does not accept yet; the message names the value. Run with a scratch `CLAUDE_CONFIG_DIR` as above. |
 | 403 | expired             | Your window has closed. Keys are not extended. |
 | 403 | model_not_permitted | That model is not on your key. |
 | 403 | revoked             | An organiser revoked this key. |

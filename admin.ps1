@@ -609,11 +609,17 @@ function Show-Menu {
     Write-Host '  ============================================================' -ForegroundColor Cyan
     if ($state.gatewayUrl) {
         Write-Host "   Gateway : $($state.gatewayUrl)" -ForegroundColor DarkGray
+        if ($state.claudeGatewayUrl) {
+            Write-Host "   Claude  : $($state.claudeGatewayUrl)" -ForegroundColor DarkGray
+        }
         $pins = @($state.models)
         if ($pins.Count -eq 0) {
             Write-Host '   Models  : none pinned - every request returns 403' -ForegroundColor Red
         } else {
-            $summary = ($pins | ForEach-Object { "$($_.alias) -> $($_.deployment)" }) -join ' | '
+            $summary = ($pins | ForEach-Object {
+                $r = if ($_.PSObject.Properties.Name -contains 'route' -and $_.route) { $_.route } else { 'openai' }
+                "$($_.alias) -> $($_.deployment) [$r]"
+            }) -join ' | '
             Write-Host "   Models  : $summary" -ForegroundColor DarkGray
         }
     } else {

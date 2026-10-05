@@ -435,23 +435,8 @@ function Invoke-Deploy {
     # an ACL-restricted parameters file instead, and always delete it.
     $paramFile = Join-Path $script:StateDir "deploy-params-$deployName.json"
     try {
-        $params = @{
-            '$schema'      = 'https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#'
-            contentVersion = '1.0.0.0'
-            parameters     = @{
-                foundryAccountName   = @{ value = $state.foundryAccount }
-                foundryResourceGroup = @{ value = $state.foundryResourceGroup }
-                existingApimName     = @{ value = [string]$state.existingApimName }
-                publisherEmail       = @{ value = $email }
-                signingKey           = @{ value = $secret }
-                modelMap             = @{ value = (ConvertTo-ModelMapString $state.models -Route 'openai') }
-                claudeModelMap       = @{ value = (Coalesce (ConvertTo-ModelMapString $state.models -Route 'claude') ';') }
-                deployClaudeRoute    = @{ value = $deployClaude }
-                claudeApiPath        = @{ value = $claudePath }
-                grantFoundryRole     = @{ value = $grantRole }
-                revokedKeys          = @{ value = $revoked }
-            }
-        }
+        $params = New-DeploymentParameters -State $state -Email $email -Secret $secret `
+            -DeployClaude $deployClaude -ClaudePath $claudePath -GrantRole $grantRole -Revoked $revoked
         # The file holds the signing secret in cleartext until the finally block removes it, so
         # it is created empty and restricted before anything is written into it.
         New-Item -ItemType File -Path $paramFile -Force | Out-Null

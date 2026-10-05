@@ -113,7 +113,21 @@ that are actually deployed in the subscription, and serve Claude models to Claud
       *Why:* reported from a real run 2026-10-04 — 54 deployments from four accounts, 25 of them
       unreachable by the gateway. Reverses the P16 choice ([ADR-0011](adr/0011-pin-from-the-gateways-account.md)).
 
+- [x] **P29** A route with nothing pinned deploys
+      *Acceptance:* a deployment with no models pinned on one route (or on both) writes `;` for
+      that route's map and succeeds; the plan says such a route answers `model_not_configured`.
+      *Why:* reported from a real run 2026-10-05 — with three Claude models and nothing on the
+      OpenAI route, `hackgw-model-map` was written empty and APIM rejected it, failing the
+      deployment and leaving the new Claude route without its policy.
+
 ## Milestone M6 — Only if this outlives one event
+
+- [ ] **P30** Revocation past the named-value size limit
+      *Acceptance:* revoking a 216th key succeeds, and option 1 still deploys afterwards.
+      *Why:* found in the P29 review. The revoked-key list is one named value of comma-separated
+      18-character key ids, and an APIM named value holds at most 4,096 characters — the limit
+      that failed P29's deployment. The 216th revocation would break the live update and then
+      option 1.
 
 - [ ] **P20** Report the budget from the number that enforces it
       *Acceptance:* `x-budget-used` on the Claude route tracks real consumption on a streamed

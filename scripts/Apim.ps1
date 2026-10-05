@@ -371,13 +371,13 @@ function Show-DeploymentPlan {
         if ($raw) { $deps = @($raw | ForEach-Object { [string]$_.name }) }
     }
 
-    # A Claude route the caller has already decided against is withheld from the plan the same
-    # way it is withheld from the deployment: by having no Claude pins to publish.
+    # Pins are passed as they are, and the decision not to publish the Claude route is passed
+    # as itself. Withholding the Claude pins used to stand in for that decision, which made the
+    # plan say "no Claude models pinned" to an operator who had pinned three.
     $pins = @($State.models | ForEach-Object {
         $r = if ($_.PSObject.Properties.Name -contains 'route' -and $_.route) { [string]$_.route } else { 'openai' }
         [pscustomobject]@{ alias = [string]$_.alias; deployment = [string]$_.deployment; route = $r }
     })
-    if (-not $DeployClaude) { $pins = @($pins | Where-Object { $_.route -ne 'claude' }) }
 
     $facts = [pscustomobject]@{
         apim          = [pscustomobject]@{
@@ -391,6 +391,7 @@ function Show-DeploymentPlan {
         namedValues   = $nvs
         roleAssigned  = (-not $GrantRole)
         claudePath    = $ClaudePath
+        deployClaude  = $DeployClaude
         foundry       = [pscustomobject]@{ name = [string]$State.foundryAccount; exists = $acctOk; deployments = $deps }
         pins          = $pins
     }
@@ -415,6 +416,34 @@ function Show-DeploymentPlan {
     }
 
     return [int]$result.blocked
+}
+
+function New-DeploymentParameters {
+    <#
+        The parameters file for infra/main.bicep, as a hashtable.
+
+        Kept out of Invoke-Deploy so what a deployment is given can be tested without deploying.
+        A deployment is all-or-nothing, so one parameter APIM rejects fails every resource in it.
+    #>
+    param($State, [string]$Email, [string]$Secret, [bool]$DeployClaude, [string]$ClaudePath, [bool]$GrantRole, [string]$Revoked)
+
+    return @{
+        '$schema'      = 'https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#'
+        contentVersion = '1.0.0.0'
+        parameters     = @{
+            foundryAccountName   = @{ value = $State.foundryAccount }
+            foundryResourceGroup = @{ value = $State.foundryResourceGroup }
+            existingApimName     = @{ value = [string]$State.existingApimName }
+            publisherEmail       = @{ value = $Email }
+            signingKey           = @{ value = $Secret }
+            modelMap             = @{ value = (Get-ModelMapValue $State.models -Route 'openai') }
+            claudeModelMap       = @{ value = (Get-ModelMapValue $State.models -Route 'claude') }
+            deployClaudeRoute    = @{ value = $DeployClaude }
+            claudeApiPath        = @{ value = $ClaudePath }
+            grantFoundryRole     = @{ value = $GrantRole }
+            revokedKeys          = @{ value = $Revoked }
+        }
+    }
 }
 
 function Test-FoundryRoleNeeded {

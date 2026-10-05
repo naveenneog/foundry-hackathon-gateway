@@ -309,10 +309,31 @@ export function buildDeploymentPlan(facts) {
     const apiId = API_ID[route];
     const wanted = pins.filter((p) => (text(p?.route) || ROUTE.OPENAI) === route);
 
-    if (route === ROUTE.CLAUDE && wanted.length === 0) {
-      add(label, PLAN.SKIP, "No Claude models pinned, so the route is not published.");
+    // Only the caller knows it has decided not to publish the Claude route (a classic tier, or
+    // an alternative path declined). Having no Claude pins is NOT that decision: the deployment
+    // still publishes the route, with EMPTY_MAP, so a model pinned later goes live without a
+    // redeploy. An earlier version reported that case as "not published".
+    if (route === ROUTE.CLAUDE && f.deployClaude === false) {
+      if (existingApis.includes(apiId)) {
+        // ARM deploys incrementally: a resource the template no longer declares is left alone,
+        // not removed. Saying "not published" here would hide a live API.
+        add(label, PLAN.SKIP, `Not updated by this deployment. '${apiId}' already exists on this instance and is left in place as it is, including its policy.`);
+      } else {
+        add(
+          label,
+          PLAN.SKIP,
+          wanted.length > 0
+            ? `Not published on this instance, so ${wanted.length} Claude pin(s) will be unreachable.`
+            : "Not published on this instance."
+        );
+      }
       continue;
     }
+
+    const nothingPinned =
+      wanted.length === 0
+        ? " Nothing is pinned on this route, so it answers model_not_configured until a model is (option 3, no redeploy)."
+        : "";
 
     // The path the deployment will actually use, which is not always the default: a collision
     // can be worked around by publishing elsewhere, and the caller passes the path it settled
@@ -344,9 +365,9 @@ export function buildDeploymentPlan(facts) {
     } else if (apim.exists && clash) {
       add(label, PLAN.BLOCKED, `'${text(clash.name)}' already serves the path '${resolvedPath}', and APIM requires paths to be unique.`);
     } else if (existingApis.includes(apiId)) {
-      add(label, PLAN.UPDATE, `'${apiId}' is already published; its policy and operations are updated.`);
+      add(label, PLAN.UPDATE, `'${apiId}' is already published; its policy and operations are updated.${nothingPinned}`);
     } else {
-      add(label, PLAN.CREATE, `'${apiId}' will be added at /${resolvedPath}.`);
+      add(label, PLAN.CREATE, `'${apiId}' will be added at /${resolvedPath}.${nothingPinned}`);
     }
   }
 

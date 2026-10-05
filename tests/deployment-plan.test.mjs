@@ -93,11 +93,56 @@ describe("the plan refuses what cannot work, instead of letting ARM fail", () =>
     assert.notEqual(row(plan, "OpenAI route").action, PLAN.BLOCKED);
   });
 
-  test("no Claude pins means the route is skipped, not blocked", () => {
+  test("no Claude pins: the route is still published, and the plan says what it will answer", () => {
+    // This used to say "skipped, not published". The deployment never did that: Invoke-Deploy
+    // publishes the Claude route whenever the instance can serve it, with EMPTY_MAP, so a model
+    // pinned later goes live without a redeploy (ADR-0007). The plan now says what happens.
     const plan = buildDeploymentPlan(
       facts({ pins: [{ alias: "flash", deployment: "deepseek-v4-flash", route: "openai" }] })
     );
-    assert.equal(row(plan, "Claude route").action, PLAN.SKIP);
+    const r = row(plan, "Claude route");
+    assert.equal(r.action, PLAN.CREATE);
+    assert.match(r.detail, /model_not_configured/);
+  });
+
+  test("only Claude models pinned: the OpenAI route says nothing is pinned on it", () => {
+    // The pins from the run that failed on an empty OpenAI map.
+    const plan = buildDeploymentPlan(
+      facts({
+        existingApis: ["deepseek-gateway"],
+        pins: [
+          { alias: "sonnet-5", deployment: "claude-sonnet-5", route: "claude" },
+          { alias: "haiku-4-5", deployment: "claude-haiku-4-5", route: "claude" },
+        ],
+      })
+    );
+    const r = row(plan, "OpenAI route");
+    assert.equal(r.action, PLAN.UPDATE);
+    assert.match(r.detail, /model_not_configured/);
+  });
+
+  test("a route with models pinned carries no such note", () => {
+    const plan = buildDeploymentPlan(facts());
+    for (const label of ["OpenAI route", "Claude route"]) {
+      assert.doesNotMatch(row(plan, label).detail, /model_not_configured/, label);
+    }
+  });
+
+  test("a Claude route the caller is not publishing is skipped, naming the pins it strands", () => {
+    const plan = buildDeploymentPlan(facts({ deployClaude: false }));
+    const r = row(plan, "Claude route");
+    assert.equal(r.action, PLAN.SKIP);
+    assert.match(r.detail, /1 Claude pin/);
+  });
+
+  test("not publishing does not hide a Claude API that already exists", () => {
+    // ARM deploys incrementally, so declining the route leaves an existing claude-gateway live
+    // and untouched. "Not published" would hide it.
+    const plan = buildDeploymentPlan(facts({ deployClaude: false, existingApis: ["claude-gateway"] }));
+    const r = row(plan, "Claude route");
+    assert.equal(r.action, PLAN.SKIP);
+    assert.match(r.detail, /claude-gateway/);
+    assert.match(r.detail, /left in place/);
   });
 });
 
@@ -124,10 +169,13 @@ describe("the plan checks the models actually exist", () => {
 });
 
 describe("the plan is safe to show for any input", () => {
-  test("no pins at all still produces a plan", () => {
+  test("no pins at all still produces a plan, publishing both routes empty", () => {
     const plan = buildDeploymentPlan(facts({ pins: [] }));
     assert.ok(plan.length >= 4);
-    assert.equal(row(plan, "Claude route").action, PLAN.SKIP);
+    for (const label of ["OpenAI route", "Claude route"]) {
+      assert.equal(row(plan, label).action, PLAN.CREATE, label);
+      assert.match(row(plan, label).detail, /model_not_configured/, label);
+    }
   });
 
   test("junk facts produce a plan rather than an exception", () => {

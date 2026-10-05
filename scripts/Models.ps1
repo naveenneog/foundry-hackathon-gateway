@@ -47,6 +47,23 @@ function ConvertTo-ModelMapString {
     return ($parts -join ';')
 }
 
+function Get-ModelMapValue {
+    <#
+        What is written to a route's model-map named value: the map, or EMPTY_MAP (';') when the
+        route has nothing pinned.
+
+        Never an empty string. APIM rejects an empty named value, and a deployment is
+        all-or-nothing, so one empty map failed every resource with it - with three Claude
+        models pinned and nothing on the OpenAI route, option 1 stopped at hackgw-model-map. A
+        lone ';' parses to no entries, so the route answers model_not_configured. See EMPTY_MAP
+        in src/models.mjs.
+    #>
+    param($Models, [ValidateSet('openai', 'claude')][string]$Route)
+    $map = ConvertTo-ModelMapString $Models -Route $Route
+    if ($map -eq '') { return ';' }
+    return $map
+}
+
 function ConvertFrom-ModelMapString {
     param([string]$Raw)
     $out = @()
@@ -482,12 +499,8 @@ function Edit-ModelPins {
                     $ok = $true
                     foreach ($r in @('openai', 'claude')) {
                         $id = if ($r -eq 'openai') { 'model-map' } else { 'claude-model-map' }
-                        $mapString = ConvertTo-ModelMapString $pins -Route $r
-                        # A route with no pins is written as a lone separator, never as an empty
-                        # string: an APIM named value cannot reliably hold one, and removing a
-                        # route's last pin is exactly when the write has to land. See EMPTY_MAP
-                        # in src/models.mjs.
-                        if ($mapString -eq '') { $mapString = ';' }
+                        # Removing a route's last pin is exactly when this write has to land.
+                        $mapString = Get-ModelMapValue $pins -Route $r
                         if (-not (Set-GatewayNamedValue -Id $id -Value $mapString -State $state)) { $ok = $false }
                     }
                     if ($ok) {

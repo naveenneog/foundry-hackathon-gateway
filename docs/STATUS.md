@@ -1,10 +1,55 @@
 # Status
 
-**Active packet:** none — P27 and P28 complete, council notes closed.
+**Active packet:** none — P29 complete.
 
 M1, M2, M3 and M5 are complete. M5 (P15–P19) added: adopt an APIM an organisation already runs,
 pick from the models actually deployed in the subscription, serve Claude models to Claude Code,
 and prove it live.
+
+### P29 — a route with nothing pinned deploys — DONE
+
+Reported 2026-10-05: with three Claude models pinned and nothing on the OpenAI route, option 1
+failed with *"NamedValue Value should be between 1 and 4096 characters long"*. The deployment's
+operations list shows exactly one failure out of 21: `namedValues/hackgw-model-map`, the OpenAI
+route's map, sent as an empty string.
+
+The Claude map already wrote `;` (EMPTY_MAP) when empty. The OpenAI map never needed to: until
+P25 every install defaulted to DeepSeek pins, and until P28 pinning only Claude models was the
+unusual case. Both changes made it the normal case.
+
+What the failure left behind, read back from the instance: `claude-gateway` was created at
+`/claude-hackgw` with **no policy**, because the policies depend on the named value that failed.
+An unauthenticated call to it returns 401 from Foundry (nothing adds credentials), so it is not an
+open route, but it is ungoverned until a deployment that publishes the Claude route succeeds.
+Declining the alternative path is not that: ARM deploys incrementally and leaves the API in place.
+
+| | Fix |
+|---|---|
+| Empty map sent to APIM | `Get-ModelMapValue` writes `;` for a route with nothing pinned; deployment and live push both use it |
+| Template accepted an empty map | `infra/main.bicep` writes `;` when either map is empty; `modelMap` defaults to `;`, not two DeepSeek deployments |
+| Plan said a Claude route with no pins "is not published" | It is published, with `;`. The plan says so, and that the route answers `model_not_configured` until a model is pinned |
+| Plan blurred "not publishing" with "no pins" | The decision not to publish is passed to the plan as itself |
+
+`New-DeploymentParameters` was moved out of `Invoke-Deploy` unchanged first, so the failing value
+could be tested: with the operator's three Claude pins, the test was RED with the map empty,
+before the fix. APIM accepting `;` was an untested assumption until now; a live probe confirmed it
+(UNKNOWNS U22). Rendered against the operator's instance, the plan now reads *"OpenAI route UPDATE
+… Nothing is pinned on this route, so it answers model_not_configured"*, and the suggested Claude
+path stays `/claude-hackgw` (the operator's own API is not counted as a collision), so the next
+run updates it in place.
+
+**Council — P29.** Coder and Security: PASS. Architect and QA: PASS-WITH-NOTES, both closed:
+
+- Declining the alternative Claude path made the plan say "not published" while ARM's
+  incremental mode left an existing `claude-gateway` live. The plan now says it is left in place,
+  including its policy.
+- Nothing tested that `Invoke-Deploy` uses `New-DeploymentParameters`, so an inline parameter
+  table coming back would have reintroduced the bug with every test green. An AST test now
+  requires exactly one call and no other parameter table; removing the call turns it red. Two
+  "non-empty" checks on values the test itself supplied were removed as unfalsifiable.
+
+Reviewer finding outside this packet, filed as P30: the revoked-key list is one named value, so
+APIM's 4,096-character limit is reached at the 216th revocation.
 
 ### P27 — `Protect-File` can be applied more than once — DONE (`c9ee7bf`, `73d4c7e`, `1383425`)
 

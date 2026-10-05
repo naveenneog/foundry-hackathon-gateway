@@ -38,8 +38,8 @@ param apimSku string = 'BasicV2'
 @minValue(1)
 param apimCapacity int = 1
 
-@description('Alias-to-deployment map, as alias=deployment;alias=deployment. Aliases are what participants put in the `model` field; deployment names must exist in the Foundry account. Adding a model later is a named-value edit, not a redeploy.')
-param modelMap string = 'flash=deepseek-v4-flash;pro=deepseek-v4-pro'
+@description('Alias-to-deployment map, as alias=deployment;alias=deployment. Aliases are what participants put in the `model` field; deployment names must exist in the Foundry account. Adding a model later is a named-value edit, not a redeploy. A lone ";" (EMPTY_MAP) means nothing is pinned; an empty string is written as ";" because APIM rejects an empty named value.')
+param modelMap string = ';'
 
 @description('Alias-to-deployment map for the Claude route, as alias=deployment;alias=deployment. Separate from modelMap because the two routes reach different Foundry endpoints: an alias pinned here names a deployment the /anthropic backend serves.')
 param claudeModelMap string = ';'
@@ -262,8 +262,10 @@ var plainNamedValues = [
   { key: 'hackgw-tpm-per-key', value: string(tpmPerKey) }
   { key: 'hackgw-calls-per-minute', value: string(callsPerMinute) }
   { key: 'hackgw-max-output-tokens', value: string(maxOutputTokens) }
-  { key: 'hackgw-model-map', value: modelMap }
-  { key: 'hackgw-claude-model-map', value: claudeModelMap }
+  // APIM rejects an empty named value, and one rejected resource fails the whole deployment.
+  // A route with nothing pinned is written as EMPTY_MAP (';'), which parses to no entries.
+  { key: 'hackgw-model-map', value: empty(modelMap) ? ';' : modelMap }
+  { key: 'hackgw-claude-model-map', value: empty(claudeModelMap) ? ';' : claudeModelMap }
 ]
 
 resource apimNamedValues 'Microsoft.ApiManagement/service/namedValues@2024-05-01' = [

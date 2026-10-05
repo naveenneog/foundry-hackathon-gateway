@@ -31,6 +31,7 @@ assumption is only closed if it names its blast radius and the detector that wou
 | U19 | File permissions for the signing secret on macOS and Linux | RESOLVED |
 | U20 | Is `pwsh` present on the GitHub-hosted macOS and Linux runners? | RESOLVED |
 | U21 | Why `Set-Acl` needs `SeSecurityPrivilege` on the second call | RESOLVED |
+| U22 | Does APIM store `;` (EMPTY_MAP) as a named value? | RESOLVED |
 
 ---
 
@@ -38,6 +39,26 @@ assumption is only closed if it names its blast radius and the detector that wou
 ## Open
 
 _None._
+
+---
+
+### U22 — Does APIM store `;` (EMPTY_MAP) as a named value? — RESOLVED
+
+`EMPTY_MAP` (`src/models.mjs`) writes a lone `;` for a route with nothing pinned, on the stated
+basis that an APIM named value cannot hold an empty string. Until 2026-10-05 that basis was
+untested. No deployment had ever written `;`: all 11 deployments in `rg-hackathon-gateway` had
+pins on both routes.
+
+It was tested because an operator's deployment failed on the opposite case. With only Claude
+models pinned, the OpenAI map went out as an empty string, and `hackgw-model-map` was the only
+one of the deployment's 21 operations to fail: *"Either Value or Keyvault must be provided"* and
+*"NamedValue Value should be between 1 and 4096 characters long"*. That confirms the empty
+string is rejected, and states the rule `;` has to meet.
+
+**Probe, 2026-10-05:** an ARM `PUT` of `namedValues/hackgw-probe-empty-map` with
+`"value": ";"` on `apim-hackgwfl4s7jvpxekno` (BasicV2) read back `Succeeded`, value `;`, length
+1. The probe was then deleted. It went through `az rest` with a JSON body because a bare `;`
+argument passes through `az`'s Windows `cmd` wrapper.
 
 ---
 

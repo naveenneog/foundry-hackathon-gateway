@@ -64,6 +64,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · [Semantic Ve
   (P15)
 
 ### Fixed
+- **Deploying with only Claude models pinned failed** with *"NamedValue Value should be between
+  1 and 4096 characters long"*. The OpenAI route's model map was written as an empty string,
+  which APIM rejects. The Claude map already wrote `;` (EMPTY_MAP) for that case, but the OpenAI
+  map had never needed to while every install defaulted to DeepSeek pins. A deployment is
+  all-or-nothing, so the one rejected named value also kept the new route's policy from being
+  applied. Both maps now go through `Get-ModelMapValue`, `infra/main.bicep` applies the same
+  guard for anyone deploying it directly, and its `modelMap` default is `;` rather than two
+  DeepSeek deployments. (P29)
+- **The deployment plan said a Claude route with no pins "is not published"**; the deployment
+  published it anyway, with an empty map. The plan now says what happens: a route with nothing
+  pinned is published and answers `model_not_configured` until a model is pinned. A Claude
+  route the operator chose not to publish is reported as such, with the pins it strands. (P29)
 - **Options 2 and 3 listed every Foundry account's deployments, even after an account was
   chosen.** The gateway reaches one account — both routes point at it — so the other rows were
   deployments that would answer 404, offered behind a "Pin it anyway?" prompt; a real run listed

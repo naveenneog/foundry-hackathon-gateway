@@ -197,6 +197,9 @@ outside the network returned `403 Public access is disabled`. With VNet integrat
 the same gateway returned that 403 on both routes; switched back on, the control plane reported
 success first and traffic used the private path again about 1–1½ minutes later. See UNKNOWNS U23.
 
+Step-by-step portal and CLI instructions, verification and teardown:
+[docs/PRIVATE-ENDPOINT.md](docs/PRIVATE-ENDPOINT.md).
+
 ---
 
 ## The controls
@@ -398,28 +401,34 @@ Model deployments in the Foundry account are left alone; the gateway did not cre
 
 ```
 admin.ps1                    interactive admin console — start here
+admin.sh                     macOS / Linux launcher: checks pwsh, az, node, then runs admin.ps1
 src/
   entitlement.mjs            the access decision, as a pure tested function
   keys.mjs                   HS256 key minting and verification (zero dependencies)
   models.mjs                 the alias map, parsed and built
-  apim.mjs                   which API Management instance can host this, and why not
+  apim.mjs                   which API Management instance can host this, and the deployment plan
   foundry.mjs                the models in the subscription, and the route that serves each
   anthropic.mjs              the Anthropic error envelope and body rewrites
 infra/
   main.bicep                 gateway, observability, both APIs, policy, RBAC
   policy.xml                 the governance policy, OpenAI route
   policy-claude.xml          the governance policy, Claude route
+  examples/
+    private-foundry-test.bicep  the private-endpoint test environment (docs/PRIVATE-ENDPOINT.md)
 scripts/
   mint.mjs                   thin shim so admin.ps1 never reimplements JWS
-  Apim.ps1                   instance discovery and named-value access
+  plan.mjs                   thin shim so the deployment plan runs the tested module
+  Platform.ps1               owner-only file permissions on Windows, macOS and Linux
+  Apim.ps1                   instance discovery, named-value access, deployment plan and parameters
   Models.ps1                 model discovery and pinning
   Keys.ps1                   key issuance and handouts
   Test-Governance.ps1        proves each control fires, per route
 examples/
   claude-agent.ipynb         a tool-calling Claude agent, with a real recorded run
-tests/                       328 tests, including tamper and alg:none attacks
+tests/                       391 tests, including tamper and alg:none attacks
 docs/adr/                    architecture decisions and their reasoning
 docs/UNKNOWNS.md             what we did not know, and how each was closed
+docs/PRIVATE-ENDPOINT.md     Foundry behind a private endpoint: requirements, steps, evidence
 ```
 
 `src/*.mjs` is the canonical statement of the rules; the policies and the PowerShell are

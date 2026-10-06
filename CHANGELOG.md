@@ -11,7 +11,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · [Semantic Ve
   Premium v2, outbound VNet integration on a delegated subnet, and the three private DNS zones.
   Tested end to end: option 11 passed 17/17 and 23/23 through the private endpoint, and the same
   instance without VNet integration — as a Basic v2 gateway is — was refused on both routes.
-  (P31)
+  [docs/PRIVATE-ENDPOINT.md](docs/PRIVATE-ENDPOINT.md) gives the portal and CLI steps, and
+  `infra/examples/private-foundry-test.bicep` is the template the test ran. (P31)
 - **macOS and Linux run the same console.** PowerShell 7 is cross-platform and was already
   required, so `admin.ps1` runs on all three platforms rather than acquiring a bash twin that
   would have to agree with it about minting and revocation forever

@@ -13,7 +13,8 @@ disabled`) on both routes; turning it back on recovered in about 85 seconds. Evi
 UNKNOWNS U23; requirements in the README.
 
 No code changed: an adopted instance's networking is not touched by the deployment, so option 1
-already works once the instance is integrated.
+already works once the instance is integrated. The guide is `docs/PRIVATE-ENDPOINT.md`; the
+template the test deployed is `infra/examples/private-foundry-test.bicep`, unchanged.
 
 M1, M2, M3 and M5 are complete. M5 (P15–P19) added: adopt an APIM an organisation already runs,
 pick from the models actually deployed in the subscription, serve Claude models to Claude Code,

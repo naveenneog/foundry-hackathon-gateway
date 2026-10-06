@@ -97,6 +97,10 @@ The instance that already carries this gateway shows `update` rather than `add` 
 You are then asked for the Foundry account. Pick the one holding the models you intend to use —
 the gateway can only reach deployments in that single account.
 
+If that account's public network access is disabled, the instance has to be Standard v2 or
+Premium v2 with outbound virtual network integration; Basic v2 cannot reach it. See
+[PRIVATE-ENDPOINT.md](PRIVATE-ENDPOINT.md).
+
 ---
 
 ## Step 3 — Pin the models

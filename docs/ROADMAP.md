@@ -126,7 +126,8 @@ that are actually deployed in the subscription, and serve Claude models to Claud
       on both routes.
       *Verified 2026-10-06:* Standard v2 with outbound VNet integration — 17/17 and 23/23. Basic
       v2 has no outbound VNet option; the same instance with integration switched off returned
-      `403 Public access is disabled`. Documentation only (README, UNKNOWNS U23).
+      `403 Public access is disabled`. Documentation only (README, docs/PRIVATE-ENDPOINT.md,
+      UNKNOWNS U23) plus the test template in `infra/examples/`.
 
 ## Milestone M6 — Only if this outlives one event
 

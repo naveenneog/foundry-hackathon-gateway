@@ -446,6 +446,98 @@ function New-DeploymentParameters {
     }
 }
 
+function Get-GatewayCustomHost {
+    <#
+        The custom hostname the gateway answers on, or $null when it has none or the instance
+        cannot be read.
+
+        Read from the instance's hostnameConfigurations: a Proxy entry whose name is not the
+        built-in *.azure-api.net one. Management, portal and other hostname types are not the
+        gateway. When several custom gateway hostnames exist, the one bound as the default SSL
+        hostname is the instance's default.
+    #>
+    param($State)
+    $name = Coalesce $State.apimName $State.existingApimName
+    if (-not $name -or -not $State.resourceGroup) { return $null }
+
+    $inst = az apim show -n $name -g $State.resourceGroup -o json 2>$null | ConvertFrom-Json
+    if ($LASTEXITCODE -ne 0 -or -not $inst) { return $null }
+
+    $custom = @($inst.hostnameConfigurations | Where-Object {
+        $_.type -eq 'Proxy' -and $_.hostName -and ([string]$_.hostName) -notlike '*.azure-api.net'
+    })
+    if ($custom.Count -eq 0) { return $null }
+    $pick = @($custom | Where-Object { $_.defaultSslBinding }) | Select-Object -First 1
+    if (-not $pick) { $pick = $custom[0] }
+    return ([string]$pick.hostName).ToLowerInvariant()
+}
+
+function Get-ParticipantUrls {
+    <#
+        The base URLs participants are given: the deployed URLs with the hostname replaced by
+        $HostName. Each route keeps its own path - /v1, and /claude or the path chosen when
+        /claude was taken. Without a hostname the deployed URLs are returned unchanged.
+    #>
+    param($State, [string]$HostName)
+    $swap = {
+        param($url)
+        if (-not $url -or -not $HostName) { return $url }
+        $b = [System.UriBuilder]::new([string]$url)
+        $b.Host = $HostName
+        $b.Port = -1
+        return $b.Uri.AbsoluteUri.TrimEnd('/')
+    }
+    return [pscustomobject]@{
+        openai = & $swap $State.gatewayUrl
+        claude = & $swap $State.claudeGatewayUrl
+    }
+}
+
+function Read-ParticipantHost {
+    <#
+        The hostname for participants' base URLs, asked once per issuance.
+
+        The default is the instance's custom domain when it has one, then a hostname typed here
+        before, then the built-in *.azure-api.net name. A typed hostname is remembered because a
+        front door or application gateway in front of API Management does not show up on the
+        instance. Returns '' when the gateway is not deployed yet.
+    #>
+    param($State)
+    if (-not $State.gatewayUrl) { return '' }
+
+    $builtIn    = ([uri]$State.gatewayUrl).Host.ToLowerInvariant()
+    $custom     = Get-GatewayCustomHost -State $State
+    $remembered = if ($State.PSObject.Properties.Name -contains 'participantHost') { [string]$State.participantHost } else { '' }
+    $default    = Coalesce $custom $remembered $builtIn
+    if ($custom) { Write-Info "The gateway has a custom domain: $custom" }
+
+    $answer = ([string](Read-Default "Hostname in participants' base URLs" $default)).Trim()
+    # A pasted URL is accepted as well as a bare hostname.
+    if ($answer -match '^[a-zA-Z][a-zA-Z0-9+.-]*://') {
+        $u = $null
+        if ([uri]::TryCreate($answer, [System.UriKind]::Absolute, [ref]$u)) { $answer = $u.Host }
+    }
+    $answer = $answer.TrimEnd('/').ToLowerInvariant()
+    if ($answer -notmatch '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$') {
+        Write-Warn "'$answer' is not a hostname; using $builtIn."
+        $answer = $builtIn
+    }
+
+    # Remember a hostname the instance does not report; forget it when the built-in one is chosen.
+    $toRemember = if ($answer -ne $builtIn -and $answer -ne $custom) { $answer } else { '' }
+    if ($toRemember -ne $remembered) {
+        $State | Add-Member -NotePropertyName participantHost -NotePropertyValue $toRemember -Force
+        Save-State $State
+    }
+
+    # Advisory only: the machine issuing keys may not see the same DNS as participants.
+    if ($answer -ne $builtIn) {
+        try { [void][System.Net.Dns]::GetHostAddresses($answer) }
+        catch { Write-Warn "'$answer' does not resolve from this machine. Participants need it to resolve to the gateway." }
+    }
+    return $answer
+}
+
 function Test-FoundryRoleNeeded {
     <#
         Transcription of needsRoleAssignment in src/apim.mjs.

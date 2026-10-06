@@ -17,6 +17,13 @@
 # Shared minting
 # ------------------------------------------------------------------------------------------
 
+# Where handouts are written: handouts/ in the repository unless $script:HandoutsDir says
+# otherwise. The tests point it at a scratch directory.
+function Get-HandoutsDir {
+    if ($script:HandoutsDir) { return $script:HandoutsDir }
+    return (Join-Path $script:Root 'handouts')
+}
+
 # Mints one key and records its metadata. Returns the mint result, or $null on failure.
 function New-Key {
     param($Secret, $Subject, $Label, $Models, $Budget, $NotBefore, $ExpiresAt)
@@ -139,11 +146,14 @@ function New-ParticipantKey {
     $cfg = Read-KeySettings $state
     if (-not $cfg) { return }
 
+    $hostName = Read-ParticipantHost -State $state
+    $urls = Get-ParticipantUrls -State $state -HostName $hostName
+
     $result = New-Key -Secret $secret -Subject $subject -Label $label -Models $cfg.models `
                       -Budget $cfg.budget -NotBefore $cfg.notBefore -ExpiresAt $cfg.expiresAt
     if (-not $result) { return }
 
-    $baseUrl = Coalesce $state.gatewayUrl 'https://<deploy-first>/v1'
+    $baseUrl = Coalesce $urls.openai 'https://<deploy-first>/v1'
 
     Write-Host ''
     Write-Host '  ============================================================' -ForegroundColor Green
@@ -170,9 +180,9 @@ function New-ParticipantKey {
         Write-Host "   OPENAI_BASE_URL=$baseUrl" -ForegroundColor Yellow
         Write-Host "   OPENAI_API_KEY=<the key above>" -ForegroundColor Yellow
     }
-    if ($issuedSplit.claude.Count -gt 0 -and $state.claudeGatewayUrl) {
+    if ($issuedSplit.claude.Count -gt 0 -and $urls.claude) {
         Write-Host ''
-        Write-Host "   ANTHROPIC_BASE_URL=$($state.claudeGatewayUrl)" -ForegroundColor Yellow
+        Write-Host "   ANTHROPIC_BASE_URL=$($urls.claude)" -ForegroundColor Yellow
         Write-Host "   ANTHROPIC_AUTH_TOKEN=<the key above>" -ForegroundColor Yellow
         Write-Host "   ANTHROPIC_MODEL=$(@($issuedSplit.claude)[0])" -ForegroundColor Yellow
         Write-Info 'AUTH_TOKEN, not API_KEY: the second is sent as x-api-key and returns 401.'
@@ -186,7 +196,7 @@ function New-ParticipantKey {
         $split = Split-ModelsByRoute -State $state -Models $cfg.models
         Write-Handout -Subject $subject -Token $result.token -BaseUrl $baseUrl `
                       -Models $cfg.models -Budget $cfg.budget -ExpiresAt $cfg.expiresAt `
-                      -ClaudeBaseUrl $state.claudeGatewayUrl -ClaudeModels $split.claude
+                      -ClaudeBaseUrl $urls.claude -ClaudeModels $split.claude
         Write-Ok "Handout written to handouts/$subject/"
     }
 }
@@ -255,6 +265,9 @@ function New-BulkKeys {
     $cfg = Read-KeySettings $state
     if (-not $cfg) { return }
 
+    $hostName = Read-ParticipantHost -State $state
+    $urls = Get-ParticipantUrls -State $state -HostName $hostName
+
     $totalBudget = [long]$cfg.budget * $subjects.Count
     Write-Host ''
     Write-Host "  About to issue $($subjects.Count) key(s)."
@@ -263,12 +276,14 @@ function New-BulkKeys {
     Write-Host "  Budget total  : $('{0:N0}' -f $totalBudget) tokens across all keys" -ForegroundColor Yellow
     Write-Host "  Expires       : $(([DateTimeOffset]::FromUnixTimeMilliseconds($cfg.expiresAt)).ToLocalTime().ToString('yyyy-MM-dd HH:mm zzz'))"
     Write-Host "                  $(([DateTimeOffset]::FromUnixTimeMilliseconds($cfg.expiresAt)).UtcDateTime.ToString('yyyy-MM-dd HH:mm')) UTC" -ForegroundColor DarkGray
+    if ($urls.openai) { Write-Host "  Base URL      : $($urls.openai)" }
+    if ($urls.claude) { Write-Host "  Claude URL    : $($urls.claude)" }
     Write-Host ''
     if (-not (Confirm-Action "Issue $($subjects.Count) key(s)?")) { Write-Info 'Cancelled.'; return }
 
-    $baseUrl = Coalesce $state.gatewayUrl 'https://<deploy-first>/v1'
+    $baseUrl = Coalesce $urls.openai 'https://<deploy-first>/v1'
     $stamp   = (Get-Date).ToString('yyyyMMdd-HHmmss')
-    $batch   = Join-Path $script:Root "handouts/batch-$stamp"
+    $batch   = Join-Path (Get-HandoutsDir) "batch-$stamp"
     New-Item -ItemType Directory -Path $batch -Force | Out-Null
 
     $issued = 0
@@ -283,7 +298,7 @@ function New-BulkKeys {
 
         Write-Handout -Subject $subject -Token $result.token -BaseUrl $baseUrl `
                       -Models $cfg.models -Budget $cfg.budget -ExpiresAt $cfg.expiresAt `
-                      -ClaudeBaseUrl $state.claudeGatewayUrl -ClaudeModels $bulkSplit.claude `
+                      -ClaudeBaseUrl $urls.claude -ClaudeModels $bulkSplit.claude `
                       -Root $batch
         $issued++
         $index += [pscustomobject]@{
@@ -397,7 +412,7 @@ function Write-Handout {
         $ClaudeBaseUrl, $ClaudeModels
     )
 
-    $base = Coalesce $Root (Join-Path $script:Root 'handouts')
+    $base = Coalesce $Root (Get-HandoutsDir)
     $dir  = Join-Path $base $Subject
     New-Item -ItemType Directory -Path $dir -Force | Out-Null
 

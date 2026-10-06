@@ -1,6 +1,19 @@
 # Status
 
-**Active packet:** none — P29 complete.
+**Active packet:** none — P31 complete.
+
+### P31 — Foundry behind a private endpoint — DONE (verified, documentation only)
+
+Asked whether the gateway works when Foundry is reachable only through a private endpoint. It
+does on Standard v2 or Premium v2 with outbound VNet integration, and not on Basic v2, which has
+no outbound virtual network option. Measured end to end in an isolated resource group with the
+real option 1 and option 11: 17/17 and 23/23 with the Foundry account's public access disabled.
+Turning the instance's VNet integration off reproduced the Basic v2 failure (`403 Public access is
+disabled`) on both routes; turning it back on recovered in about 85 seconds. Evidence and steps in
+UNKNOWNS U23; requirements in the README.
+
+No code changed: an adopted instance's networking is not touched by the deployment, so option 1
+already works once the instance is integrated.
 
 M1, M2, M3 and M5 are complete. M5 (P15–P19) added: adopt an APIM an organisation already runs,
 pick from the models actually deployed in the subscription, serve Claude models to Claude Code,

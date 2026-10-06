@@ -32,6 +32,7 @@ assumption is only closed if it names its blast radius and the detector that wou
 | U20 | Is `pwsh` present on the GitHub-hosted macOS and Linux runners? | RESOLVED |
 | U21 | Why `Set-Acl` needs `SeSecurityPrivilege` on the second call | RESOLVED |
 | U22 | Does APIM store `;` (EMPTY_MAP) as a named value? | RESOLVED |
+| U23 | Does the gateway work when Foundry is reachable only through a private endpoint? | RESOLVED |
 
 ---
 
@@ -39,6 +40,37 @@ assumption is only closed if it names its blast radius and the detector that wou
 ## Open
 
 _None._
+
+---
+
+### U23 — Does the gateway work when Foundry is reachable only through a private endpoint? — RESOLVED
+
+**Yes, on Standard v2 or Premium v2 with outbound VNet integration. Not on Basic v2.**
+
+Microsoft's networking table lists no outbound virtual network option for Basic v2; outbound
+access to private backends is Standard v2 / Premium v2 integration, or injection
+([virtual-network-concepts](https://learn.microsoft.com/azure/api-management/virtual-network-concepts),
+updated 2026-06-26).
+
+Measured 2026-10-06 in an isolated resource group, `rg-hackgw-pe-test` (eastus2):
+
+| Step | Result |
+|---|---|
+| Foundry `AIServices` account, private endpoint (`account`), the three private DNS zones linked to the VNet | A records `10.61.2.4` / `.5` / `.6` for the cognitiveservices / openai / services.ai names; connection Approved |
+| Direct call from outside, public access Enabled → Disabled | HTTP 200 → HTTP 403 *"Public access is disabled. Please configure private endpoint."* |
+| Standard v2, VNet integration (subnet /24 delegated to `Microsoft.Web/serverFarms`, NSG 443 → `AzureKeyVault`) | deployed in under 4 minutes with the rest of the environment |
+| Option 1 (`-NonInteractive`), adopting that instance and account | plan: REUSE / both routes CREATE / role CREATE; deployed in 2 min 20 s |
+| Option 11 | OpenAI route 17/17, Claude route 23/23, including tool calls, budget exhaustion and revocation |
+| VNet integration switched off on the same instance | both routes 403 *"Public access is disabled"* — what a Basic v2 gateway would get |
+| Switched back on | control plane `Succeeded` after 41 s; first calls 30 s later still 403; 200 on both routes at the next check, about 85 s after the switch, and stable |
+
+Public access is disabled on the account, so the gateway's 200 responses can only have come
+through the private endpoint.
+
+The model deployments, the role grant and model discovery go through Azure Resource Manager and
+were unaffected by the account's network setting. The Claude deployment was created by an ARM
+`PUT` carrying `modelProviderData` copied from an existing Claude deployment in the subscription
+(U14).
 
 ---
 

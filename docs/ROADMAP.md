@@ -120,6 +120,14 @@ that are actually deployed in the subscription, and serve Claude models to Claud
       OpenAI route, `hackgw-model-map` was written empty and APIM rejected it, failing the
       deployment and leaving the new Claude route without its policy.
 
+- [x] **P31** Foundry behind a private endpoint
+      *Acceptance:* with the Foundry account's public network access disabled, option 1 deploys
+      onto an API Management instance that can reach the private endpoint, and option 11 passes
+      on both routes.
+      *Verified 2026-10-06:* Standard v2 with outbound VNet integration — 17/17 and 23/23. Basic
+      v2 has no outbound VNet option; the same instance with integration switched off returned
+      `403 Public access is disabled`. Documentation only (README, UNKNOWNS U23).
+
 ## Milestone M6 — Only if this outlives one event
 
 - [ ] **P30** Revocation past the named-value size limit

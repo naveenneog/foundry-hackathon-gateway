@@ -171,6 +171,32 @@ suite and the parse check run on all three.
   [ok] Key minting works
 ```
 
+### Foundry behind a private endpoint
+
+The gateway works with a Foundry account whose public network access is disabled, on an API
+Management instance that can reach the private endpoint. Basic v2 cannot: it has no outbound
+virtual network option. Standard v2 and Premium v2 have one
+([virtual network options by tier](https://learn.microsoft.com/azure/api-management/virtual-network-concepts)).
+
+What the instance needs, all set up in the portal before option 1:
+
+| Piece | Requirement | Source |
+|---|---|---|
+| Tier | Standard v2 or Premium v2. The classic tiers can join a VNet but do not meter Claude tokens (UNKNOWNS U12) | [integrate-vnet-outbound](https://learn.microsoft.com/azure/api-management/integrate-vnet-outbound) |
+| Subnet | dedicated to the instance, /27 or larger, delegated to `Microsoft.Web/serverFarms`, same region and subscription | same |
+| NSG on that subnet | outbound TCP 443 to `AzureKeyVault` allowed | same |
+| Private DNS | `privatelink.cognitiveservices.azure.com`, `privatelink.openai.azure.com` and `privatelink.services.ai.azure.com`, linked to the VNet | [private-endpoint-dns](https://learn.microsoft.com/azure/private-link/private-endpoint-dns) |
+
+Then run option 1 and adopt that instance. The deployment does not change networking; it adds the
+APIs, policies, named values and the Foundry role, as on any adopted instance.
+
+Verified 2026-10-06 on a Standard v2 instance with VNet integration and a Foundry account with
+public network access disabled: option 1 deployed onto it, and the governance checks (option 11)
+passed 17/17 on the OpenAI route and 23/23 on the Claude route. A direct call to the account from
+outside the network returned `403 Public access is disabled`. With VNet integration switched off,
+the same gateway returned that 403 on both routes; switched back on, the control plane reported
+success first and traffic used the private path again about 1–1½ minutes later. See UNKNOWNS U23.
+
 ---
 
 ## The controls

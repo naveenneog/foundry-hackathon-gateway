@@ -6,6 +6,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · [Semantic Ve
 ## [Unreleased]
 
 ### Added
+- **Foundry behind a private endpoint, verified.** The README lists what an API Management
+  instance needs to reach a Foundry account whose public access is disabled: Standard v2 or
+  Premium v2, outbound VNet integration on a delegated subnet, and the three private DNS zones.
+  Tested end to end: option 11 passed 17/17 and 23/23 through the private endpoint, and the same
+  instance without VNet integration — as a Basic v2 gateway is — was refused on both routes.
+  (P31)
 - **macOS and Linux run the same console.** PowerShell 7 is cross-platform and was already
   required, so `admin.ps1` runs on all three platforms rather than acquiring a bash twin that
   would have to agree with it about minting and revocation forever

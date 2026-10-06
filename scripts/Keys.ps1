@@ -61,6 +61,41 @@ function New-Key {
     return $result
 }
 
+function Move-ExpiredKeysToArchive {
+    <#
+        Move keys more than ten minutes past their expiry from issued-keys.json to
+        issued-keys-archive.json, so the key list shows keys that can still be used. Returns how
+        many moved.
+
+        Ten minutes, not zero: the gateway allows 60 seconds of clock skew when it checks `exp`
+        (infra/policy.xml, validate-jwt), and an archived key no longer goes into the denylist
+        Revoke-Key pushes. Past the skew, `exp` refuses it on its own.
+
+        A key whose expiry cannot be read stays where it is. The archive is written first, so a
+        failure between the two writes leaves a key in both files rather than in neither, and
+        archived records are de-duplicated by key id.
+    #>
+    param([DateTimeOffset]$Now = [DateTimeOffset]::UtcNow)
+
+    $cutoff  = $Now.AddMinutes(-10)
+    $keys    = @(Get-IssuedKeys)
+    $expired = @($keys | Where-Object { $e = ConvertTo-Dto $_.expiresAt; $null -ne $e -and $e -lt $cutoff })
+    if ($expired.Count -eq 0) { return 0 }
+
+    $archive = @(Get-ArchivedKeys)
+    $known   = @($archive | ForEach-Object { [string]$_.jti })
+    foreach ($k in $expired) {
+        if ($known -contains [string]$k.jti) { continue }
+        $k | Add-Member -NotePropertyName archivedAt -NotePropertyValue $Now.ToString('u') -Force
+        $archive += $k
+    }
+    Save-ArchivedKeys $archive
+
+    $gone = @($expired | ForEach-Object { [string]$_.jti })
+    Save-IssuedKeys @($keys | Where-Object { $gone -notcontains [string]$_.jti })
+    return $expired.Count
+}
+
 # Prompts for the settings shared by single and bulk issuance.
 function Read-KeySettings {
     param($State)
@@ -204,11 +239,15 @@ function New-ParticipantKey {
 function Test-SubjectFree {
     param([string]$Subject)
     $existing = @(Get-IssuedKeys | Where-Object { $_.subject -eq $Subject -and -not $_.revoked })
-    if ($existing.Count -eq 0) { return $true }
+    # Archived keys count too: the counters are keyed on the subject, not the key, so an
+    # expired key's spend can count against a new key with the same id.
+    $earlier  = @(Get-ArchivedKeys | Where-Object { $_.subject -eq $Subject })
+    if ($existing.Count -eq 0 -and $earlier.Count -eq 0) { return $true }
 
-    Write-Warn "'$Subject' already has $($existing.Count) active key(s)."
+    if ($existing.Count -gt 0) { Write-Warn "'$Subject' already has $($existing.Count) active key(s)." }
+    if ($earlier.Count -gt 0) { Write-Warn "'$Subject' was used by $($earlier.Count) expired key(s), now archived." }
     Write-Info 'Budget, rate limit and quota are all keyed on the subject, so a second key'
-    Write-Info 'SHARES the same allowance rather than getting its own.'
+    Write-Info 'SHARES the same allowance rather than getting its own, including what earlier keys spent.'
     Write-Info 'That is correct when re-issuing a lost key; it is a bug otherwise.'
     if ((Read-Default 'Is this a deliberate re-issue for the same participant? (y/n)' 'n') -ne 'y') {
         Write-Info 'Cancelled. Choose a different id.'
@@ -251,10 +290,12 @@ function New-BulkKeys {
     }
 
     # Subject collisions silently share a budget, so resolve them before minting anything.
+    # Archived (expired) keys count: their spend is on the same subject-keyed counters.
     $active = @(Get-IssuedKeys | Where-Object { -not $_.revoked } | ForEach-Object { $_.subject })
+    $active += @(Get-ArchivedKeys | ForEach-Object { $_.subject })
     $clashes = @($subjects | Where-Object { $active -contains $_ })
     if ($clashes.Count -gt 0) {
-        Write-Warn "$($clashes.Count) of these already have an active key: $($clashes -join ', ')"
+        Write-Warn "$($clashes.Count) of these already have a key, current or expired: $($clashes -join ', ')"
         Write-Info 'They would SHARE one budget and rate-limit each other.'
         Write-Host '    [1] Skip the ones that clash  [2] Cancel'
         if ((Read-Default 'Which' '1') -ne '1') { Write-Info 'Cancelled.'; return }

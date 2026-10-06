@@ -34,6 +34,8 @@ $script:StateDir = Join-Path $script:Root '.gateway'
 $script:StatePath = Join-Path $script:StateDir 'state.json'
 $script:SecretPath = Join-Path $script:StateDir 'secret.txt'
 $script:KeysPath = Join-Path $script:StateDir 'issued-keys.json'
+# Keys more than ten minutes past their expiry, moved out of the list (Move-ExpiredKeysToArchive).
+$script:ArchivePath = Join-Path $script:StateDir 'issued-keys-archive.json'
 
 # --------------------------------------------------------------------------------------------
 # Helpers
@@ -186,14 +188,15 @@ function New-SigningSecret {
     return $secret
 }
 
-function Get-IssuedKeys {
-    if (-not (Test-Path $script:KeysPath)) { return @() }
-    $raw = Get-Content $script:KeysPath -Raw
+function Read-KeyRecords {
+    param([string]$Path)
+    if (-not (Test-Path $Path)) { return @() }
+    $raw = Get-Content $Path -Raw
     if ([string]::IsNullOrWhiteSpace($raw)) { return @() }
 
     $parsed = $null
     try { $parsed = $raw | ConvertFrom-Json } catch {
-        Write-Warn "issued-keys.json is not valid JSON; treating as empty."
+        Write-Warn "$(Split-Path $Path -Leaf) is not valid JSON; treating as empty."
         return @()
     }
 
@@ -207,15 +210,21 @@ function Get-IssuedKeys {
     return @($parsed)
 }
 
-function Save-IssuedKeys($Keys) {
+function Write-KeyRecords {
+    param([string]$Path, $Keys)
     Initialize-StateDir
     # -InputObject rather than the pipeline, so the array is not unrolled. PowerShell 5.1 still
     # emits a bare object for a single-element array, so force array form explicitly - the file
     # must always be a JSON array or the next read misinterprets it.
     $json = ConvertTo-Json -InputObject @($Keys) -Depth 6
     if ($json -notmatch '^\s*\[') { $json = "[$json]" }
-    Set-Content -Path $script:KeysPath -Value $json -Encoding UTF8
+    Set-Content -Path $Path -Value $json -Encoding UTF8
 }
+
+function Get-IssuedKeys { return (Read-KeyRecords $script:KeysPath) }
+function Save-IssuedKeys($Keys) { Write-KeyRecords $script:KeysPath $Keys }
+function Get-ArchivedKeys { return (Read-KeyRecords $script:ArchivePath) }
+function Save-ArchivedKeys($Keys) { Write-KeyRecords $script:ArchivePath $Keys }
 
 # Dates in issued-keys.json are round-trip strings. Parse them culture-invariantly and never
 # throw: one malformed record must not take out the whole listing.
@@ -486,8 +495,17 @@ function Invoke-Deploy {
 
 function Show-Keys {
     Write-Head 'Issued keys'
+    $moved = Move-ExpiredKeysToArchive
+    if ($moved -gt 0) { Write-Info "$moved expired key(s) moved to the archive." }
+    $archived = @(Get-ArchivedKeys).Count
+    $archiveNote = "$archived expired key(s) are kept in .gateway/issued-keys-archive.json and not listed."
+
     $keys = @(Get-IssuedKeys)
-    if ($keys.Count -eq 0) { Write-Info 'None issued yet.'; return }
+    if ($keys.Count -eq 0) {
+        Write-Info 'No current keys.'
+        if ($archived -gt 0) { Write-Info $archiveNote }
+        return
+    }
 
     $now = [DateTimeOffset]::UtcNow
     $tz = [TimeZoneInfo]::Local.StandardName
@@ -515,10 +533,15 @@ function Show-Keys {
         Write-Host ("    {0,-16} {1,-12} {2,-12} {3,-18} {4}" -f `
             (Coalesce $k.subject '?'), (Coalesce $k.models '?'), ('{0:N0}' -f $budget), $expText, $state) -ForegroundColor $colour
     }
+    if ($archived -gt 0) { Write-Info $archiveNote }
 }
 
 function Revoke-Key {
     Write-Head 'Revoke a key'
+    # Archive first, so an expired key is not offered for revocation. The denylist pushed below
+    # is rebuilt from the current keys only: an archived key is more than ten minutes past its
+    # expiry, beyond the gateway's 60-second clock skew, so `exp` refuses it without the list.
+    [void](Move-ExpiredKeysToArchive)
     $keys = @(Get-IssuedKeys)
     $active = @($keys | Where-Object { -not $_.revoked })
     if ($active.Count -eq 0) { Write-Info 'No active keys.'; return }

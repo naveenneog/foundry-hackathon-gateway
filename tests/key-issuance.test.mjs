@@ -44,7 +44,7 @@ const CUSTOM = { type: "Proxy", hostName: "ai.contoso.invalid", certificateSourc
  * Run a scenario. `apim` is what `az apim show` returns (null = the call fails); `answers` feed
  * Read-Default in order ('<default>' takes the prompt's default).
  */
-const run = ({ state = BASE_STATE, apim = { name: "apim-x", hostnameConfigurations: [BUILT_IN] }, answers = [], call }) => {
+const run = ({ state = BASE_STATE, apim = { name: "apim-x", hostnameConfigurations: [BUILT_IN] }, answers = [], keys = null, archive = null, call }) => {
   const dir = mkdtempSync(join(tmpdir(), "fhg-keys-"));
   scratch.push(dir);
   const script = `
@@ -57,7 +57,7 @@ $script:HandoutsDir = ${q(join(dir, "handouts"))}
 
 # The console's own state helpers, taken from admin.ps1 rather than rewritten here.
 $ast = [System.Management.Automation.Language.Parser]::ParseFile(${q(join(root, "admin.ps1"))}, [ref]$null, [ref]$null)
-$want = 'Coalesce', 'ConvertTo-Dto', 'Initialize-StateDir', 'Get-IssuedKeys', 'Save-IssuedKeys', 'Get-ArchivedKeys', 'Save-ArchivedKeys', 'Read-KeyRecords', 'Write-KeyRecords'
+$want = 'Coalesce', 'ConvertTo-Dto', 'Initialize-StateDir', 'Get-IssuedKeys', 'Save-IssuedKeys', 'Get-ArchivedKeys', 'Save-ArchivedKeys', 'Read-KeyRecords', 'Write-KeyRecords', 'Show-Keys', 'Revoke-Key'
 foreach ($f in $ast.FindAll({ $args[0] -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true)) {
     if ($want -contains $f.Name) { . ([scriptblock]::Create($f.Extent.Text)) }
 }
@@ -100,6 +100,10 @@ function az {
     throw "unexpected az call: $line"
 }
 function Set-GatewayNamedValue { param($Id, $Value, $State) Write-Host "NAMED-VALUE $Id=$Value"; return $true }
+
+New-Item -ItemType Directory -Force -Path $script:StateDir | Out-Null
+${keys === null ? "" : `Set-Content -Path $script:KeysPath -Value ${q(JSON.stringify(keys))} -Encoding UTF8`}
+${archive === null ? "" : `Set-Content -Path $script:ArchivePath -Value ${q(JSON.stringify(archive))} -Encoding UTF8`}
 
 ${call}
 "SECRET-FOR-TEST $global:Secret"
@@ -184,5 +188,95 @@ describe("participant base URLs use the gateway's custom domain when it has one"
     const r = run({ answers: ["not a host!"], call: "\"HOST [$(Read-ParticipantHost -State (Get-State))]\"" });
     assert.equal(r.status, 0, r.stderr || r.stdout);
     assert.match(r.stdout, /HOST \[apim-x\.azure-api\.net\]/);
+  });
+});
+
+// Records as New-Key writes them: dates in the 'u' format.
+const when = (offsetMs) => new Date(Date.now() + offsetMs).toISOString().replace("T", " ").replace(/\.\d{3}Z$/, "Z");
+const HOUR = 3600_000;
+const key = (jti, subject, expiresAt, revoked = false) => ({
+  jti, subject, label: "", models: "flash", budget: 1000,
+  notBefore: when(-48 * HOUR), expiresAt, issuedAt: when(-48 * HOUR), revoked,
+});
+const LISTS = "\"ISSUED $((@(Get-IssuedKeys) | ForEach-Object { $_.jti }) -join ',')\"; \"ARCHIVED $((@(Get-ArchivedKeys) | ForEach-Object { $_.jti }) -join ',')\"";
+
+describe("expired keys move to an archive and stop showing", () => {
+  test("the key list shows current keys; keys long expired move to the archive", () => {
+    const r = run({
+      keys: [
+        key("k-active", "p-active", when(2 * HOUR)),
+        key("k-recent", "p-recent", when(-2 * 60_000)),
+        key("k-old", "p-old", when(-48 * HOUR)),
+        key("k-oldrev", "p-oldrev", when(-24 * HOUR), true),
+        key("k-bad", "p-bad", "soon"),
+      ],
+      call: `Show-Keys; ${LISTS}`,
+    });
+    assert.equal(r.status, 0, r.stderr || r.stdout);
+    const listing = r.stdout.slice(0, r.stdout.indexOf("ISSUED "));
+    assert.doesNotMatch(listing, /p-old\b|p-oldrev/, "a long-expired key is still listed");
+    // Still listed: current, inside the grace period (the gateway allows 60 s of clock skew, so
+    // a key is archived only once it is clearly past it), and one whose date cannot be read.
+    for (const p of ["p-active", "p-recent", "p-bad"]) assert.match(listing, new RegExp(p));
+    assert.match(listing, /2 expired key\(s\) moved to the archive/);
+    assert.match(r.stdout, /ISSUED k-active,k-recent,k-bad/);
+    assert.match(r.stdout, /ARCHIVED k-old,k-oldrev/);
+  });
+
+  test("archiving again does not duplicate a key already in the archive", () => {
+    const r = run({
+      keys: [key("k-old", "p-old", when(-48 * HOUR)), key("k-old2", "p-old2", when(-48 * HOUR))],
+      archive: [key("k-old", "p-old", when(-48 * HOUR))],
+      call: `[void](Move-ExpiredKeysToArchive); [void](Move-ExpiredKeysToArchive); ${LISTS}`,
+    });
+    assert.equal(r.status, 0, r.stderr || r.stdout);
+    assert.match(r.stdout, /ISSUED \r?\n/);
+    assert.match(r.stdout, /ARCHIVED k-old,k-old2\r?\n/);
+  });
+
+  test("an id used only by an archived key still warns that counters are shared", () => {
+    // Budget, rate limit and quota are keyed on the subject, so an expired key's spend can
+    // count against a new key with the same id. Archiving must not hide that.
+    const r = run({
+      archive: [key("k-old", "team-old", when(-48 * HOUR))],
+      answers: ["n"],
+      call: "\"FREE $(Test-SubjectFree 'team-old')\"; \"NEW $(Test-SubjectFree 'team-new')\"",
+    });
+    assert.equal(r.status, 0, r.stderr || r.stdout);
+    assert.match(r.stdout, /FREE False/);
+    assert.match(r.stdout, /NEW True/);
+    assert.match(r.stdout, /expired/);
+  });
+
+  test("bulk issuance sees ids used by archived keys", () => {
+    // 1 = numbered teams, 2 keys, prefix 'team', then 2 = cancel at the clash prompt.
+    const r = run({
+      archive: [key("k-old", "team-01", when(-48 * HOUR))],
+      answers: ["1", "2", "team", "2"],
+      call: "New-BulkKeys",
+    });
+    assert.equal(r.status, 0, r.stderr || r.stdout);
+    assert.match(r.stdout, /team-01/);
+    assert.match(r.stdout, /Cancelled/);
+  });
+
+  test("a revocation push keeps unexpired revocations and drops archived ones", () => {
+    // Revoke-Key rebuilds the denylist from the current keys. An archived key is past its
+    // expiry by more than the gateway's clock skew, so `exp` refuses it on its own.
+    const r = run({
+      keys: [
+        key("k1", "p1", when(1 * HOUR), true),
+        key("k2", "p2", when(2 * HOUR)),
+        key("k3", "p3", when(-48 * HOUR), true),
+      ],
+      answers: ["1"],
+      call: "Revoke-Key",
+    });
+    assert.equal(r.status, 0, r.stderr || r.stdout);
+    const line = r.stdout.split(/\r?\n/).find((l) => l.startsWith("NAMED-VALUE revoked-keys="));
+    assert.ok(line, `no denylist was pushed:\n${r.stdout}`);
+    assert.match(line, /,k1,/);
+    assert.match(line, /,k2,/);
+    assert.doesNotMatch(line, /k3/);
   });
 });

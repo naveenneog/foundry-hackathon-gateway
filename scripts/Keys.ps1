@@ -8,7 +8,8 @@
 
     Keys are signed JWTs minted by scripts/mint.mjs. The token itself is NEVER persisted in
     issued-keys.json - only metadata, so a leaked state file cannot be used to call the gateway.
-    The token exists in exactly one place: the participant's handout.
+    The token is written only where it is handed out: the participant's handout and, for a bulk
+    batch, that batch's keys.csv - all readable only by the operator (ADR-0012).
 
     Not standalone - run ./admin.ps1.
 #>
@@ -267,7 +268,8 @@ function New-BulkKeys {
 
     Write-Head 'Issue keys in bulk'
     Write-Info 'Tokens are NOT printed in bulk mode - a terminal scrollback full of live keys'
-    Write-Info 'is a credential leak. Each key is written to its own handout folder instead.'
+    Write-Info 'is a credential leak. They are written to each participant''s handout folder and'
+    Write-Info 'to keys.csv for the batch, all readable only by you.'
     Write-Host ''
     Write-Host '    [1] Generate N numbered teams  (team-01, team-02, ...)'
     Write-Host '    [2] Read names from a file     (one participant or team per line)'
@@ -330,7 +332,11 @@ function New-BulkKeys {
     $issued = 0
     $failed = 0
     $index  = @()
+    $rows   = @()
     $bulkSplit = Split-ModelsByRoute -State $state -Models $cfg.models
+    $claudeUrl = if ($bulkSplit.claude.Count -gt 0 -and $urls.claude) { $urls.claude } else { '' }
+    $fromUtc   = ([DateTimeOffset]::FromUnixTimeMilliseconds($cfg.notBefore)).UtcDateTime.ToString('yyyy-MM-dd HH:mm')
+    $untilUtc  = ([DateTimeOffset]::FromUnixTimeMilliseconds($cfg.expiresAt)).UtcDateTime.ToString('yyyy-MM-dd HH:mm')
 
     foreach ($subject in $subjects) {
         $result = New-Key -Secret $secret -Subject $subject -Label '' -Models $cfg.models `
@@ -343,24 +349,52 @@ function New-BulkKeys {
                       -Root $batch
         $issued++
         $index += [pscustomobject]@{
-            subject = $subject
+            subject = ConvertTo-CsvSafe $subject
             keyId   = $result.jti
-            models  = ($cfg.models -join ' ')
+            models  = ConvertTo-CsvSafe ($cfg.models -join ' ')
             budget  = $cfg.budget
-            folder  = "handouts/batch-$stamp/$subject"
+            folder  = ConvertTo-CsvSafe "handouts/batch-$stamp/$subject"
+        }
+        # One row per participant: everything their handout says, for a mail merge or a
+        # print run. Columns a key does not use are left empty.
+        $rows += [pscustomobject]@{
+            participant        = ConvertTo-CsvSafe $subject
+            key                = $result.token
+            key_id             = $result.jti
+            models             = ConvertTo-CsvSafe ($cfg.models -join ' ')
+            openai_base_url    = if ($bulkSplit.openai.Count -gt 0) { $baseUrl } else { '' }
+            anthropic_base_url = $claudeUrl
+            anthropic_model    = if ($claudeUrl) { ConvertTo-CsvSafe (@($bulkSplit.claude)[0]) } else { '' }
+            budget_tokens      = $cfg.budget
+            valid_from_utc     = $fromUtc
+            valid_until_utc    = $untilUtc
         }
         Write-Host ("    {0,-18} {1}" -f $subject, $result.jti) -ForegroundColor DarkGray
     }
 
-    # An index WITHOUT tokens, so an organiser can track distribution without holding every
-    # credential in one file.
+    # The index has no tokens, so it can go to co-organisers who should not hold credentials.
     $index | Export-Csv -Path (Join-Path $batch 'index.csv') -NoTypeInformation -Encoding UTF8
+    if ($rows.Count -gt 0) {
+        Write-ProtectedFile -Path (Join-Path $batch 'keys.csv') -Value (($rows | ConvertTo-Csv -NoTypeInformation) -join [Environment]::NewLine)
+    }
 
     Write-Host ''
     Write-Ok "$issued key(s) issued to handouts/batch-$stamp/"
     if ($failed -gt 0) { Write-Err "$failed failed." }
-    Write-Info 'index.csv lists who got what. It deliberately contains no tokens -'
-    Write-Info 'each token is only in that participant''s own README.md.'
+    Write-Info 'keys.csv    one row per participant: key, base URLs, model, budget, validity (UTC).'
+    Write-Info '            It holds every key in this batch and only you can read it.'
+    Write-Info 'index.csv   who got which key id, without the keys.'
+}
+
+function ConvertTo-CsvSafe {
+    <#
+        A cell value a spreadsheet will not run as a formula. Excel and Sheets evaluate a cell
+        starting with = + - @ (and tab or carriage return), so such a value gets a leading
+        apostrophe (OWASP, CSV injection). The display changes; the key does not.
+    #>
+    param([string]$Value)
+    if ($Value -match '^[=+\-@\t\r]') { return "'" + $Value }
+    return $Value
 }
 
 # ------------------------------------------------------------------------------------------
@@ -504,7 +538,7 @@ function Write-Handout {
                 ANTHROPIC_MODEL      = @($claudeAliases)[0]
             }
         }
-        $claudeSettings | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $claudeDir 'settings.json') -Encoding UTF8
+        Write-ProtectedFile -Path (Join-Path $claudeDir 'settings.json') -Value ($claudeSettings | ConvertTo-Json -Depth 5)
     }
 
     $expDto  = [DateTimeOffset]::FromUnixTimeMilliseconds($ExpiresAt)
@@ -651,5 +685,6 @@ Every response carries headers:
 
 Only the 429 is retryable. Everything else is final, and your agent will stop rather than spin.
 "@
-    $card | Set-Content (Join-Path $dir 'README.md') -Encoding UTF8
+    # The card holds the key in clear, so it is readable only by the operator who wrote it.
+    Write-ProtectedFile -Path (Join-Path $dir 'README.md') -Value $card
 }

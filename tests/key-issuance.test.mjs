@@ -1,10 +1,11 @@
 import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, existsSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync, existsSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { verifyKey } from "../src/keys.mjs";
 
 /**
  * Key issuance as the operator runs it: scripts/Keys.ps1, scripts/Apim.ps1 and the state
@@ -44,9 +45,12 @@ const CUSTOM = { type: "Proxy", hostName: "ai.contoso.invalid", certificateSourc
  * Run a scenario. `apim` is what `az apim show` returns (null = the call fails); `answers` feed
  * Read-Default in order ('<default>' takes the prompt's default).
  */
-const run = ({ state = BASE_STATE, apim = { name: "apim-x", hostnameConfigurations: [BUILT_IN] }, answers = [], keys = null, archive = null, call }) => {
+const run = ({ state = BASE_STATE, apim = { name: "apim-x", hostnameConfigurations: [BUILT_IN] }, answers = [], keys = null, archive = null, files = {}, call }) => {
   const dir = mkdtempSync(join(tmpdir(), "fhg-keys-"));
   scratch.push(dir);
+  for (const [name, text] of Object.entries(files)) writeFileSync(join(dir, name), text);
+  // '<DIR>' in an answer stands for the scratch directory, for prompts that take a path.
+  answers = answers.map((a) => a.replace("<DIR>", dir));
   const script = `
 $ErrorActionPreference = 'Stop'
 $script:Root        = ${q(root)}
@@ -278,5 +282,115 @@ describe("expired keys move to an archive and stop showing", () => {
     assert.match(line, /,k1,/);
     assert.match(line, /,k2,/);
     assert.doesNotMatch(line, /k3/);
+  });
+});
+
+/** Parse the CSV PowerShell's ConvertTo-Csv writes: every field quoted, quotes doubled. */
+const parseCsv = (text) => {
+  const rows = [];
+  for (const line of text.replace(/^\uFEFF/, "").split(/\r?\n/).filter((l) => l !== "")) {
+    const cells = [];
+    let cur = "", quoted = false;
+    for (let i = 0; i < line.length; i++) {
+      const c = line[i];
+      if (quoted) {
+        if (c === '"' && line[i + 1] === '"') { cur += '"'; i++; }
+        else if (c === '"') quoted = false;
+        else cur += c;
+      } else if (c === '"') quoted = true;
+      else if (c === ",") { cells.push(cur); cur = ""; }
+      else cur += c;
+    }
+    cells.push(cur);
+    rows.push(cells);
+  }
+  const [head, ...body] = rows;
+  return body.map((r) => Object.fromEntries(head.map((h, i) => [h, r[i]])));
+};
+
+const batchOf = (dir) => {
+  const base = join(dir, "handouts");
+  const batch = readdirSync(base).find((d) => d.startsWith("batch-"));
+  assert.ok(batch, `no batch folder under ${base}`);
+  return join(base, batch);
+};
+
+/** True when only the file's owner can read it, judged the way each platform judges it. */
+const ownerOnly = (path) => {
+  if (process.platform !== "win32") return (statSync(path).mode & 0o077) === 0;
+  const r = spawnSync(pwsh, ["-NoProfile", "-NonInteractive", "-Command",
+    `$a = Get-Acl -LiteralPath ${q(path)}; $me = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+     "$($a.AreAccessRulesProtected) $(@($a.Access | Where-Object { $_.IdentityReference.Value -ne $me }).Count)"`], { encoding: "utf8" });
+  return r.stdout.trim() === "True 0";
+};
+
+const secretOf = (stdout) => stdout.match(/SECRET-FOR-TEST (\S+)/)[1];
+
+// Bulk answers: 1 = numbered teams, 3 keys, prefix 'team'; then key settings (all models, 48 h,
+// start now, 1000 tokens) and the hostname prompt.
+const BULK = ["1", "3", "team", "a", "48", "0", "1000", "<default>"];
+
+describe("bulk issuance writes the batch's keys to one CSV", () => {
+  test("keys.csv has a row per participant with a working key and its base URLs", () => {
+    const r = run({ apim: { name: "apim-x", hostnameConfigurations: [BUILT_IN, CUSTOM] }, answers: BULK, call: "New-BulkKeys" });
+    assert.equal(r.status, 0, r.stderr || r.stdout);
+    const csvPath = join(batchOf(r.dir), "keys.csv");
+    assert.ok(existsSync(csvPath), `keys.csv was not written:\n${r.stdout}`);
+
+    const rows = parseCsv(readFileSync(csvPath, "utf8"));
+    assert.deepEqual(rows.map((x) => x.participant), ["team-01", "team-02", "team-03"]);
+    const secret = secretOf(r.stdout);
+    for (const row of rows) {
+      // The key in the file is the one the gateway will accept for that participant.
+      const claims = verifyKey(row.key, secret);
+      assert.equal(claims.sub, row.participant);
+      assert.equal(row.key_id, claims.jti);
+      assert.equal(row.openai_base_url, "https://ai.contoso.invalid/v1");
+      assert.equal(row.anthropic_base_url, "https://ai.contoso.invalid/claude-hackgw");
+      assert.equal(row.anthropic_model, "sonnet-5");
+      assert.equal(row.models, "flash sonnet-5");
+      assert.equal(row.budget_tokens, "1000");
+      assert.match(row.valid_from_utc, /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
+      assert.match(row.valid_until_utc, /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
+    }
+  });
+
+  test("keys.csv and every handout file holding a token are readable only by their owner", () => {
+    const r = run({ answers: BULK, call: "New-BulkKeys" });
+    assert.equal(r.status, 0, r.stderr || r.stdout);
+    const batch = batchOf(r.dir);
+    const files = [
+      join(batch, "keys.csv"),
+      join(batch, "team-01", "README.md"),
+      join(batch, "team-01", ".claude", "settings.json"),
+    ];
+    for (const f of files) assert.ok(ownerOnly(f), `${f} is readable by others`);
+  });
+
+  test("a name a spreadsheet would run as a formula is neutralised in both CSVs", () => {
+    // OWASP CSV injection: a cell starting with = + - @ runs as a formula in Excel and Sheets.
+    // 2 = names from a file, then the key settings and the hostname prompt.
+    const r = run({
+      files: { "participants.txt": "=1+1\n@risk\nalice\n" },
+      answers: ["2", "<DIR>/participants.txt", "a", "48", "0", "1000", "<default>"],
+      call: "New-BulkKeys",
+    });
+    assert.equal(r.status, 0, r.stderr || r.stdout);
+    const batch = batchOf(r.dir);
+    for (const name of ["keys.csv", "index.csv"]) {
+      const rows = parseCsv(readFileSync(join(batch, name), "utf8"));
+      const names = rows.map((x) => x.participant ?? x.subject);
+      assert.deepEqual(names, ["'=1+1", "'@risk", "alice"], `${name} carries a live formula: ${names.join(" | ")}`);
+    }
+    // Only the display is guarded: the key still names the participant as given.
+    const keyRow = parseCsv(readFileSync(join(batch, "keys.csv"), "utf8"))[0];
+    assert.equal(verifyKey(keyRow.key, secretOf(r.stdout)).sub, "=1+1");
+  });
+
+  test("index.csv still holds no tokens", () => {
+    const r = run({ answers: BULK, call: "New-BulkKeys" });
+    assert.equal(r.status, 0, r.stderr || r.stdout);
+    const index = readFileSync(join(batchOf(r.dir), "index.csv"), "utf8");
+    assert.doesNotMatch(index, /eyJ[A-Za-z0-9_-]+\./, "index.csv contains a token");
   });
 });

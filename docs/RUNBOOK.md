@@ -149,7 +149,30 @@ Option 5 also writes `handouts/<team>/` containing:
 | `opencode.json` | drop into a project, then run `opencode` |
 | `.claude/settings.json` | the three Claude Code variables, including for background agents |
 
-`handouts/` is gitignored because those files contain live keys.
+`handouts/` is gitignored because those files contain live keys. `README.md` and
+`settings.json` hold the key and are readable only by the operator who wrote them.
+
+**Base URL.** Issuance asks once for the hostname in participants' base URLs. The default is the
+gateway's custom domain when the instance has one (a gateway hostname in its custom domains), then
+a hostname typed here before (for a front door or application gateway the instance does not
+report), then the built-in `*.azure-api.net` name. Only the host changes; each route keeps its
+path.
+
+**A batch.** Option 6 writes one folder per participant under `handouts/batch-<time>/`, plus:
+
+| File | Contents |
+|---|---|
+| `keys.csv` | one row per participant: `participant`, `key`, `key_id`, `models`, `openai_base_url`, `anthropic_base_url`, `anthropic_model`, `budget_tokens`, `valid_from_utc`, `valid_until_utc`. Readable only by the operator ([ADR-0012](adr/0012-bulk-keys-in-one-csv.md)) |
+| `index.csv` | who got which key id, without the keys |
+
+A participant name that starts with `=`, `+`, `-` or `@` is written with a leading apostrophe in
+both files, so a spreadsheet does not run it as a formula; the key itself carries the name as
+given.
+
+**The key list.** Option 7 moves keys more than ten minutes past their expiry to
+`.gateway/issued-keys-archive.json` and lists the rest. An id used by an archived key still counts
+when a new key is issued: budget, rate limit and quota are keyed on the id, so an earlier key's
+spend can count against the new one.
 
 ---
 
@@ -236,6 +259,10 @@ U16).
 
 Revocation is the only control that needs an action. Expiry and the budget stop the key on their
 own.
+
+Option 8 archives expired keys first, so they are not offered for revocation, and the denylist it
+pushes holds the current keys' revocations only. An archived key is more than ten minutes past its
+expiry, beyond the gateway's 60-second clock skew, so its expiry refuses it without the list.
 
 ---
 

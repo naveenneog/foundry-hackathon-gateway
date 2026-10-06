@@ -88,3 +88,16 @@ function Protect-File {
         throw "Could not restrict '$full' to its owner: $($_.Exception.Message) It holds the signing secret, so this stops here."
     }
 }
+
+function Write-ProtectedFile {
+    <#
+        Write text to a file only its owner can read. The file is created empty and restricted
+        before anything is written, so the content never exists on disk with default
+        permissions. For anything holding a participant key.
+    #>
+    param([Parameter(Mandatory)][string]$Path, [AllowEmptyString()][string]$Value)
+    $ErrorActionPreference = 'Stop'
+    New-Item -ItemType File -Path $Path -Force | Out-Null
+    Protect-File -Path $Path
+    Set-Content -LiteralPath $Path -Value $Value -Encoding UTF8
+}

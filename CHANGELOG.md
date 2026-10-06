@@ -6,6 +6,17 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · [Semantic Ve
 ## [Unreleased]
 
 ### Added
+- **Participants' base URLs use the gateway's custom domain when it has one.** Key issuance asks
+  once for the hostname, defaulting to the instance's custom gateway domain, then to a hostname
+  typed before (for a front door the instance cannot report), then to `*.azure-api.net`. Each
+  route keeps its path. (P32)
+- **Expired keys move to an archive.** Option 7 lists keys that can still be used; keys more than
+  ten minutes past their expiry move to `.gateway/issued-keys-archive.json`. Archived ids still
+  count when a new key reuses one, because the budget counters are keyed on the id. (P33)
+- **Bulk issuance writes `keys.csv`.** One row per participant with the key, base URLs, model,
+  budget and validity, readable only by the operator; names a spreadsheet would run as formulas
+  are neutralised. The handout files holding a key are now owner-only as well. See
+  [ADR-0012](docs/adr/0012-bulk-keys-in-one-csv.md). (P34)
 - **Foundry behind a private endpoint, verified.** The README lists what an API Management
   instance needs to reach a Foundry account whose public access is disabled: Standard v2 or
   Premium v2, outbound VNet integration on a delegated subnet, and the three private DNS zones.

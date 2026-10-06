@@ -129,6 +129,16 @@ that are actually deployed in the subscription, and serve Claude models to Claud
       `403 Public access is disabled`. Documentation only (README, docs/PRIVATE-ENDPOINT.md,
       UNKNOWNS U23) plus the test template in `infra/examples/`.
 
+- [x] **P32** Participants' base URLs use the custom domain
+      *Acceptance:* with a custom gateway hostname on the instance, handouts and printed setup
+      lines use it by default for both routes, keeping each route's path.
+- [x] **P33** Expired keys move to an archive
+      *Acceptance:* option 7 lists keys that can still be used; archived ids still count for id
+      reuse; a revocation push keeps every unexpired revocation.
+- [x] **P34** Bulk keys in one CSV
+      *Acceptance:* option 6 writes an owner-only `keys.csv` whose keys verify against the
+      signing secret, with formula-safe names; handout files holding a key are owner-only.
+
 ## Milestone M6 — Only if this outlives one event
 
 - [ ] **P30** Revocation past the named-value size limit

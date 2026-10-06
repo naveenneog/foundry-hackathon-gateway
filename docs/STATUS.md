@@ -1,6 +1,24 @@
 # Status
 
-**Active packet:** none — P31 complete.
+**Active packet:** P32–P34 — custom domain in handouts, key archive, bulk CSV. In council.
+
+### P32–P34 — handouts and the key list — IN COUNCIL
+
+Three operator requests, each test-first against the real `Keys.ps1` / `Apim.ps1` with `az`
+stubbed (`tests/key-issuance.test.mjs`, 15 tests):
+
+- **P32 — custom domain.** Issuance asks once for the hostname in participants' base URLs and
+  defaults to the instance's custom gateway domain. No instance in the subscription has one, so
+  this is tested against a stubbed `az apim show`, not live.
+- **P33 — archive.** Option 7 moves keys more than ten minutes past expiry to
+  `issued-keys-archive.json`. Ten minutes because the gateway allows 60 s of clock skew on `exp`
+  and archived keys leave the denylist Revoke-Key pushes. Archived ids still count for id reuse:
+  the budget counters are keyed on `sub` (`policy.xml` counter keys). Checked against a copy of
+  this machine's real key records: both expired keys archived.
+- **P34 — bulk CSV.** `keys.csv` per batch, owner-only, every key verified against the signing
+  secret in the test, formula-safe names. The handout files holding a key are now owner-only
+  too — they were not, on macOS and Linux. Reverses a recorded choice:
+  [ADR-0012](adr/0012-bulk-keys-in-one-csv.md).
 
 ### P31 — Foundry behind a private endpoint — DONE (verified, documentation only)
 

@@ -141,6 +141,27 @@ that are actually deployed in the subscription, and serve Claude models to Claud
 
 ## Milestone M6 — Only if this outlives one event
 
+- [ ] **P36** An unreadable key list is not written over
+      *Acceptance:* with `issued-keys.json` present but unreadable (truncated, malformed or
+      empty), issuing a key and revoking a key stop with a message, and the file is left
+      unchanged.
+      *Why:* found while fixing the P32–P34 BLOCK, which was the same failure on the archive.
+      `Read-KeyRecords` reads an unreadable file as holding no keys (`admin.ps1:191-205`, since
+      `a100dba`), and `New-Key` then saves the new key over it (`scripts/Keys.ps1:61`). The next
+      revocation pushes a denylist rebuilt from that file (`admin.ps1:572-581`), so earlier
+      revocations drop off it and those keys work again until they expire. Option 1 is not
+      affected: it merges the live denylist with the file (`admin.ps1:439-452`).
+
+- [ ] **P35** Participant names cannot leave the handouts folder
+      *Acceptance:* a name containing a path separator or `..`, read from a participants file
+      or typed for one key, is refused or made safe before any key is minted, and no handout is
+      written outside the batch folder.
+      *Why:* found in the P32–P34 review. `New-BulkKeys` reads names with only a trim and a
+      comment filter (`scripts/Keys.ps1:287-291`), and `Write-Handout` joins the name onto the
+      folder path (`scripts/Keys.ps1:499`), so a line such as `../x` writes outside the batch
+      folder. The single-key prompt (`:185`) has no check either. Present since `0177eb3`. The
+      file is the operator's own, but participant lists are often exported from sign-up forms.
+
 - [ ] **P30** Revocation past the named-value size limit
       *Acceptance:* revoking a 216th key succeeds, and option 1 still deploys afterwards.
       *Why:* found in the P29 review. The revoked-key list is one named value of comma-separated

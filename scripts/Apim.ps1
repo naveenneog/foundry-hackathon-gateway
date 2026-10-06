@@ -461,10 +461,15 @@ function Get-GatewayCustomHost {
     if (-not $name -or -not $State.resourceGroup) { return $null }
 
     $inst = az apim show -n $name -g $State.resourceGroup -o json 2>$null | ConvertFrom-Json
-    if ($LASTEXITCODE -ne 0 -or -not $inst) { return $null }
+    if ($LASTEXITCODE -ne 0 -or -not $inst) {
+        Write-Warn "$name could not be read, so a custom domain, if it has one, is not offered."
+        return $null
+    }
 
+    # A wildcard hostname (*.contoso.com) is valid for the gateway but is not an address a
+    # participant can be given.
     $custom = @($inst.hostnameConfigurations | Where-Object {
-        $_.type -eq 'Proxy' -and $_.hostName -and ([string]$_.hostName) -notlike '*.azure-api.net'
+        $_.type -eq 'Proxy' -and $_.hostName -and ([string]$_.hostName) -notlike '*.azure-api.net' -and ([string]$_.hostName) -notmatch '\*'
     })
     if ($custom.Count -eq 0) { return $null }
     $pick = @($custom | Where-Object { $_.defaultSslBinding }) | Select-Object -First 1
@@ -515,7 +520,12 @@ function Read-ParticipantHost {
     # A pasted URL is accepted as well as a bare hostname.
     if ($answer -match '^[a-zA-Z][a-zA-Z0-9+.-]*://') {
         $u = $null
-        if ([uri]::TryCreate($answer, [System.UriKind]::Absolute, [ref]$u)) { $answer = $u.Host }
+        if ([uri]::TryCreate($answer, [System.UriKind]::Absolute, [ref]$u)) {
+            if (-not $u.IsDefaultPort) {
+                Write-Warn "The port in '$answer' is not kept: participants' base URLs use https on 443."
+            }
+            $answer = $u.Host
+        }
     }
     $answer = $answer.TrimEnd('/').ToLowerInvariant()
     if ($answer -notmatch '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$') {

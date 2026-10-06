@@ -61,7 +61,7 @@ $script:HandoutsDir = ${q(join(dir, "handouts"))}
 
 # The console's own state helpers, taken from admin.ps1 rather than rewritten here.
 $ast = [System.Management.Automation.Language.Parser]::ParseFile(${q(join(root, "admin.ps1"))}, [ref]$null, [ref]$null)
-$want = 'Coalesce', 'ConvertTo-Dto', 'Initialize-StateDir', 'Get-IssuedKeys', 'Save-IssuedKeys', 'Get-ArchivedKeys', 'Save-ArchivedKeys', 'Read-KeyRecords', 'Write-KeyRecords', 'Show-Keys', 'Revoke-Key'
+$want = 'Coalesce', 'ConvertTo-Dto', 'Initialize-StateDir', 'Get-IssuedKeys', 'Save-IssuedKeys', 'Get-ArchivedKeys', 'Save-ArchivedKeys', 'Read-KeyRecords', 'Write-KeyRecords', 'Test-KeyRecordsFile', 'Show-Keys', 'Revoke-Key'
 foreach ($f in $ast.FindAll({ $args[0] -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true)) {
     if ($want -contains $f.Name) { . ([scriptblock]::Create($f.Extent.Text)) }
 }
@@ -107,7 +107,9 @@ function Set-GatewayNamedValue { param($Id, $Value, $State) Write-Host "NAMED-VA
 
 New-Item -ItemType Directory -Force -Path $script:StateDir | Out-Null
 ${keys === null ? "" : `Set-Content -Path $script:KeysPath -Value ${q(JSON.stringify(keys))} -Encoding UTF8`}
-${archive === null ? "" : `Set-Content -Path $script:ArchivePath -Value ${q(JSON.stringify(archive))} -Encoding UTF8`}
+${archive === null ? "" : typeof archive === "string"
+    ? `Set-Content -Path $script:ArchivePath -Value ${q(archive)} -Encoding UTF8 -NoNewline`
+    : `Set-Content -Path $script:ArchivePath -Value ${q(JSON.stringify(archive))} -Encoding UTF8`}
 
 ${call}
 "SECRET-FOR-TEST $global:Secret"
@@ -170,10 +172,32 @@ describe("participant base URLs use the gateway's custom domain when it has one"
     assert.match(r.stdout, /HOST \[ai\.contoso\.invalid\]/);
   });
 
-  test("when the instance cannot be read, the built-in host is used", () => {
+  test("when the instance cannot be read, the built-in host is used, and the operator is told", () => {
+    // A failed read (expired login, wrong subscription) is not the same as "no custom domain".
     const r = run({ apim: null, answers: ["<default>"], call: "\"HOST [$(Read-ParticipantHost -State (Get-State))]\"" });
     assert.equal(r.status, 0, r.stderr || r.stdout);
     assert.match(r.stdout, /HOST \[apim-x\.azure-api\.net\]/);
+    assert.match(r.stdout, /\[!\] .*could not be read/i);
+  });
+
+  test("a wildcard custom domain is not offered: it is not a hostname a participant can use", () => {
+    // Wildcard gateway hostnames are valid in API Management; a base URL needs a concrete one.
+    const wildcard = { type: "Proxy", hostName: "*.contoso.invalid", defaultSslBinding: true };
+    const r = run({
+      apim: { name: "apim-x", hostnameConfigurations: [BUILT_IN, wildcard, { ...CUSTOM, defaultSslBinding: false }] },
+      call: "\"HOST [$(Get-GatewayCustomHost -State (Get-State))]\"",
+    });
+    assert.equal(r.status, 0, r.stderr || r.stdout);
+    assert.match(r.stdout, /HOST \[ai\.contoso\.invalid\]/);
+
+    const only = run({ apim: { name: "apim-x", hostnameConfigurations: [BUILT_IN, wildcard] }, call: "\"HOST [$(Get-GatewayCustomHost -State (Get-State))]\"" });
+    assert.match(only.stdout, /HOST \[\]/);
+  });
+
+  test("a pasted URL's port is not silently dropped", () => {
+    const r = run({ answers: ["https://gw.example.invalid:8443/"], call: "\"HOST [$(Read-ParticipantHost -State (Get-State))]\"" });
+    assert.equal(r.status, 0, r.stderr || r.stdout);
+    assert.match(r.stdout, /\[!\] .*8443/);
   });
 
   test("a hostname typed by the operator is used, accepted as a URL, and offered next time", () => {
@@ -262,6 +286,24 @@ describe("expired keys move to an archive and stop showing", () => {
     assert.equal(r.status, 0, r.stderr || r.stdout);
     assert.match(r.stdout, /team-01/);
     assert.match(r.stdout, /Cancelled/);
+  });
+
+  test("an archive that cannot be read is left alone, and nothing is archived over it", () => {
+    // Overwriting it would lose every archived id, and a reused id would then inherit that
+    // key's spend without a warning. A hand edit or an interrupted write leaves it like this.
+    // (A trailing comma is not one of these cases: ConvertFrom-Json accepts it, and the archive
+    // is read and kept.)
+    for (const broken of ['[{"jti":"k-a","subject":"team-0', '[{"jti":"k-a" "subject":"team-01"}]', ""]) {
+      const r = run({
+        keys: [key("k-old", "p-old", when(-48 * HOUR))],
+        archive: broken,
+        call: `Show-Keys; ${LISTS}; "RAW [$(Get-Content $script:ArchivePath -Raw)]"`,
+      });
+      assert.equal(r.status, 0, r.stderr || r.stdout);
+      assert.match(r.stdout, /ISSUED k-old/, `an expired key was moved over a broken archive (${JSON.stringify(broken)})`);
+      assert.ok(r.stdout.includes(`RAW [${broken}]`), `the broken archive was rewritten (${JSON.stringify(broken)})`);
+      assert.match(r.stdout, /\[!\] .*archive/i);
+    }
   });
 
   test("a revocation push keeps unexpired revocations and drops archived ones", () => {

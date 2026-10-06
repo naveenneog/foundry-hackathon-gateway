@@ -83,6 +83,14 @@ function Move-ExpiredKeysToArchive {
     $expired = @($keys | Where-Object { $e = ConvertTo-Dto $_.expiresAt; $null -ne $e -and $e -lt $cutoff })
     if ($expired.Count -eq 0) { return 0 }
 
+    # Saving over an archive that cannot be read would lose every id in it, and an id reused
+    # after that would inherit the old key's spend with no warning.
+    if (-not (Test-KeyRecordsFile $script:ArchivePath)) {
+        Write-Warn "The key archive ($(Split-Path $script:ArchivePath -Leaf)) cannot be read, so no keys were archived."
+        Write-Info 'Repair the file, or move it aside to start a new archive.'
+        return 0
+    }
+
     $archive = @(Get-ArchivedKeys)
     $known   = @($archive | ForEach-Object { [string]$_.jti })
     foreach ($k in $expired) {

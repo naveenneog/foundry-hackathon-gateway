@@ -1,11 +1,12 @@
 # Status
 
-**Active packet:** P32–P34 — custom domain in handouts, key archive, bulk CSV. In council.
+**Active packet:** none. P32–P34 are done; the open packets are P36, P35, P30 and P20 in the
+roadmap.
 
-### P32–P34 — handouts and the key list — IN COUNCIL
+### P32–P34 — handouts and the key list — DONE (`119d94b`, `222c109`, `b31ec20` + council fixes)
 
 Three operator requests, each test-first against the real `Keys.ps1` / `Apim.ps1` with `az`
-stubbed (`tests/key-issuance.test.mjs`, 15 tests):
+stubbed (`tests/key-issuance.test.mjs`, 18 tests):
 
 - **P32 — custom domain.** Issuance asks once for the hostname in participants' base URLs and
   defaults to the instance's custom gateway domain. No instance in the subscription has one, so
@@ -19,6 +20,28 @@ stubbed (`tests/key-issuance.test.mjs`, 15 tests):
   secret in the test, formula-safe names. The handout files holding a key are now owner-only
   too — they were not, on macOS and Linux. Reverses a recorded choice:
   [ADR-0012](adr/0012-bulk-keys-in-one-csv.md).
+
+**Council — P32–P34.** Architect, QA, UX and Security: PASS-WITH-NOTES. Coder: BLOCK, cleared.
+
+| Note | Fix |
+|---|---|
+| **BLOCK.** An archive that could not be read was treated as empty, and the next option 7 overwrote it with the newly expired keys. Every archived id was lost, and a reused id would then share that key's spend with no warning | Archiving stops with a warning when the archive exists but cannot be read, and the file is left unchanged. Tested with a truncated file, a missing comma and an empty file |
+| When `az apim show` failed (signed out, no access), issuance fell back to `*.azure-api.net` with no message | Same fallback, with a warning naming the instance |
+| A wildcard gateway hostname (`*.contoso.com`) could become the default base URL | Wildcard hostnames are not offered |
+| A pasted URL's port was dropped with no message | A warning names the port |
+| Nothing tested that `Write-ProtectedFile` restricts a file before writing to it, or that it tightens a file that already exists | One test checks the call order in the function's syntax tree; another loosens an existing file first and checks it ends owner-only (no other access rules on Windows, mode 600 elsewhere) |
+
+Each fix was mutation-checked: six mutants, one per fix, each applied to an otherwise unchanged
+tree. All six still parsed, and each failed its own test on the intended assertion; the
+unmutated control passed. Writing the archive test showed that `ConvertFrom-Json` accepts a
+trailing comma (`[{…},]` reads as one record), so such an archive is readable and is kept; the
+test uses inputs PowerShell rejects.
+
+Reviewer finding outside these packets, filed as P35: names read from a participants file go into
+the handout path unchanged (`Keys.ps1:287-291`, `:499`, both from `0177eb3`), so a line such as
+`../x` writes a handout outside the batch folder. Found while fixing the BLOCK and filed as P36:
+an unreadable `issued-keys.json` is also read as empty, and issuing a key writes over it; the
+next revocation then drops earlier revocations from the denylist. Both predate this batch.
 
 ### P31 — Foundry behind a private endpoint — DONE (verified, documentation only)
 

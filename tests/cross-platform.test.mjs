@@ -227,6 +227,38 @@ Protect-File -Path ${q(f)}
     assert.notEqual(r.status, 0, "a failed restriction exited 0");
   });
 
+  test("Write-ProtectedFile restricts the file before it writes anything into it", () => {
+    // Read from the syntax tree: written the other way round, the content would exist with
+    // default permissions until Protect-File ran, and every test of the final state would pass.
+    const r = spawnSync(pwsh, ["-NoProfile", "-NonInteractive", "-Command",
+      `$ast = [System.Management.Automation.Language.Parser]::ParseFile(${q(join(root, "scripts", "Platform.ps1"))}, [ref]$null, [ref]$null)
+       $fn = $ast.FindAll({ $args[0] -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $args[0].Name -eq 'Write-ProtectedFile' }, $true) | Select-Object -First 1
+       $calls = @($fn.FindAll({ $args[0] -is [System.Management.Automation.Language.CommandAst] }, $true) | ForEach-Object { "$($_.GetCommandName())@$($_.Extent.StartOffset)" })
+       $calls -join ' '`], { encoding: "utf8" });
+    assert.equal(r.status, 0, r.stderr);
+    const at = (name) => Number((r.stdout.match(new RegExp(`${name}@(\\d+)`)) || [])[1]);
+    assert.ok(at("Protect-File") > 0 && at("Set-Content") > 0, `calls not found: ${r.stdout}`);
+    assert.ok(at("Protect-File") < at("Set-Content"), "Write-ProtectedFile writes before it restricts");
+  });
+
+  test("Write-ProtectedFile leaves an existing, readable file owner-only with the new content", () => {
+    const f = join(dir, "existing.txt");
+    writeFileSync(f, "old content");
+    const p = q(f);
+    const loosen = isWindows
+      ? `$i = [System.IO.FileInfo]::new(${p}); $a = [System.IO.FileSystemAclExtensions]::GetAccessControl($i, 'Access')
+         $a.AddAccessRule([System.Security.AccessControl.FileSystemAccessRule]::new([System.Security.Principal.SecurityIdentifier]::new('S-1-1-0'), 'Read', 'Allow'))
+         [System.IO.FileSystemAclExtensions]::SetAccessControl($i, $a)`
+      : `& chmod 644 ${p}`;
+    const r = run(`${loosen}
+Write-ProtectedFile -Path ${p} -Value 'new content'
+if ($IsWindows) { $a = Get-Acl -LiteralPath ${p}; "OTHERS $(@($a.Access | Where-Object { $_.IdentityReference.Value -ne [System.Security.Principal.WindowsIdentity]::GetCurrent().Name }).Count) PROTECTED $($a.AreAccessRulesProtected)" }`);
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(readFileSync(f, "utf8").trim(), "new content");
+    if (isWindows) assert.match(r.stdout, /OTHERS 0 PROTECTED True/);
+    else assert.equal(statSync(f).mode & 0o777, 0o600);
+  });
+
   test("every write of the signing secret restricts the file first", () => {
     // Position-blind counting was the earlier version of this, which a move could satisfy
     // without protecting anything. These check the order that matters: the file is restricted

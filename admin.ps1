@@ -192,7 +192,11 @@ function Read-KeyRecords {
     param([string]$Path)
     if (-not (Test-Path $Path)) { return @() }
     $raw = Get-Content $Path -Raw
-    if ([string]::IsNullOrWhiteSpace($raw)) { return @() }
+    if ([string]::IsNullOrWhiteSpace($raw)) {
+        # Write-KeyRecords always writes at least "[]", so an empty file is an interrupted write.
+        Write-Warn "$(Split-Path $Path -Leaf) is empty; treating it as holding no keys."
+        return @()
+    }
 
     $parsed = $null
     try { $parsed = $raw | ConvertFrom-Json } catch {
@@ -225,6 +229,17 @@ function Get-IssuedKeys { return (Read-KeyRecords $script:KeysPath) }
 function Save-IssuedKeys($Keys) { Write-KeyRecords $script:KeysPath $Keys }
 function Get-ArchivedKeys { return (Read-KeyRecords $script:ArchivePath) }
 function Save-ArchivedKeys($Keys) { Write-KeyRecords $script:ArchivePath $Keys }
+
+# $true when the file is absent or parses as JSON; $false when it exists but is empty or
+# unreadable. Read-KeyRecords treats both as "no keys", which is safe for reading and unsafe
+# for writing back over the file.
+function Test-KeyRecordsFile {
+    param([string]$Path)
+    if (-not (Test-Path $Path)) { return $true }
+    $raw = Get-Content $Path -Raw
+    if ([string]::IsNullOrWhiteSpace($raw)) { return $false }
+    try { $null = $raw | ConvertFrom-Json; return $true } catch { return $false }
+}
 
 # Dates in issued-keys.json are round-trip strings. Parse them culture-invariantly and never
 # throw: one malformed record must not take out the whole listing.

@@ -156,7 +156,9 @@ Option 5 also writes `handouts/<team>/` containing:
 gateway's custom domain when the instance has one (a gateway hostname in its custom domains), then
 a hostname typed here before (for a front door or application gateway the instance does not
 report), then the built-in `*.azure-api.net` name. Only the host changes; each route keeps its
-path.
+path. A wildcard custom domain (`*.contoso.com`) is not offered, because it is not one address.
+A pasted URL is reduced to its host; a port other than 443 is reported, because participants'
+URLs use https on 443.
 
 **A batch.** Option 6 writes one folder per participant under `handouts/batch-<time>/`, plus:
 
@@ -165,14 +167,15 @@ path.
 | `keys.csv` | one row per participant: `participant`, `key`, `key_id`, `models`, `openai_base_url`, `anthropic_base_url`, `anthropic_model`, `budget_tokens`, `valid_from_utc`, `valid_until_utc`. Readable only by the operator ([ADR-0012](adr/0012-bulk-keys-in-one-csv.md)) |
 | `index.csv` | who got which key id, without the keys |
 
-A participant name that starts with `=`, `+`, `-` or `@` is written with a leading apostrophe in
-both files, so a spreadsheet does not run it as a formula; the key itself carries the name as
-given.
+A participant name that starts with `=`, `+`, `-`, `@`, a tab or a carriage return is written with
+a leading apostrophe in both files, so a spreadsheet does not run it as a formula; the key itself
+carries the name as given.
 
 **The key list.** Option 7 moves keys more than ten minutes past their expiry to
 `.gateway/issued-keys-archive.json` and lists the rest. An id used by an archived key still counts
 when a new key is issued: budget, rate limit and quota are keyed on the id, so an earlier key's
-spend can count against the new one.
+spend can count against the new one. When the archive file exists but cannot be read, nothing
+is moved and option 7 reports it; the file is left as it is.
 
 ---
 

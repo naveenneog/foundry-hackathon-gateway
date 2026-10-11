@@ -145,7 +145,7 @@ Branch `poc/apim-products-keyvault` only. Explores the alternative to ADR-0002 f
 live for months: one APIM product per model pack, one subscription key per user, keys held in
 Key Vault. Nothing here changes the gateway on `main`.
 
-- [ ] **P37** Products and Key Vault on Standard v2, measured
+- [x] **P37** Products and Key Vault on Standard v2, measured
       *Acceptance:* on the Standard v2 test instance, with `poc-` resources only:
       a product key calls its pack's models and is refused others; a monthly per-key budget
       returns 403 when spent and reports what remains; the all-access key is refused; a key
@@ -153,6 +153,9 @@ Key Vault. Nothing here changes the gateway on `main`.
       from Key Vault; suspension and regeneration reach the gateway in a measured time; and
       UNKNOWNS U24–U28 are closed by measurement.
       *Why:* asked 2026-10-11, after the comparison of products, Key Vault and HashiCorp Vault.
+      *Verified 2026-10-11:* run `10111606`, 22 of 22 checks, from a VM inside the virtual
+      network because the vault's public access was turned off outside this project. Results
+      and the six findings: `poc/products-keyvault/README.md`.
 
 ## Milestone M6 — Only if this outlives one event
 

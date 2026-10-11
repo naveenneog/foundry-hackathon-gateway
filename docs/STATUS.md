@@ -1,15 +1,32 @@
 # Status
 
 **Active packet:** P37 — products and Key Vault on Standard v2, a proof of concept on branch
-`poc/apim-products-keyvault`. Acceptance criteria are in the roadmap (M7). Open unknowns:
-U24–U28.
+`poc/apim-products-keyvault`. Measured; in council. U24–U28 are closed.
 
-### P37 — products and Key Vault on Standard v2 — IN PROGRESS
+### P37 — products and Key Vault on Standard v2 — MEASURED, IN COUNCIL
 
 Work lives in `poc/products-keyvault/` and runs against the Standard v2 test instance in
 `rg-hackgw-pe-test` (Foundry reachable only through a private endpoint, UNKNOWNS U23). Every
 resource it creates is named `poc-`; the instance's `deepseek-gateway` and `claude-gateway`
 APIs are not changed.
+
+Run `10111606` passed 22 of 22 checks (results table in the POC README). Three earlier runs
+changed the method rather than the design:
+
+- **Expiry.** API Management refuses an expiry already past and keeps only the date, so the
+  test lets a stored date pass instead of setting one in the past. A suspended key has to be
+  reactivated before it can be renewed.
+- **One check is not enough.** The gateway's nodes learn about a key change at different times,
+  so every time is now "five checks in a row".
+- **U28.** The remaining-budget header lags. U28 is decided by whether a spent key, once
+  rotated, is still refused for quota, not by comparing header values.
+
+The vault's public network access was turned off by an identity outside this project about ten
+minutes after it was created. That was left in place: `runner.bicep` adds a private endpoint and
+a VM inside the virtual network, and the measurements ran there.
+
+Offline: 19 tests in `tests/poc-products-keyvault.test.mjs`, written first. Mutations caught:
+6 of 6 on the policies and key scripts, and 2 of 2 on the runner template.
 
 ### P32–P34 — handouts and the key list — DONE (`119d94b`, `222c109`, `b31ec20` + council fixes)
 

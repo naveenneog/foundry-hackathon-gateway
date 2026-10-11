@@ -1,0 +1,8 @@
+{
+  "apiKeyHelper": "az keyvault secret show --vault-name <vault-name> --name poc-key-<name> --query value -o tsv",
+  "env": {
+    "ANTHROPIC_BASE_URL": "https://<apim-name>.azure-api.net/poc/claude",
+    "ANTHROPIC_MODEL": "claude-haiku-4-5",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-haiku-4-5"
+  }
+}

@@ -6,6 +6,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · [Semantic Ve
 ## [Unreleased]
 
 ### Added
+- **Proof of concept, branch `poc/apim-products-keyvault` only: long-lived keys on API
+  Management products, with the keys in Key Vault.** One product per model pack, one
+  subscription key per user, a monthly token budget per key and per product, two-key rotation
+  through Key Vault, and a job that suspends expired keys. Measured on Standard v2: 22 of 22
+  checks, including a Claude Code session that kept working across two key rotations with
+  `apiKeyHelper` reading Key Vault. Budgets are reconciled across gateway nodes after the fact,
+  so a small budget was overshot by about one budget per node. See
+  `poc/products-keyvault/README.md`. (P37)
 - **Participants' base URLs use the gateway's custom domain when it has one.** Key issuance asks
   once for the hostname, defaulting to the instance's custom gateway domain, then to a hostname
   typed before (for a front door the instance cannot report), then to `*.azure-api.net`. Each

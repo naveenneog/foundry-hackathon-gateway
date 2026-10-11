@@ -1,0 +1,145 @@
+# Long-lived keys on API Management products, with Key Vault (proof of concept)
+
+Roadmap packet P37. Branch `poc/apim-products-keyvault` only; the gateway on `main` (signed
+JWT keys, [ADR-0002](../../docs/adr/0002-credential-transport.md)) is unchanged.
+
+The question: can API Management's own products and subscription keys give users keys that last
+for months, with a token budget per key, rotated through Key Vault without breaking the clients
+that hold them? Measured on Standard v2 on 2026-10-11. The final run passed 22 of 22 checks.
+
+## Design
+
+| Part | What it does | File |
+|---|---|---|
+| Product per model pack | Allows the pack's models only (`403 model_not_allowed` otherwise). Applies a monthly token budget per key, counted on the subscription, and a monthly pool per product | [`infra/product-policy.xml`](infra/product-policy.xml) |
+| Routes | Claude (`/poc/claude`, key in `x-api-key`) and OpenAI-compatible (`/poc/v1`, key in `api-key`). Each runs the product policy first, refuses a key that has no product, calls Foundry with the gateway's managed identity and removes the key header before Foundry | [`infra/api-claude-policy.xml`](infra/api-claude-policy.xml), [`infra/api-openai-policy.xml`](infra/api-openai-policy.xml) |
+| Probe | `/poc/probe/whoami` returns what the gateway knows about the calling key, without a backend call and without the key | [`infra/api-probe-policy.xml`](infra/api-probe-policy.xml) |
+| Key Vault | One secret per key, `poc-key-<name>`, tagged with its subscription and slot. Azure RBAC, audit log to Log Analytics | [`infra/poc.bicep`](infra/poc.bicep) |
+| Keys | Issue, rotate and expire keys. Keys move between API Management and Key Vault in memory, never printed or written to disk | [`scripts/PocKeys.ps1`](scripts/PocKeys.ps1), [`scripts/Invoke-PocKey.ps1`](scripts/Invoke-PocKey.ps1) |
+| Runner | A VM inside the virtual network, for a vault that accepts only private traffic (see finding 5) | [`infra/runner.bicep`](infra/runner.bicep), [`scripts/Invoke-PocRunner.ps1`](scripts/Invoke-PocRunner.ps1) |
+| Claude Code | `apiKeyHelper` reads the current key from Key Vault | [`claude-code/`](claude-code/) |
+
+```
+request   client --key--> API Management (Standard v2)
+            product policy: model in the pack? -> per-key monthly budget -> product pool
+            route policy:   key issued on a product? -> managed identity -> Foundry (private endpoint)
+
+rotation  job: regenerate the slot clients do not hold -> list keys -> store as the secret's next version
+          client (apiKeyHelper): read the latest version; the key it held works until the next rotation
+```
+
+## Results
+
+Standard v2 test instance from [UNKNOWNS U23](../../docs/UNKNOWNS.md), with Foundry reachable
+only through a private endpoint, using models `claude-haiku-4-5` and `deepseek-v4-flash`. Times
+are until the gateway answered the same way five times in a row, checked once a second (run
+`10111606`, unless noted).
+
+| Check | Result |
+|---|---|
+| Claude-pack key, its model | 200, `x-budget-remaining` 199984 |
+| Claude-pack key, another model | 403 `model_not_allowed` (Anthropic error shape) |
+| Claude-pack key on the OpenAI route | 401 |
+| DeepSeek-pack key, its model / a Claude model | 200 / 403 `model_not_allowed` (OpenAI error shape) |
+| No key | 401 |
+| All-access key, all-APIs key, key scoped to one API | 403 `product_required`; the probe shows `product: null` for the all-access key (U26) |
+| 300-token monthly budget | 403 *"Token quota is exceeded. Try again in 20 days…"* after 7 calls and 588 real tokens. Runs `10111520` and `10111549`: 9 calls, 756 tokens |
+| Budget across a rotation | rotated key refused for quota on 4 of 5 calls (U28) |
+| New key accepted | 2.2 s |
+| Rotation | new key accepted at 8.3 s; the key clients held still accepted on 5 of 5 checks |
+| Regenerated key refused | 8.2 s |
+| Suspended key refused / reactivated key accepted | 6.2 s / 6.2 s |
+| Expiry | not enforced by the gateway; stored as a date only; `context.Subscription.EndDate` stays empty (U24) |
+| Claude Code, key from Key Vault | answered |
+| Claude Code session across two rotations | finished; its key was refused 7.2 s after the rotations began and the helper ran a second time (U27) |
+| New Claude Code session after the rotations | answered with the settings unchanged |
+| Vault audit log | `SecretGet` 31 and `SecretSet` 23 by the runner's managed identity, over the private network; attempts over the public network logged as `Forbidden` |
+
+## What the runs showed
+
+1. **Budgets are counted per gateway node, then reconciled.** On the 300-token budget the
+   remaining-budget header read 216, 216, 132, 132, 48, 48, 0 against 84, 168, 252, 336, 420,
+   504, 588 real tokens. That pattern fits two nodes each counting their own share. The first
+   403 came after about twice the budget, and the next call could still pass; refusals held
+   from 7 s. The policy reference says counts are kept "independently at each gateway"
+   ([llm-token-limit](https://learn.microsoft.com/azure/api-management/llm-token-limit-policy)).
+   It does not mention nodes within one gateway. The overshoot is about one budget per node,
+   which is large against a small budget and small against a monthly one of 200,000 tokens.
+2. **Key changes reach the nodes at different times.** A single check misled: a new key was
+   accepted and then refused on the next call, and a regenerated key was refused and then
+   accepted again. Agreement on all checks came within 2–9 s (U25).
+3. **Keys without a product skip product policies, budgets included.** The route policy's
+   `context.Product == null` check closes that path (U26). Any API added to a product without
+   `<base />` first in its inbound section also skips the product's policies; the probe does
+   this on purpose.
+4. **Expiry is a job's work.** API Management stores only the date, refuses a date already past,
+   refuses a new expiry on a suspended key (*"Only 'active' subscriptions can be renewed"*), and
+   keeps accepting a key whose date has passed. `Suspend-ExpiredPocKeys` suspends keys from
+   00:00 UTC on their stored date (U24).
+5. **The vault had to be reached privately.** About ten minutes after the vault was created, an
+   identity outside this project turned off its public network access. That setting was left as
+   it is. The scripts and Claude Code ran on a VM inside the virtual network, reaching the vault
+   through a private endpoint. A client outside the network, such as a laptop, needs a private
+   route to the vault in such a subscription.
+6. **Anyone who can list a subscription's keys can read every key.** The action is
+   `Microsoft.ApiManagement/service/subscriptions/listSecrets/action`, which API Management
+   Service Contributor holds and the Reader and Operator roles do not
+   ([permissions](https://learn.microsoft.com/azure/role-based-access-control/permissions/integration),
+   [built-in roles](https://learn.microsoft.com/azure/role-based-access-control/built-in-roles/integration)).
+   The runner was given Contributor on the instance for this proof of concept. A custom role with
+   only the subscription actions it calls is narrower.
+
+## Running it
+
+PowerShell 7 and the Azure CLI. `$t` names the target; every command passes the subscription
+explicitly, and the CLI's default subscription is not changed.
+
+```powershell
+$t = @{ Subscription = '<subscription>'; ResourceGroup = '<rg>'; ApimName = '<v2 instance>' }
+
+# Routes, products, vault, operator role (prints the vault name)
+./scripts/Deploy-Poc.ps1 @t -FoundryAccountName <account> -AuditWorkspaceName <workspace>
+$t.VaultName = '<vault>'
+
+# Keys, from a machine that can reach the vault
+./scripts/Invoke-PocKey.ps1 @t -Action New -Name alice -Product poc-claude-pack
+./scripts/Invoke-PocKey.ps1 @t -Action Rotate -Name alice
+./scripts/Invoke-PocKey.ps1 @t -Action SetExpiry -Name alice -ExpiresUtc 2027-01-31
+./scripts/Invoke-PocKey.ps1 @t -Action SuspendExpired
+
+# When the vault accepts only private traffic: the runner, then the measurement run
+./scripts/Invoke-PocRunner.ps1 @t -Step Deploy      # also Setup, Push, Test, Fetch -From 1
+./scripts/Test-Poc.ps1 @t                           # on a machine that can reach the vault
+```
+
+Claude Code: [`claude-code/settings.example.json`](claude-code/settings.example.json) uses
+`az keyvault secret show` as the helper; on the runner it returned the 32-character key in
+0.8 s. [`claude-code/Get-PocKey.ps1`](claude-code/Get-PocKey.ps1) is the helper the measurement
+run used, because it records each call and the session check counts them.
+
+## Removing it
+
+```powershell
+./scripts/Remove-Poc.ps1 @t -Runner -PurgeVault
+```
+
+This deletes the products with their keys, the routes, any leftover `poc-` keys, the runner (VM,
+role assignments, subnet, NAT gateway, public IP, NSG, private endpoint, DNS zone) and the vault.
+
+## Cost while deployed
+
+The instance itself is not created here. The runner's VM is $0.0416 an hour (Standard_B2s, Linux)
+and the NAT gateway's static IP $0.005 an hour (Azure Retail Prices API, eastus2, read
+2026-10-11). The NAT gateway and the private endpoint add hourly and per-GB charges
+([NAT gateway](https://azure.microsoft.com/pricing/details/azure-nat-gateway/),
+[Private Link](https://azure.microsoft.com/pricing/details/private-link/)). Key Vault secret
+operations are $0.03 per 10,000.
+
+## Sources
+
+- [Subscriptions in API Management](https://learn.microsoft.com/azure/api-management/api-management-subscriptions) (updated 2026-06-25)
+- [llm-token-limit policy](https://learn.microsoft.com/azure/api-management/llm-token-limit-policy) (updated 2026-06-26)
+- [Subscription REST API](https://learn.microsoft.com/rest/api/apimanagement/subscription) (api-version 2024-05-01)
+- [Automate the rotation of a secret with two sets of credentials](https://learn.microsoft.com/azure/key-vault/secrets/tutorial-rotation-dual) (updated 2026-07-08)
+- [Claude Code settings reference, apiKeyHelper](https://code.claude.com/docs/en/settings-reference) (read 2026-10-11)
+- Measurements: [UNKNOWNS U24–U28](../../docs/UNKNOWNS.md)

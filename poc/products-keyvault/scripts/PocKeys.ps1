@@ -160,15 +160,17 @@ function Invoke-PocKeyRotation {
     [pscustomobject]@{ Subscription = $sid; Slot = $next; PreviousSlot = $held }
 }
 
-# Records an expiry on the subscription. API Management does not enforce it ("for audit purposes
-# only"); Suspend-ExpiredPocKeys does, and UNKNOWNS U24 asks whether a policy can see it.
+# Records an expiry on the subscription. API Management keeps only the date (13:45 is stored as
+# 00:00 UTC that day), refuses a time already past, and does not enforce it ("for audit purposes
+# only"); Suspend-ExpiredPocKeys does, from 00:00 UTC on the stored date. Only an active
+# subscription can be given a new expiry.
 function Set-PocKeyExpiry {
     param([Parameter(Mandatory)]$Context, [Parameter(Mandatory)][string]$Name, [Parameter(Mandatory)][datetime]$ExpiresUtc)
     Assert-PocName $Name
     $null = Invoke-PocApim -Context $Context -Method PATCH -Path "/subscriptions/poc-$Name" -IfMatch -Body @{
         properties = @{ expirationDate = (ConvertTo-PocUtc $ExpiresUtc).ToString('o') }
     }
-    Write-Host "poc-$Name expires $((ConvertTo-PocUtc $ExpiresUtc).ToString('u'))."
+    Write-Host "poc-$Name expires on $((ConvertTo-PocUtc $ExpiresUtc).ToString('yyyy-MM-dd')) (00:00 UTC; API Management keeps the date only)."
 }
 
 # Suspends every active key on a proof-of-concept product whose expiry has passed. Keys on other

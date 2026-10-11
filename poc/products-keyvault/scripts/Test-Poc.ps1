@@ -57,17 +57,22 @@ function Invoke-OpenAi([string]$Key, [string]$Model = $OpenAiModel) {
 }
 function Invoke-Probe([string]$Key) { Send-Gateway -Method GET -Path '/poc/probe/whoami' -Headers @{ 'x-api-key' = $Key } }
 
-# Seconds until $Condition holds, polling every second; -1 after $TimeoutSec.
-function Measure-Until([scriptblock]$Condition, [int]$TimeoutSec = 900) {
+# Seconds until $Condition has held for $Consecutive checks in a row (1 s apart), measured to the
+# first check of that run; -1 after $TimeoutSec. The gateway runs several nodes that learn about
+# a key change at different times, so one passing check is not enough: in one run a new key was
+# accepted and then refused on the next call.
+function Measure-Until([scriptblock]$Condition, [int]$TimeoutSec = 900, [int]$Consecutive = 5) {
     $sw = [Diagnostics.Stopwatch]::StartNew()
+    $streak = 0; $since = 0
     while ($sw.Elapsed.TotalSeconds -lt $TimeoutSec) {
-        if (& $Condition) { return [Math]::Round($sw.Elapsed.TotalSeconds, 1) }
+        if (& $Condition) {
+            if ($streak -eq 0) { $since = $sw.Elapsed.TotalSeconds }
+            $streak++
+            if ($streak -ge $Consecutive) { return [Math]::Round($since, 1) }
+        } else { $streak = 0 }
         Start-Sleep -Seconds 1
     }
     return -1
-}
-function Set-PocState([string]$Sid, [string]$State) {
-    $null = Invoke-PocApim -Context $ctx -Method PATCH -Path "/subscriptions/$Sid" -IfMatch -Body @{ properties = @{ state = $State } }
 }
 
 $temporary = [System.Collections.Generic.List[string]]::new()
@@ -129,7 +134,7 @@ try {
 
     # --- Budget: spend the tiny pack -------------------------------------------------------
     # A longer answer per call, so the budget is spent in a few calls.
-    $spent = 0; $ok = 0; $last = $null; $lastRemaining = ''
+    $spent = 0; $ok = 0; $last = $null; $lastRemaining = ''; $byCall = @()
     for ($i = 1; $i -le 20; $i++) {
         $last = Invoke-Claude $keys.tiny -MaxTokens 64 -Prompt 'Count from 1 to 60, separated by spaces.'
         if ($last.Status -eq 200) {
@@ -137,26 +142,41 @@ try {
             $spent += [int]$u.input_tokens + [int]$u.output_tokens
             $ok++
             $lastRemaining = Read-Header $last 'x-budget-remaining'
+            $byCall += "$($spent):$lastRemaining"
         } elseif ($last.Status -eq 429) { Start-Sleep -Seconds 5 } else { break }
     }
-    $measured.budget = [ordered]@{ quota = $TinyBudget; acceptedCalls = $ok; realTokens = $spent; lastRemainingHeader = $lastRemaining; finalStatus = $last.Status }
+    $measured.budget = [ordered]@{ quota = $TinyBudget; acceptedCalls = $ok; realTokens = $spent; realTokensAndHeaderByCall = $byCall; finalStatus = $last.Status }
     $over = if ($TinyBudget -gt 0) { [Math]::Round(100.0 * ($spent - $TinyBudget) / $TinyBudget) } else { 0 }
     Add-Result 'a spent monthly budget returns 403' ($last.Status -eq 403) "after $ok calls and $spent real tokens on a $TinyBudget-token budget ($over% over); last x-budget-remaining $lastRemaining; $($last.Status) $(Get-Snippet $last.Body)"
 
     # --- U28 and U25: rotation -------------------------------------------------------------
-    $before = Read-Header (Invoke-Claude $keys.alice) 'x-budget-remaining'
+    # The quota is counted at each gateway node and synchronised later, so right after the first
+    # 403 a further call can still pass. U28 waits until the spent key is refused five times in a
+    # row, then rotates it and makes five calls with the new key. A counter that restarted would
+    # refuse none of them (five short calls are about 90 tokens of a fresh 300), so any quota
+    # refusal shows the count carried across.
+    $tHeld = Measure-Until { (Invoke-Claude $keys.tiny).Status -eq 403 } -TimeoutSec 300
+    $measured.budget.secondsUntil403Held = $tHeld
+    $null = Invoke-PocKeyRotation -Context $ctx -Name "tiny-$run"
+    $tinyNext = Get-PocKey -Context $ctx -Name "tiny-$run"
+    $null = Measure-Until { (Invoke-Probe $tinyNext).Status -eq 200 } -TimeoutSec 300
+    $after = @(1..5 | ForEach-Object { $r = Invoke-Claude $tinyNext; Start-Sleep -Seconds 1; $r })
+    $tinyNext = $null
+    $quotaRefusals = @($after | Where-Object { $_.Status -eq 403 -and $_.Body -like '*quota*' }).Count
+    $measured.budget.rotatedKeyQuotaRefusalsOf5 = $quotaRefusals
+    Add-Result 'U28 the budget count carries across a rotation' ($tHeld -ge 0 -and $quotaRefusals -ge 1) "the spent key's 403 held from $tHeld s; the rotated key was refused for quota $quotaRefusals of 5 times (a restarted count refuses none)"
+
+    $headers = @((Read-Header (Invoke-Claude $keys.alice) 'x-budget-remaining'))
     $k0 = $keys.alice
     $null = Invoke-PocKeyRotation -Context $ctx -Name "alice-$run"
     $k1 = Get-PocKey -Context $ctx -Name "alice-$run"
     $t = Measure-Until { (Invoke-Probe $k1).Status -eq 200 }
     $measured.rotatedKeyAcceptedSeconds = $t
-    $overlap = (Invoke-Probe $k0).Status
-    Add-Result 'U25 a rotated key reaches the gateway, and the key clients hold still works' ($t -ge 0 -and $overlap -eq 200 -and $k1 -ne $k0) "new key accepted after $t s; previous key $overlap"
-
-    $after = Read-Header (Invoke-Claude $k1) 'x-budget-remaining'
-    $measured.budgetAcrossRotation = [ordered]@{ before = $before; after = $after }
-    Add-Result 'U28 the budget count carries across a rotation' ($before -match '^\d+$' -and $after -match '^\d+$' -and [long]$after -lt [long]$before) "x-budget-remaining $before before, $after after"
-
+    $overlap = @(1..5 | ForEach-Object { (Invoke-Probe $k0).Status; Start-Sleep -Seconds 1 })
+    $overlapOk = @($overlap | Where-Object { $_ -eq 200 }).Count -eq 5
+    Add-Result 'U25 a rotated key reaches the gateway, and the key clients hold still works' ($t -ge 0 -and $overlapOk -and $k1 -ne $k0) "new key accepted from $t s; previous key on five checks: $($overlap -join ',')"
+    $headers += Read-Header (Invoke-Claude $k1) 'x-budget-remaining'
+    $measured.remainingHeaderAcrossRotation = $headers
     $null = Invoke-PocKeyRotation -Context $ctx -Name "alice-$run"
     $k2 = Get-PocKey -Context $ctx -Name "alice-$run"
     $tOld = Measure-Until { (Invoke-Probe $k0).Status -ne 200 }
@@ -170,8 +190,11 @@ try {
     $sidCarol = "poc-carol-$run"
     $baseProbe = Invoke-Probe $keys.carol
     $base = Read-Json $baseProbe.Body
-    $future = [datetime]::UtcNow.AddDays(30)
+    $future = [datetime]::new([datetime]::UtcNow.AddDays(30).Ticks, [DateTimeKind]::Utc).Date.AddHours(13).AddMinutes(45).AddSeconds(10)
     Set-PocKeyExpiry -Context $ctx -Name "carol-$run" -ExpiresUtc $future
+    $stored = "$((Invoke-WebRequest -Uri "$($ctx.ApimBase)/subscriptions/$sidCarol`?api-version=2024-05-01" -Headers @{ Authorization = "Bearer $(Get-PocToken -Context $ctx -Resource 'https://management.azure.com/')" }).Content)"
+    $measured.expiryStored = [ordered]@{ set = $future.ToString('o'); stored = [regex]::Match($stored, '"expirationDate":\s*"([^"]+)"').Groups[1].Value }
+    Add-Result 'the stored expiry, read back' ($measured.expiryStored.stored -ne '') "set $($measured.expiryStored.set), stored $($measured.expiryStored.stored)"
     $tEnd = Measure-Until { $e = (Read-Json (Invoke-Probe $keys.carol).Body).endDate; [bool]$e } -TimeoutSec 300
     $afterProbe = Invoke-Probe $keys.carol
     $seen = (Read-Json $afterProbe.Body).endDate
@@ -180,17 +203,22 @@ try {
     # A measurement: either answer settles U24. It fails only if the probe could not be read.
     Add-Result 'U24 measured: does context.Subscription.EndDate show the expiry?' ($baseProbe.Status -eq 200 -and $afterProbe.Status -eq 200) "$(if ($reflects) { 'yes' } else { 'no' }): EndDate before '$($base.endDate)'; after setting expirationDate $($future.ToString('u')) it read '$seen' (waited $(if ($reflects) { "$tEnd s" } else { '300 s' }))"
 
-    Set-PocKeyExpiry -Context $ctx -Name "carol-$run" -ExpiresUtc ([datetime]::UtcNow.AddMinutes(-2))
-    Start-Sleep -Seconds 60
+    # API Management refuses an expiry already past ("Subscription expiration date should be
+    # greater than current UTC date") and keeps only the date, so an expiry a minute ahead is
+    # stored as 00:00 UTC today: expired for the job, still accepted by the gateway.
+    Set-PocKeyExpiry -Context $ctx -Name "carol-$run" -ExpiresUtc ([datetime]::UtcNow.AddSeconds(60))
+    Start-Sleep -Seconds 10
     $still = (Invoke-Probe $keys.carol).Status
-    Add-Result 'an expiry date alone does not stop a key (the gateway does not enforce it)' ($still -eq 200) "status 60 s after the expiry passed: $still"
+    Add-Result 'an expiry date alone does not stop a key (the gateway does not enforce it)' ($still -eq 200) "status with the stored expiry already past: $still"
 
     $suspended = Suspend-ExpiredPocKeys -Context $ctx
     $tSus = Measure-Until { (Invoke-Probe $keys.carol).Status -ne 200 }
     $measured.suspendedKeyRefusedSeconds = $tSus
     Add-Result 'U25 suspending an expired key stops it' ($suspended -contains $sidCarol -and $tSus -ge 0) "suspended [$($suspended -join ', ')]; refused after $tSus s with $((Invoke-Probe $keys.carol).Status)"
 
-    Set-PocState $sidCarol 'active'
+    # "Only 'active' subscriptions can be renewed": reactivate first, then set a new expiry.
+    $null = Invoke-PocApim -Context $ctx -Method PATCH -Path "/subscriptions/$sidCarol" -IfMatch -Body @{ properties = @{ state = 'active' } }
+    Set-PocKeyExpiry -Context $ctx -Name "carol-$run" -ExpiresUtc ([datetime]::UtcNow.AddDays(30))
     $tAct = Measure-Until { (Invoke-Probe $keys.carol).Status -eq 200 }
     $measured.reactivatedKeyAcceptedSeconds = $tAct
     Add-Result 'U25 a reactivated key works again' ($tAct -ge 0) "accepted after $tAct s"
@@ -212,8 +240,10 @@ try {
             BASH_DEFAULT_TIMEOUT_MS                  = '600000'
             BASH_MAX_TIMEOUT_MS                      = '600000'
         }
-        $gitBash = Join-Path "$env:ProgramFiles" 'Git' 'bin' 'bash.exe'
-        if ($IsWindows -and (Test-Path $gitBash)) { $settingsEnv['CLAUDE_CODE_GIT_BASH_PATH'] = $gitBash }
+        if ($IsWindows) {
+            $gitBash = Join-Path "$env:ProgramFiles" 'Git' 'bin' 'bash.exe'
+            if (Test-Path $gitBash) { $settingsEnv['CLAUDE_CODE_GIT_BASH_PATH'] = $gitBash }
+        }
         [ordered]@{ apiKeyHelper = $helper; env = $settingsEnv } | ConvertTo-Json -Depth 4 | Set-Content -Path (Join-Path $cfg 'settings.json') -Encoding UTF8
         $env:CLAUDE_CONFIG_DIR = $cfg
         foreach ($v in 'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL') { Remove-Item "env:$v" -ErrorAction SilentlyContinue }

@@ -8,11 +8,36 @@ param(
     [Parameter(Mandatory)][string]$ResourceGroup,
     [Parameter(Mandatory)][string]$ApimName,
     [string]$VaultName = '',
-    [switch]$PurgeVault
+    [switch]$PurgeVault,
+    # Also remove what runner.bicep added: the VM and its roles, NAT, subnet, private endpoint
+    # and DNS zone.
+    [switch]$Runner,
+    [string]$VnetName = 'vnet-hackgw-pe'
 )
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'PocKeys.ps1')
 $ctx = New-PocContext -Subscription $Subscription -ResourceGroup $ResourceGroup -ApimName $ApimName -VaultName $(if ($VaultName) { $VaultName } else { 'none' })
+
+if ($Runner) {
+    $principal = "$(az vm show -g $ResourceGroup -n vm-poc-runner --subscription $Subscription --query identity.principalId -o tsv 2>$null)".Trim()
+    if ($principal) {
+        $apimId = "$(az apim show -g $ResourceGroup -n $ApimName --subscription $Subscription --query id -o tsv)".Trim()
+        $vaultId = if ($VaultName) { "$(az keyvault show --name $VaultName --subscription $Subscription --query id -o tsv 2>$null)".Trim() } else { '' }
+        foreach ($scope in @($apimId, $vaultId) | Where-Object { $_ }) {
+            az role assignment delete --assignee-object-id $principal --scope $scope --subscription $Subscription 2>$null
+        }
+        az vm delete -g $ResourceGroup -n vm-poc-runner --subscription $Subscription --yes -o none
+        Write-Host 'Removed the runner VM, its disk and NIC, and its role assignments.'
+    }
+    az network vnet subnet delete -g $ResourceGroup --vnet-name $VnetName -n snet-poc-runner --subscription $Subscription -o none 2>$null
+    az network nat gateway delete -g $ResourceGroup -n nat-poc-runner --subscription $Subscription -o none 2>$null
+    az network public-ip delete -g $ResourceGroup -n pip-poc-runner-nat --subscription $Subscription -o none 2>$null
+    az network nsg delete -g $ResourceGroup -n nsg-poc-runner --subscription $Subscription -o none 2>$null
+    if ($VaultName) { az network private-endpoint delete -g $ResourceGroup -n "pe-$VaultName" --subscription $Subscription -o none 2>$null }
+    az network private-dns link vnet delete -g $ResourceGroup -z privatelink.vaultcore.azure.net -n "link-$VnetName" --subscription $Subscription --yes -o none 2>$null
+    az network private-dns zone delete -g $ResourceGroup -n privatelink.vaultcore.azure.net --subscription $Subscription --yes -o none 2>$null
+    Write-Host 'Removed the runner network: subnet, NAT gateway and its IP, NSG, private endpoint and DNS zone.'
+}
 
 function Remove-PocItem([string]$Path, [string]$Label) {
     try {

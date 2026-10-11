@@ -98,6 +98,36 @@ describe("P37 template", () => {
   });
 });
 
+describe("P37 runner", () => {
+  // The vault in the test subscription has public network access turned off by a control
+  // outside this project, so the key scripts run inside the virtual network.
+  const bicep = () => read("infra", "runner.bicep");
+
+  test("the runner has no inbound path: no public IP on its NIC and no NSG allow rules", () => {
+    const b = bicep();
+    const nic = b.slice(b.indexOf("Microsoft.Network/networkInterfaces@"), b.indexOf("Microsoft.Compute/virtualMachines@"));
+    assert.ok(nic.length > 0, "no network interface found");
+    assert.doesNotMatch(nic, /publicIPAddress/);
+    assert.match(b, /'Microsoft\.Network\/networkSecurityGroups@[^']+' = \{[^]*?securityRules: \[\]/);
+    const publicIps = [...b.matchAll(/'Microsoft\.Network\/publicIPAddresses@/g)].length;
+    assert.equal(publicIps, 1, "the only public IP should be the NAT gateway's");
+    assert.match(b, /publicIpAddresses: \[\s*\{\s*id: natIp\.id/);
+  });
+
+  test("the vault is reached through a private endpoint and its privatelink DNS zone", () => {
+    const b = bicep();
+    assert.match(b, /groupIds: \[\s*'vault'\s*\]/);
+    assert.match(b, /name: 'privatelink\.vaultcore\.azure\.net'/);
+    assert.match(b, /virtualNetworkLinks@[^']+' = \{[^]*?virtualNetwork: \{\s*id: vnet\.id/);
+  });
+
+  test("the runner's identity is granted roles on the vault and the instance only", () => {
+    const b = bicep();
+    const scopes = [...b.matchAll(/'Microsoft\.Authorization\/roleAssignments@[^']+' = \{[^]*?scope: (\w+)/g)].map((m) => m[1]);
+    assert.deepEqual(scopes.sort(), ["apim", "vault"]);
+  });
+});
+
 const pwsh = (() => {
   for (const exe of ["pwsh", "powershell"]) {
     const r = spawnSync(exe, ["-NoProfile", "-Command", "$PSVersionTable.PSVersion.Major"], { encoding: "utf8" });

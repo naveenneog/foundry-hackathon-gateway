@@ -153,7 +153,7 @@ Key Vault. Nothing here changes the gateway on `main`.
       from Key Vault; suspension and regeneration reach the gateway in a measured time; and
       UNKNOWNS U24–U28 are closed by measurement.
       *Why:* asked 2026-10-11, after the comparison of products, Key Vault and HashiCorp Vault.
-      *Verified 2026-10-11:* run `10111606`, 22 of 22 checks, from a VM inside the virtual
+      *Verified 2026-10-11:* run `10111658`, 22 of 22 checks, from a VM inside the virtual
       network because the vault's public access was turned off outside this project. Results
       and the six findings: `poc/products-keyvault/README.md`.
 

@@ -28,6 +28,13 @@ param location string = resourceGroup().location
 @maxLength(24)
 param vaultName string = 'kv-poc-${uniqueString(resourceGroup().id, apimName)}'
 
+@description('Public network access to the vault that holds every key. Disabled: reached through a private endpoint (runner.bicep). A redeploy does not reopen a vault something else closed.')
+@allowed([
+  'Disabled'
+  'Enabled'
+])
+param vaultPublicNetworkAccess string = 'Disabled'
+
 @description('One product per model pack. keyTokens and poolTokens are per calendar month (UTC); tpm is per key per minute.')
 param products array = [
   {
@@ -243,7 +250,11 @@ resource vault 'Microsoft.KeyVault/vaults@2023-07-01' = {
     // A proof of concept: the shortest soft-delete retention and no purge protection, so the
     // vault can be removed completely.
     softDeleteRetentionInDays: 7
-    publicNetworkAccess: 'Enabled'
+    publicNetworkAccess: vaultPublicNetworkAccess
+    networkAcls: {
+      defaultAction: 'Deny'
+      bypass: 'None'
+    }
   }
 }
 

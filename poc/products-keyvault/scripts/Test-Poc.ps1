@@ -22,6 +22,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'PocKeys.ps1')
+. (Join-Path $PSScriptRoot 'PocMeasure.ps1')
 $ctx = New-PocContext -Subscription $Subscription -ResourceGroup $ResourceGroup -ApimName $ApimName -VaultName $VaultName
 $gw = $ctx.Gateway
 $run = [datetime]::UtcNow.ToString('MMddHHmm')
@@ -57,24 +58,8 @@ function Invoke-OpenAi([string]$Key, [string]$Model = $OpenAiModel) {
 }
 function Invoke-Probe([string]$Key) { Send-Gateway -Method GET -Path '/poc/probe/whoami' -Headers @{ 'x-api-key' = $Key } }
 
-# Seconds until $Condition has held for $Consecutive checks in a row (1 s apart), measured to the
-# first check of that run; -1 after $TimeoutSec. The gateway runs several nodes that learn about
-# a key change at different times, so one passing check is not enough: in one run a new key was
-# accepted and then refused on the next call.
-function Measure-Until([scriptblock]$Condition, [int]$TimeoutSec = 900, [int]$Consecutive = 5) {
-    $sw = [Diagnostics.Stopwatch]::StartNew()
-    $streak = 0; $since = 0
-    while ($sw.Elapsed.TotalSeconds -lt $TimeoutSec) {
-        if (& $Condition) {
-            if ($streak -eq 0) { $since = $sw.Elapsed.TotalSeconds }
-            $streak++
-            if ($streak -ge $Consecutive) { return [Math]::Round($since, 1) }
-        } else { $streak = 0 }
-        Start-Sleep -Seconds 1
-    }
-    return -1
-}
-
+# Every time below is from just before the change it measures until the gateway answered the
+# same way five times in a row (Measure-PocUntil, PocMeasure.ps1).
 $temporary = [System.Collections.Generic.List[string]]::new()
 try {
     Write-Host "Run $run against $gw"
@@ -82,14 +67,17 @@ try {
     # --- Keys for this run -------------------------------------------------------------------
     $who = [ordered]@{ alice = 'poc-claude-pack'; bob = 'poc-deepseek-pack'; tiny = 'poc-tiny-pack'; carol = 'poc-claude-pack'; dev = 'poc-claude-pack' }
     $keys = @{}
-    foreach ($n in @($who.Keys)) {
+    $t0 = [datetime]::UtcNow
+    $null = New-PocKey -Context $ctx -Name "alice-$run" -Product $who.alice
+    $keys.alice = Get-PocKey -Context $ctx -Name "alice-$run"
+    $t = Measure-PocUntil { (Invoke-Probe $keys.alice).Status -eq 200 } -Since $t0
+    $measured.newKeyAcceptedSeconds = $t
+    Add-Result 'U25 a new key reaches the gateway' ($t -ge 0) "accepted from $t s after the issue request"
+    foreach ($n in 'bob', 'tiny', 'carol', 'dev') {
         $null = New-PocKey -Context $ctx -Name "$n-$run" -Product $who[$n]
         $keys[$n] = Get-PocKey -Context $ctx -Name "$n-$run"
     }
-    $t = Measure-Until { (Invoke-Probe $keys.alice).Status -eq 200 }
-    $measured.newKeyAcceptedSeconds = $t
-    Add-Result 'U25 a new key reaches the gateway' ($t -ge 0) "accepted after $t s"
-    foreach ($n in 'bob', 'tiny', 'carol', 'dev') { $null = Measure-Until { (Invoke-Probe $keys[$n]).Status -eq 200 } -TimeoutSec 300 }
+    foreach ($n in 'bob', 'tiny', 'carol', 'dev') { $null = Measure-PocUntil { (Invoke-Probe $keys[$n]).Status -eq 200 } -TimeoutSec 300 }
 
     # --- Packs -------------------------------------------------------------------------------
     $r = Invoke-Claude $keys.alice
@@ -126,7 +114,7 @@ try {
         $temporary.Add($sid)
         $null = Invoke-PocApim -Context $ctx -Method PUT -Path "/subscriptions/$sid" -Body @{ properties = @{ scope = $scope; displayName = $sid; state = 'active' } }
         $k = (Invoke-PocApim -Context $ctx -Method POST -Path "/subscriptions/$sid/listSecrets").primaryKey
-        $null = Measure-Until { (Invoke-Claude $k).Status -ne 401 } -TimeoutSec 300
+        $null = Measure-PocUntil { (Invoke-Claude $k).Status -ne 401 } -TimeoutSec 300
         $r = Invoke-Claude $k
         Add-Result "U26 a key scoped to $scope is refused on a model route" ($r.Status -eq 403 -and $r.Body -like '*product_required*') "$($r.Status) $(Get-Snippet $r.Body)"
         $k = $null
@@ -155,35 +143,38 @@ try {
     # row, then rotates it and makes five calls with the new key. A counter that restarted would
     # refuse none of them (five short calls are about 90 tokens of a fresh 300), so any quota
     # refusal shows the count carried across.
-    $tHeld = Measure-Until { (Invoke-Claude $keys.tiny).Status -eq 403 } -TimeoutSec 300
+    $tHeld = Measure-PocUntil { (Invoke-Claude $keys.tiny).Status -eq 403 } -TimeoutSec 300
     $measured.budget.secondsUntil403Held = $tHeld
     $null = Invoke-PocKeyRotation -Context $ctx -Name "tiny-$run"
     $tinyNext = Get-PocKey -Context $ctx -Name "tiny-$run"
-    $null = Measure-Until { (Invoke-Probe $tinyNext).Status -eq 200 } -TimeoutSec 300
+    $tinyChanged = $tinyNext -ne $keys.tiny
+    $null = Measure-PocUntil { (Invoke-Probe $tinyNext).Status -eq 200 } -TimeoutSec 300
     $after = @(1..5 | ForEach-Object { $r = Invoke-Claude $tinyNext; Start-Sleep -Seconds 1; $r })
     $tinyNext = $null
     $quotaRefusals = @($after | Where-Object { $_.Status -eq 403 -and $_.Body -like '*quota*' }).Count
     $measured.budget.rotatedKeyQuotaRefusalsOf5 = $quotaRefusals
-    Add-Result 'U28 the budget count carries across a rotation' ($tHeld -ge 0 -and $quotaRefusals -ge 1) "the spent key's 403 held from $tHeld s; the rotated key was refused for quota $quotaRefusals of 5 times (a restarted count refuses none)"
+    Add-Result 'U28 the budget count carries across a rotation' ($tHeld -ge 0 -and $tinyChanged -and $quotaRefusals -ge 1) "the spent key's 403 held from $tHeld s; its rotated key (a different key: $tinyChanged) was refused for quota $quotaRefusals of 5 times (a restarted count refuses none)"
 
     $headers = @((Read-Header (Invoke-Claude $keys.alice) 'x-budget-remaining'))
     $k0 = $keys.alice
+    $t0 = [datetime]::UtcNow
     $null = Invoke-PocKeyRotation -Context $ctx -Name "alice-$run"
     $k1 = Get-PocKey -Context $ctx -Name "alice-$run"
-    $t = Measure-Until { (Invoke-Probe $k1).Status -eq 200 }
+    $t = Measure-PocUntil { (Invoke-Probe $k1).Status -eq 200 } -Since $t0
     $measured.rotatedKeyAcceptedSeconds = $t
     $overlap = @(1..5 | ForEach-Object { (Invoke-Probe $k0).Status; Start-Sleep -Seconds 1 })
     $overlapOk = @($overlap | Where-Object { $_ -eq 200 }).Count -eq 5
-    Add-Result 'U25 a rotated key reaches the gateway, and the key clients hold still works' ($t -ge 0 -and $overlapOk -and $k1 -ne $k0) "new key accepted from $t s; previous key on five checks: $($overlap -join ',')"
+    Add-Result 'U25 a rotated key reaches the gateway, and the key clients hold still works' ($t -ge 0 -and $overlapOk -and $k1 -ne $k0) "new key accepted from $t s after the rotation request; previous key on five checks: $($overlap -join ',')"
     $headers += Read-Header (Invoke-Claude $k1) 'x-budget-remaining'
     $measured.remainingHeaderAcrossRotation = $headers
+    $t0 = [datetime]::UtcNow
     $null = Invoke-PocKeyRotation -Context $ctx -Name "alice-$run"
     $k2 = Get-PocKey -Context $ctx -Name "alice-$run"
-    $tOld = Measure-Until { (Invoke-Probe $k0).Status -ne 200 }
-    $tNew = Measure-Until { (Invoke-Probe $k2).Status -eq 200 }
+    $tOld = Measure-PocUntil { (Invoke-Probe $k0).Status -eq 401 } -Since $t0
+    $tNew = Measure-PocUntil { (Invoke-Probe $k2).Status -eq 200 } -Since $t0
     $measured.regeneratedKeyRefusedSeconds = $tOld
     $measured.regeneratedReplacementAcceptedSeconds = $tNew
-    Add-Result 'U25 a regenerated key stops working' ($tOld -ge 0) "the replaced key was refused after $tOld s ($((Invoke-Probe $k0).Status)); its replacement accepted after $tNew s"
+    Add-Result 'U25 a regenerated key stops working' ($tOld -ge 0) "the replaced key was refused (401) from $tOld s after the rotation request; its replacement accepted from $tNew s"
     $k0 = $null; $k1 = $null; $k2 = $null
 
     # --- U24 and U25: expiry and suspension ------------------------------------------------
@@ -195,7 +186,7 @@ try {
     $stored = "$((Invoke-WebRequest -Uri "$($ctx.ApimBase)/subscriptions/$sidCarol`?api-version=2024-05-01" -Headers @{ Authorization = "Bearer $(Get-PocToken -Context $ctx -Resource 'https://management.azure.com/')" }).Content)"
     $measured.expiryStored = [ordered]@{ set = $future.ToString('o'); stored = [regex]::Match($stored, '"expirationDate":\s*"([^"]+)"').Groups[1].Value }
     Add-Result 'the stored expiry, read back' ($measured.expiryStored.stored -ne '') "set $($measured.expiryStored.set), stored $($measured.expiryStored.stored)"
-    $tEnd = Measure-Until { $e = (Read-Json (Invoke-Probe $keys.carol).Body).endDate; [bool]$e } -TimeoutSec 300
+    $tEnd = Measure-PocUntil { $e = (Read-Json (Invoke-Probe $keys.carol).Body).endDate; [bool]$e } -TimeoutSec 300
     $afterProbe = Invoke-Probe $keys.carol
     $seen = (Read-Json $afterProbe.Body).endDate
     $reflects = $tEnd -ge 0
@@ -207,21 +198,23 @@ try {
     # greater than current UTC date") and keeps only the date, so an expiry a minute ahead is
     # stored as 00:00 UTC today: expired for the job, still accepted by the gateway.
     Set-PocKeyExpiry -Context $ctx -Name "carol-$run" -ExpiresUtc ([datetime]::UtcNow.AddSeconds(60))
-    Start-Sleep -Seconds 10
-    $still = (Invoke-Probe $keys.carol).Status
-    Add-Result 'an expiry date alone does not stop a key (the gateway does not enforce it)' ($still -eq 200) "status with the stored expiry already past: $still"
+    # Not one probe, which one node can answer either way: a minute of five-in-a-row checks.
+    $tStop = Measure-PocUntil { (Invoke-Probe $keys.carol).Status -eq 401 } -TimeoutSec 60
+    Add-Result 'an expiry date alone does not stop a key (the gateway does not enforce it)' ($tStop -lt 0) "with the stored expiry already past, the key was $(if ($tStop -lt 0) { 'still accepted for 60 s' } else { "refused from $tStop s" })"
 
+    $t0 = [datetime]::UtcNow
     $suspended = Suspend-ExpiredPocKeys -Context $ctx
-    $tSus = Measure-Until { (Invoke-Probe $keys.carol).Status -ne 200 }
+    $tSus = Measure-PocUntil { (Invoke-Probe $keys.carol).Status -eq 401 } -Since $t0
     $measured.suspendedKeyRefusedSeconds = $tSus
-    Add-Result 'U25 suspending an expired key stops it' ($suspended -contains $sidCarol -and $tSus -ge 0) "suspended [$($suspended -join ', ')]; refused after $tSus s with $((Invoke-Probe $keys.carol).Status)"
+    Add-Result 'U25 suspending an expired key stops it' ($suspended -contains $sidCarol -and $tSus -ge 0) "suspended [$($suspended -join ', ')]; refused (401) from $tSus s after the suspend job started"
 
     # "Only 'active' subscriptions can be renewed": reactivate first, then set a new expiry.
+    $t0 = [datetime]::UtcNow
     $null = Invoke-PocApim -Context $ctx -Method PATCH -Path "/subscriptions/$sidCarol" -IfMatch -Body @{ properties = @{ state = 'active' } }
     Set-PocKeyExpiry -Context $ctx -Name "carol-$run" -ExpiresUtc ([datetime]::UtcNow.AddDays(30))
-    $tAct = Measure-Until { (Invoke-Probe $keys.carol).Status -eq 200 }
+    $tAct = Measure-PocUntil { (Invoke-Probe $keys.carol).Status -eq 200 } -Since $t0
     $measured.reactivatedKeyAcceptedSeconds = $tAct
-    Add-Result 'U25 a reactivated key works again' ($tAct -ge 0) "accepted after $tAct s"
+    Add-Result 'U25 a reactivated key works again' ($tAct -ge 0) "accepted from $tAct s after the reactivation request"
 
     # --- U27: Claude Code with apiKeyHelper reading Key Vault -----------------------------
     if (-not $SkipClaudeCode -and (Get-Command claude -ErrorAction SilentlyContinue)) {
@@ -251,9 +244,13 @@ try {
         $out = (& claude -p 'Reply with exactly: OK' 2>&1 | Out-String)
         Add-Result 'U27 Claude Code answers with the key from Key Vault' ($LASTEXITCODE -eq 0 -and $out -match '\bOK\b') "exit $LASTEXITCODE; $(Get-Snippet $out)"
 
-        # A session that outlives two rotations: it holds the key it fetched at the start, which
-        # the second rotation regenerates while the session waits on a tool call.
-        $calls = @(Get-Content $helperLog).Count
+        # A session that outlives two rotations. It must hold the key from before them: the
+        # rotations start only after the helper log shows the session's first read. The check is
+        # on which key version each read returned and when (Test-PocSessionRefresh), not on how
+        # many reads there were.
+        $linesBefore = @(Get-Content $helperLog -ErrorAction SilentlyContinue).Count
+        $old = Get-PocKeyRecord -Context $ctx -Name "dev-$run"
+        $sessionStart = [datetime]::UtcNow
         $job = Start-Job -ArgumentList $cfg, $sleep -ScriptBlock {
             param($Cfg, $Sleep)
             $env:CLAUDE_CONFIG_DIR = $Cfg
@@ -261,18 +258,20 @@ try {
             $o = (& claude -p "Use the Bash tool to run exactly this command: sleep $Sleep. After it finishes, reply with exactly: DONE" --allowedTools 'Bash(sleep:*)' 2>&1 | Out-String)
             [pscustomobject]@{ Exit = $LASTEXITCODE; Output = $o }
         }
-        $sessionKey = Get-PocKey -Context $ctx -Name "dev-$run"
-        Start-Sleep -Seconds 20
+        $firstRead = Measure-PocUntil { @(Get-Content $helperLog -ErrorAction SilentlyContinue).Count -gt $linesBefore } -Consecutive 1 -TimeoutSec 120
+        Start-Sleep -Seconds 10
+        $rotationsStart = [datetime]::UtcNow
         $null = Invoke-PocKeyRotation -Context $ctx -Name "dev-$run"
         $null = Invoke-PocKeyRotation -Context $ctx -Name "dev-$run"
-        $replacement = Get-PocKey -Context $ctx -Name "dev-$run"
-        $tGone = Measure-Until { (Invoke-Probe $sessionKey).Status -ne 200 } -TimeoutSec ($sleep - 10)
-        $tBack = Measure-Until { (Invoke-Probe $replacement).Status -eq 200 } -TimeoutSec ($sleep - 10)
-        $sessionKey = $null; $replacement = $null
+        $new = Get-PocKeyRecord -Context $ctx -Name "dev-$run"
+        $tGone = Measure-PocUntil { (Invoke-Probe $old.Value).Status -eq 401 } -Since $rotationsStart -TimeoutSec ($sleep - 10)
+        $tBack = Measure-PocUntil { (Invoke-Probe $new.Value).Status -eq 200 } -Since $rotationsStart -TimeoutSec ($sleep - 10)
         $session = Receive-Job -Job $job -Wait -AutoRemoveJob
-        $helperCalls = @(Get-Content $helperLog).Count - $calls
-        $measured.claudeCodeSession = [ordered]@{ keyRefusedSeconds = $tGone; replacementAcceptedSeconds = $tBack; helperCallsDuringSession = $helperCalls }
-        Add-Result 'U27 a Claude Code session keeps working across a rotation' ($session.Exit -eq 0 -and $session.Output -match '\bDONE\b' -and $tGone -ge 0 -and $helperCalls -ge 2) "exit $($session.Exit); the session's key was refused $tGone s after the rotations began, and the helper ran $helperCalls times in the session; $(Get-Snippet $session.Output)"
+        $sessionLines = @(Get-Content $helperLog | Select-Object -Skip $linesBefore)
+        $refresh = Test-PocSessionRefresh -Lines $sessionLines -SessionStartUtc $sessionStart -OldVersion $old.Version -NewVersion $new.Version -RefusedFromUtc $rotationsStart.AddSeconds([Math]::Max(0, $tGone))
+        $measured.claudeCodeSession = [ordered]@{ firstReadSeconds = $firstRead; keyRefusedSeconds = $tGone; replacementAcceptedSeconds = $tBack; helperReadsInSession = $sessionLines.Count; refresh = $refresh.Detail }
+        $old = $null; $new = $null
+        Add-Result 'U27 a Claude Code session keeps working across a rotation' ($session.Exit -eq 0 -and $session.Output -match '\bDONE\b' -and $tGone -ge 0 -and $refresh.Pass) "exit $($session.Exit); its key was refused (401) from $tGone s after the rotations began; $($sessionLines.Count) helper reads in the session; $($refresh.Detail)"
 
         $out = (& claude -p 'Reply with exactly: OK' 2>&1 | Out-String)
         Add-Result 'U27 a new Claude Code session after the rotations needs no settings change' ($LASTEXITCODE -eq 0 -and $out -match '\bOK\b') "exit $LASTEXITCODE; $(Get-Snippet $out)"

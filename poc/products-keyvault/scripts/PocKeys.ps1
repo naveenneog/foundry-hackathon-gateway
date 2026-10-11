@@ -38,16 +38,18 @@ function New-PocContext {
     }
 }
 
-# A token per resource, reused for 30 minutes: Azure CLI tokens last longer than that, and a
-# measurement run polls for minutes at a time.
+# A token per resource, reused until five minutes before it expires. The Azure CLI returns its
+# cached token until shortly before expiry, so reuse for a fixed time could run past it.
 function Get-PocToken {
     param([Parameter(Mandatory)]$Context, [Parameter(Mandatory)][string]$Resource)
     $cached = $Context.Tokens[$Resource]
-    if ($cached -and $cached.At -gt [datetime]::UtcNow.AddMinutes(-30)) { return $cached.Value }
-    $value = "$(az account get-access-token --resource $Resource --subscription $Context.SubscriptionId --query accessToken -o tsv)".Trim()
-    if ($LASTEXITCODE -ne 0 -or -not $value) { throw "The Azure CLI could not get a token for $Resource." }
-    $Context.Tokens[$Resource] = @{ Value = $value; At = [datetime]::UtcNow }
-    return $value
+    if ($cached -and $cached.ExpiresUtc -gt [datetime]::UtcNow.AddMinutes(5)) { return $cached.Value }
+    $raw = az account get-access-token --resource $Resource --subscription $Context.SubscriptionId -o json
+    if ($LASTEXITCODE -ne 0 -or -not $raw) { throw "The Azure CLI could not get a token for $Resource." }
+    $t = ($raw | Out-String) | ConvertFrom-Json
+    if (-not $t.accessToken) { throw "The Azure CLI returned no token for $Resource." }
+    $Context.Tokens[$Resource] = @{ Value = $t.accessToken; ExpiresUtc = [DateTimeOffset]::FromUnixTimeSeconds([long]$t.expires_on).UtcDateTime }
+    return $t.accessToken
 }
 
 function Invoke-PocRest {
@@ -126,11 +128,18 @@ function New-PocKey {
     [pscustomobject]@{ Subscription = $sid; Secret = $secret; Slot = 'primary' }
 }
 
-# The key clients currently get. For callers that need the value in memory; never printed here.
-function Get-PocKey {
+# The key clients currently get, with its secret version (the last segment of the secret's id,
+# which is not secret) and slot. For callers that need the value in memory; never printed here.
+function Get-PocKeyRecord {
     param([Parameter(Mandatory)]$Context, [Parameter(Mandatory)][string]$Name)
     Assert-PocName $Name
-    (Invoke-PocVault -Context $Context -Method GET -Path "/secrets/poc-key-$Name").value
+    $s = Invoke-PocVault -Context $Context -Method GET -Path "/secrets/poc-key-$Name"
+    [pscustomobject]@{ Value = $s.value; Version = "$($s.id)".TrimEnd('/').Split('/')[-1]; Slot = "$($s.tags.slot)" }
+}
+
+function Get-PocKey {
+    param([Parameter(Mandatory)]$Context, [Parameter(Mandatory)][string]$Name)
+    (Get-PocKeyRecord -Context $Context -Name $Name).Value
 }
 
 function Invoke-PocKeyRotation {

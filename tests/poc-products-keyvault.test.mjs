@@ -96,6 +96,14 @@ describe("P37 template", () => {
     assert.match(b, /enableRbacAuthorization: true/);
     assert.doesNotMatch(b, /accessPolicies: \[\s*\{/);
   });
+
+  test("the vault holding every key is private unless a deployment asks otherwise", () => {
+    // A redeploy must not reopen a vault that something outside this template closed.
+    const b = bicep();
+    assert.doesNotMatch(b, /publicNetworkAccess: 'Enabled'/);
+    assert.match(b, /param vaultPublicNetworkAccess string = 'Disabled'/);
+    assert.match(b, /defaultAction: 'Deny'/);
+  });
 });
 
 describe("P37 runner", () => {
@@ -103,7 +111,7 @@ describe("P37 runner", () => {
   // outside this project, so the key scripts run inside the virtual network.
   const bicep = () => read("infra", "runner.bicep");
 
-  test("the runner has no inbound path: no public IP on its NIC and no NSG allow rules", () => {
+  test("the runner has no inbound path from the internet: no public IP on its NIC and no NSG allow rules", () => {
     const b = bicep();
     const nic = b.slice(b.indexOf("Microsoft.Network/networkInterfaces@"), b.indexOf("Microsoft.Compute/virtualMachines@"));
     assert.ok(nic.length > 0, "no network interface found");
@@ -142,14 +150,19 @@ const q = (s) => `'${String(s).replace(/'/g, "''")}'`;
  * order by method and a regex on the URI. Returns the script's own output and, separately, every
  * HTTP call it made, so a test can assert both on what was sent and on what was printed.
  */
-const runKeys = ({ responses, call }) => {
+const runKeys = ({ responses, call, tokenLifetime = 3600 }) => {
   const script = `
 $ErrorActionPreference = 'Stop'
 . ${q(join(poc, "scripts", "PocKeys.ps1"))}
+. ${q(join(poc, "scripts", "PocMeasure.ps1"))}
+$global:TokenFetches = 0
 function az {
     $line = @($args) -join ' '; $global:LASTEXITCODE = 0
     if ($line -like 'account show*') { return 'sub-123' }
-    if ($line -like 'account get-access-token*') { return 'TOKEN' }
+    if ($line -like 'account get-access-token*') {
+        $global:TokenFetches++
+        return (@{ accessToken = 'TOKEN'; expires_on = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() + ${tokenLifetime} } | ConvertTo-Json -Compress)
+    }
     throw "unexpected az call: $line"
 }
 $global:Calls = [System.Collections.Generic.List[object]]::new()
@@ -295,5 +308,75 @@ describe("P37 key scripts", { skip: !pwsh && "PowerShell 7 not found" }, () => {
     assert.deepEqual(patches.map((c) => c.uri.split("/subscriptions/").pop().split("?")[0]), ["poc-old"]);
     assert.equal(patches[0].body.properties.state, "suspended");
     assert.equal(patches[0].ifMatch, "*");
+  });
+  test("a token is reused until five minutes before it expires, not for a fixed time", () => {
+    // Azure CLI hands out cached tokens close to their expiry; a fixed 30-minute reuse ran past it.
+    const call = "$null = Invoke-PocApim -Context $ctx -Method GET -Path '/products'; $null = Invoke-PocApim -Context $ctx -Method GET -Path '/products'; \"FETCHES $global:TokenFetches\"";
+    const responses = [{ method: "GET", match: "/products", body: { value: [] } }];
+    const near = runKeys({ responses, call, tokenLifetime: 120 });
+    assert.equal(near.failed, "", near.failed);
+    assert.match(near.own, /FETCHES 2/, "a token two minutes from expiry was reused");
+    const far = runKeys({ responses, call, tokenLifetime: 3600 });
+    assert.match(far.own, /FETCHES 1/, "a fresh token was fetched again");
+  });
+
+  test("a key record carries the secret version, which is not secret, for the helper's log", () => {
+    const r = runKeys({
+      responses: [{ method: "GET", match: `${KV}\\?`, body: { value: "KEY-P-1", id: "https://kv-x.vault.azure.net/secrets/poc-key-alice/0a1b2c3d", tags: { slot: "primary" } } }],
+      call: "$k = Get-PocKeyRecord -Context $ctx -Name 'alice'; \"VERSION $($k.Version) SLOT $($k.Slot)\"",
+    });
+    assert.equal(r.failed, "", r.failed);
+    assert.match(r.own, /VERSION 0a1b2c3d SLOT primary/);
+  });
+});
+
+describe("P37 measurement", { skip: !pwsh && "PowerShell 7 not found" }, () => {
+  test("a time is measured from the change, not from when polling starts", () => {
+    const r = runKeys({ responses: [], call: "\"T $(Measure-PocUntil { $true } -Since ([datetime]::UtcNow.AddSeconds(-3)) -Consecutive 1 -IntervalMs 0)\"" });
+    assert.equal(r.failed, "", r.failed);
+    assert.ok(Number(r.own.match(/T ([\d.]+)/)[1]) >= 3, r.own);
+  });
+
+  test("one passing check followed by a failing one does not count; the time is the start of the run that holds", () => {
+    const r = runKeys({
+      responses: [],
+      call: "$global:seq = [System.Collections.Generic.Queue[bool]]::new([bool[]]@($true, $false, $true, $true, $true)); $global:n = 0; $t = Measure-PocUntil { $global:n++; $global:seq.Dequeue() } -Consecutive 3 -IntervalMs 100; \"T $t N $global:n\"",
+    });
+    assert.equal(r.failed, "", r.failed);
+    const [, t, n] = r.own.match(/T ([\d.-]+) N (\d+)/);
+    assert.equal(Number(n), 5);
+    assert.ok(Number(t) >= 0.1, `timed from the first, abandoned pass: ${t}`);
+  });
+
+  test("a condition that never holds returns -1", () => {
+    const r = runKeys({ responses: [], call: "\"T $(Measure-PocUntil { $false } -TimeoutSec 1 -IntervalMs 100)\"" });
+    assert.match(r.own, /T -1/);
+  });
+
+  test("a session counts as refreshed only if it read the old key first and the new key after the refusal", () => {
+    // Log lines from Get-PocKey.ps1 -LogPath: "<UTC> <secret version>".
+    const at = (s) => new Date(Date.UTC(2026, 9, 11, 12, 0, s)).toISOString();
+    const check = (lines) => {
+      const r = runKeys({
+        responses: [],
+        call: `$v = Test-PocSessionRefresh -Lines @(${lines.map(q).join(", ")}) -SessionStartUtc ([datetime]'${at(0)}').ToUniversalTime() -OldVersion 'v0' -NewVersion 'v2' -RefusedFromUtc ([datetime]'${at(20)}').ToUniversalTime(); "PASS $($v.Pass) $($v.Detail)"`,
+      });
+      assert.equal(r.failed, "", r.failed);
+      return /PASS True/.test(r.own);
+    };
+    assert.equal(check([`${at(1)} v0`, `${at(30)} v2`]), true, "a real refresh was rejected");
+    assert.equal(check([`${at(1)} v1`, `${at(30)} v2`]), false, "the session started on a key the rotations never refused");
+    assert.equal(check([`${at(1)} v0`, `${at(10)} v2`]), false, "the new key was read before the old one was refused");
+    assert.equal(check([`${at(1)} v0`]), false, "no second read");
+  });
+
+  test("the runner refuses names that would reach its root shell unquoted, before any Azure call", () => {
+    const script = join(poc, "scripts", "Invoke-PocRunner.ps1");
+    for (const [param, value] of [["ApimName", "apim;reboot"], ["VaultName", "kv$(id)"], ["ResourceGroup", "rg'x"]]) {
+      const args = { Subscription: "s", ResourceGroup: "rg-x", ApimName: "apim-x", VaultName: "kv-x", [param]: value };
+      const r = spawnSync(pwsh, ["-NoProfile", "-NonInteractive", "-File", script, "-Step", "Fetch", ...Object.entries(args).flatMap(([k, v]) => [`-${k}`, v])], { encoding: "utf8" });
+      assert.notEqual(r.status, 0, `${param}=${value} accepted`);
+      assert.match(`${r.stdout}${r.stderr}`, new RegExp(param), `${param}=${value} not refused by validation`);
+    }
   });
 });

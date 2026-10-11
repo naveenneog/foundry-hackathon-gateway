@@ -31,9 +31,10 @@ rotation  job: regenerate the slot clients do not hold -> list keys -> store as 
 ## Results
 
 Standard v2 test instance from [UNKNOWNS U23](../../docs/UNKNOWNS.md), with Foundry reachable
-only through a private endpoint, using models `claude-haiku-4-5` and `deepseek-v4-flash`. Times
-are until the gateway answered the same way five times in a row, checked once a second (run
-`10111606`, unless noted).
+only through a private endpoint, using models `claude-haiku-4-5` and `deepseek-v4-flash`. Final
+run `10111658`, 22 of 22 checks. Times run from just before each change (the issue, rotation,
+suspension or reactivation request) until the gateway answered the same way five times in a
+row, checked once a second.
 
 | Check | Result |
 |---|---|
@@ -43,31 +44,33 @@ are until the gateway answered the same way five times in a row, checked once a 
 | DeepSeek-pack key, its model / a Claude model | 200 / 403 `model_not_allowed` (OpenAI error shape) |
 | No key | 401 |
 | All-access key, all-APIs key, key scoped to one API | 403 `product_required`; the probe shows `product: null` for the all-access key (U26) |
-| 300-token monthly budget | 403 *"Token quota is exceeded. Try again in 20 days…"* after 7 calls and 588 real tokens. Runs `10111520` and `10111549`: 9 calls, 756 tokens |
-| Budget across a rotation | rotated key refused for quota on 4 of 5 calls (U28) |
-| New key accepted | 2.2 s |
-| Rotation | new key accepted at 8.3 s; the key clients held still accepted on 5 of 5 checks |
-| Regenerated key refused | 8.2 s |
-| Suspended key refused / reactivated key accepted | 6.2 s / 6.2 s |
-| Expiry | not enforced by the gateway; stored as a date only; `context.Subscription.EndDate` stays empty (U24) |
+| 300-token monthly budget | 403 *"Token quota is exceeded. Try again in 20 days…"* after 8 calls and 672 real tokens. Earlier runs: 7 calls and 588 tokens; 9 calls and 756 tokens (twice) |
+| Budget across a rotation | the spent key's rotated replacement refused for quota on 5 of 5 calls (4 of 5 in run `10111606`) (U28) |
+| New key accepted | 6.4 s |
+| Rotation | new key accepted at 1.5 s; the key clients held still accepted on 5 of 5 checks |
+| Regenerated key refused | 5.7 s (its replacement accepted at 9.8 s) |
+| Suspended key refused / reactivated key accepted | 1.4 s / 9.8 s |
+| Expiry | not enforced by the gateway (still accepted 60 s after the stored date had passed); stored as a date only; `context.Subscription.EndDate` stays empty (U24) |
 | Claude Code, key from Key Vault | answered |
-| Claude Code session across two rotations | finished; its key was refused 7.2 s after the rotations began and the helper ran a second time (U27) |
+| Claude Code session across two rotations | finished. Its first key read returned the old key version; the old key was refused from 9.2 s after the rotations began; the session's next read, 65 s after the first, returned the new version (U27) |
 | New Claude Code session after the rotations | answered with the settings unchanged |
-| Vault audit log | `SecretGet` 31 and `SecretSet` 23 by the runner's managed identity, over the private network; attempts over the public network logged as `Forbidden` |
+| Vault audit log | `SecretGet` 31 and `SecretSet` 23 by the runner's managed identity, over the private network; attempts over the public network logged as `Forbidden` (earlier runs) |
 
 ## What the runs showed
 
 1. **Budgets are counted per gateway node, then reconciled.** On the 300-token budget the
-   remaining-budget header read 216, 216, 132, 132, 48, 48, 0 against 84, 168, 252, 336, 420,
-   504, 588 real tokens. That pattern fits two nodes each counting their own share. The first
-   403 came after about twice the budget, and the next call could still pass; refusals held
-   from 7 s. The policy reference says counts are kept "independently at each gateway"
+   remaining-budget header read 216, 216, 132, 48, 0, 132, 48, 0 as real use reached 84, 168,
+   252, 336, 420, 504, 588, 672 tokens. These are two interleaved countdowns, each 216, 132,
+   48, 0, which fits two nodes each counting the calls they served. The 403 came after about
+   twice the budget; in one run the call after the first 403 still passed, and in the final run
+   refusals held at once. The policy reference says counts are kept "independently at each
+   gateway"
    ([llm-token-limit](https://learn.microsoft.com/azure/api-management/llm-token-limit-policy)).
    It does not mention nodes within one gateway. The overshoot is about one budget per node,
    which is large against a small budget and small against a monthly one of 200,000 tokens.
 2. **Key changes reach the nodes at different times.** A single check misled: a new key was
    accepted and then refused on the next call, and a regenerated key was refused and then
-   accepted again. Agreement on all checks came within 2–9 s (U25).
+   accepted again. Agreement on all checks came 1.4–9.8 s after the request (U25).
 3. **Keys without a product skip product policies, budgets included.** The route policy's
    `context.Product == null` check closes that path (U26). Any API added to a product without
    `<base />` first in its inbound section also skips the product's policies; the probe does
@@ -78,16 +81,20 @@ are until the gateway answered the same way five times in a row, checked once a 
    00:00 UTC on their stored date (U24).
 5. **The vault had to be reached privately.** About ten minutes after the vault was created, an
    identity outside this project turned off its public network access. That setting was left as
-   it is. The scripts and Claude Code ran on a VM inside the virtual network, reaching the vault
-   through a private endpoint. A client outside the network, such as a laptop, needs a private
-   route to the vault in such a subscription.
+   it is, and the template now creates the vault private (`vaultPublicNetworkAccess`, default
+   `Disabled`). The scripts and Claude Code ran on a VM inside the virtual network, reaching the
+   vault through a private endpoint. A client outside the network, such as a laptop, needs a
+   private route to the vault in such a subscription.
 6. **Anyone who can list a subscription's keys can read every key.** The action is
    `Microsoft.ApiManagement/service/subscriptions/listSecrets/action`, which API Management
    Service Contributor holds and the Reader and Operator roles do not
    ([permissions](https://learn.microsoft.com/azure/role-based-access-control/permissions/integration),
    [built-in roles](https://learn.microsoft.com/azure/role-based-access-control/built-in-roles/integration)).
-   The runner was given Contributor on the instance for this proof of concept. A custom role with
-   only the subscription actions it calls is narrower.
+   The runner was given Contributor on the instance for this proof of concept; a custom role with
+   only the subscription actions it calls is narrower. Anyone with Run Command on the runner VM
+   can act as its identity, which can read every key in the vault and list the keys of every
+   subscription on the instance, including the all-access one. The runner is therefore removed
+   after a run.
 
 ## Running it
 
@@ -124,7 +131,15 @@ run used, because it records each call and the session check counts them.
 ```
 
 This deletes the products with their keys, the routes, any leftover `poc-` keys, the runner (VM,
-role assignments, subnet, NAT gateway, public IP, NSG, private endpoint, DNS zone) and the vault.
+role assignments, subnet, NAT gateway, public IP, NSG, private endpoint) and the vault. The
+`privatelink.vaultcore.azure.net` zone belongs to the resource group, so it is deleted only when
+no other record is left in it. Each step's result is checked, and the script exits 1 if anything
+was left behind.
+
+The runner VM has no public IP and its subnet's NSG has no allow rules, so nothing reaches it
+from the internet. Inside the virtual network, port 22 is open under Azure's default
+AllowVnetInBound rule, but there is no login: password login is off and the SSH key is
+discarded when the VM is deployed.
 
 ## Cost while deployed
 

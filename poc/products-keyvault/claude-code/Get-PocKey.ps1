@@ -5,8 +5,9 @@
 
     settings.json: "apiKeyHelper": "pwsh -NoProfile -File <path>/Get-PocKey.ps1 -Subscription <id> -VaultName <vault> -Name <name>"
 
-    -LogPath appends one UTC timestamp per call, and nothing else, so a test can count how often
-    Claude Code asked for the key.
+    -LogPath appends one line per call, "<UTC time> <secret version>", and nothing else. The
+    version is the last segment of the secret's id and is not secret; it lets a test tell which
+    key each call returned.
 #>
 param(
     [Parameter(Mandatory)][string]$Subscription,
@@ -15,7 +16,8 @@ param(
     [string]$LogPath = ''
 )
 $ErrorActionPreference = 'Stop'
-if ($LogPath) { Add-Content -LiteralPath $LogPath -Value ([datetime]::UtcNow.ToString('o')) }
 . (Join-Path $PSScriptRoot '..' 'scripts' 'PocKeys.ps1')
 $ctx = New-PocContext -Subscription $Subscription -ResourceGroup 'unused' -ApimName 'unused' -VaultName $VaultName
-[Console]::Out.Write((Get-PocKey -Context $ctx -Name $Name))
+$record = Get-PocKeyRecord -Context $ctx -Name $Name
+if ($LogPath) { Add-Content -LiteralPath $LogPath -Value "$([datetime]::UtcNow.ToString('o')) $($record.Version)" }
+[Console]::Out.Write($record.Value)

@@ -14,9 +14,10 @@
 param(
     [Parameter(Mandatory)][ValidateSet('Deploy', 'Setup', 'Push', 'Test', 'Fetch')][string]$Step,
     [Parameter(Mandatory)][string]$Subscription,
-    [Parameter(Mandatory)][string]$ResourceGroup,
-    [Parameter(Mandatory)][string]$ApimName,
-    [Parameter(Mandatory)][string]$VaultName,
+    # These three reach a shell running as root on the VM, so only plain names are accepted.
+    [Parameter(Mandatory)][ValidatePattern('^[A-Za-z0-9._-]{1,90}$')][string]$ResourceGroup,
+    [Parameter(Mandatory)][ValidatePattern('^[A-Za-z][A-Za-z0-9-]{0,49}$')][string]$ApimName,
+    [Parameter(Mandatory)][ValidatePattern('^[A-Za-z][A-Za-z0-9-]{1,22}[A-Za-z0-9]$')][string]$VaultName,
     [string]$VnetName = 'vnet-hackgw-pe',
     [string]$VmName = 'vm-poc-runner',
     [int]$From = 1,
@@ -40,8 +41,7 @@ function Invoke-OnRunner([string]$Bash) {
 switch ($Step) {
     'Deploy' {
         $keyFile = Join-Path ([IO.Path]::GetTempPath()) "poc-runner-$([guid]::NewGuid().ToString('N'))"
-        ssh-keygen -q -t rsa -b 3072 -N '""' -f $keyFile | Out-Null
-        if (-not (Test-Path "$keyFile.pub")) { ssh-keygen -q -t rsa -b 3072 -N '' -f $keyFile | Out-Null }
+        ssh-keygen -q -t rsa -b 3072 -N '' -f $keyFile | Out-Null
         try { $publicKey = (Get-Content "$keyFile.pub" -Raw).Trim() }
         finally { Remove-Item -LiteralPath $keyFile, "$keyFile.pub" -ErrorAction SilentlyContinue }
         $deployment = "poc-runner-$(Get-Date -Format 'yyyyMMddHHmmss')"
@@ -69,6 +69,7 @@ echo "subscriptions visible to the VM identity: $(az account list --query 'lengt
     'Push' {
         $files = [ordered]@{
             '/opt/poc/scripts/PocKeys.ps1'        = Join-Path $poc 'scripts' 'PocKeys.ps1'
+            '/opt/poc/scripts/PocMeasure.ps1'     = Join-Path $poc 'scripts' 'PocMeasure.ps1'
             '/opt/poc/scripts/Test-Poc.ps1'       = Join-Path $poc 'scripts' 'Test-Poc.ps1'
             '/opt/poc/claude-code/Get-PocKey.ps1' = Join-Path $poc 'claude-code' 'Get-PocKey.ps1'
         }
@@ -87,19 +88,21 @@ echo "subscriptions visible to the VM identity: $(az account list --query 'lengt
         }
     }
     'Test' {
-        $id = az account show --subscription $Subscription --query id -o tsv
+        $id = "$(az account show --subscription $Subscription --query id -o tsv)".Trim()
+        if ($LASTEXITCODE -ne 0 -or $id -notmatch '^[0-9a-fA-F-]{36}$') { throw "The Azure CLI cannot use subscription '$Subscription'." }
         Invoke-OnRunner @"
 set -e
 rm -f /opt/poc/run.log /opt/poc/results.json
-systemd-run --unit=poc-test-`$(date +%s) --setenv=HOME=/root /bin/bash -c 'pwsh -NoProfile -File /opt/poc/scripts/Test-Poc.ps1 -Subscription $id -ResourceGroup $ResourceGroup -ApimName $ApimName -VaultName $VaultName -ResultsPath /opt/poc/results.json > /opt/poc/run.log 2>&1; echo "EXIT `$?" >> /opt/poc/run.log'
+systemd-run --unit=poc-test-`$(date +%s) --setenv=HOME=/root /bin/bash -c "pwsh -NoProfile -File /opt/poc/scripts/Test-Poc.ps1 -Subscription '$id' -ResourceGroup '$ResourceGroup' -ApimName '$ApimName' -VaultName '$VaultName' -ResultsPath /opt/poc/results.json > /opt/poc/run.log 2>&1; echo EXIT \`$? >> /opt/poc/run.log"
 echo started
 "@
     }
     'Fetch' {
         # Run Command returns at most 4,096 bytes, so the log is read a page of lines at a time.
+        # Failure lines are included, so a run that stopped shows why.
         $to = $From + $Lines - 1
         Invoke-OnRunner @"
-if [ -f /opt/poc/run.log ]; then grep -E '^(PASS|FAIL|SKIP|Run |EXIT|Results|[0-9]+ of )' /opt/poc/run.log | cut -c1-330 | sed -n '$From,${to}p'; else echo 'no run.log yet'; fi
+if [ -f /opt/poc/run.log ]; then grep -E '^(PASS|FAIL|SKIP|Run |EXIT|Results|[0-9]+ of )|failed:|Exception' /opt/poc/run.log | cut -c1-330 | sed -n '$From,${to}p'; else echo 'no run.log yet'; fi
 "@
     }
 }

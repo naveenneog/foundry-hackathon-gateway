@@ -1,23 +1,23 @@
 # Status
 
-**Active packet:** P37 — products and Key Vault on Standard v2, a proof of concept on branch
-`poc/apim-products-keyvault`. Measured; in council. U24–U28 are closed.
+**Active packet:** none. P37 is done on branch `poc/apim-products-keyvault` (not pushed; a push
+needs the owner's approval). U24–U28 are closed. Open packets on `main`: P36, P35, P30, P20.
 
-### P37 — products and Key Vault on Standard v2 — MEASURED, IN COUNCIL
+### P37 — products and Key Vault on Standard v2 — DONE (branch only)
 
 Work lives in `poc/products-keyvault/` and runs against the Standard v2 test instance in
 `rg-hackgw-pe-test` (Foundry reachable only through a private endpoint, UNKNOWNS U23). Every
 resource it creates is named `poc-`; the instance's `deepseek-gateway` and `claude-gateway`
 APIs are not changed.
 
-Run `10111606` passed 22 of 22 checks (results table in the POC README). Three earlier runs
-changed the method rather than the design:
+Final run `10111658` passed 22 of 22 checks (results table in the POC README). The four runs
+before it changed the method, not the design:
 
 - **Expiry.** API Management refuses an expiry already past and keeps only the date, so the
   test lets a stored date pass instead of setting one in the past. A suspended key has to be
   reactivated before it can be renewed.
 - **One check is not enough.** The gateway's nodes learn about a key change at different times,
-  so every time is now "five checks in a row".
+  so every time is "five checks in a row".
 - **U28.** The remaining-budget header lags. U28 is decided by whether a spent key, once
   rotated, is still refused for quota, not by comparing header values.
 
@@ -25,8 +25,26 @@ The vault's public network access was turned off by an identity outside this pro
 minutes after it was created. That was left in place: `runner.bicep` adds a private endpoint and
 a VM inside the virtual network, and the measurements ran there.
 
-Offline: 19 tests in `tests/poc-products-keyvault.test.mjs`, written first. Mutations caught:
-6 of 6 on the policies and key scripts, and 2 of 2 on the runner template.
+**Council — P37.** Architect, Coder, UX and Security: PASS-WITH-NOTES. QA: BLOCK, cleared. Both
+BLOCK fixes have tests that were red first. Seven mutants across the tested fixes (timing,
+session check, token expiry, vault default, name validation) were all caught. The `Test-Poc.ps1`
+changes are checked by run `10111658`. `Remove-Poc.ps1` is parsed but has not been run yet.
+
+| Finding | Fix |
+|---|---|
+| **BLOCK.** Times were taken from the wrong moment: a new key's after four more keys were issued (2.2 s reported), the session key's refusal from the end of the rotations | `Measure-PocUntil` in `PocMeasure.ps1` times from a given moment, before each request; re-run: 6.4 s for a new key |
+| **BLOCK.** U27 passed on a count of helper reads, which a session holding a never-refused key would also pass | the helper logs the secret version per read; `Test-PocSessionRefresh` requires the first read to return the old version and a later read, after the refusal, the new one; the rotations start after the session's first read |
+| A refusal counted as any status other than 200 | 401 required |
+| One probe decided that an expiry is not enforced | 60 s of five-in-a-row checks |
+| Tokens reused for 30 minutes regardless of expiry | reused until five minutes before `expires_on` |
+| The template set the vault's public access to Enabled, so a redeploy would reopen it | `vaultPublicNetworkAccess` defaults to Disabled, firewall default Deny |
+| Names reached the runner's root shell unquoted | validated before any Azure call, and quoted |
+| `Remove-Poc.ps1` reported removals without checking them, and deleted the resource group's privatelink zone unconditionally | every step checked, exit 1 if anything is left; the zone goes only when empty |
+| Docs: "no inbound path", and the runner identity's reach | stated as measured: nothing from the internet; port 22 inside the network with no login; Run Command on the VM acts as its identity, so the runner is removed after a run |
+
+Offline: 27 tests in `tests/poc-products-keyvault.test.mjs`, written first. Mutations caught:
+6 of 6 on the policies and key scripts, 2 of 2 on the runner template, 7 of 7 on the council
+fixes.
 
 ### P32–P34 — handouts and the key list — DONE (`119d94b`, `222c109`, `b31ec20` + council fixes)
 

@@ -50,15 +50,16 @@ _None._
 
 U24–U28 belong to P37, the proof of concept on branch `poc/apim-products-keyvault`
 (`poc/products-keyvault/`). All were measured on 2026-10-11 on the Standard v2 test instance of
-U23, from a VM inside its virtual network; the final run (`10111606`) passed 22 of 22 checks.
+U23, from a VM inside its virtual network; the final run (`10111658`) passed 22 of 22 checks.
 Run details are in `poc/products-keyvault/README.md`.
 
 ### U28 — Does a budget counted per subscription carry across key regeneration? — RESOLVED
 
 **Yes.** A key's 300-token monthly budget was spent (403 *"Token quota is exceeded"*) and the
-403 held from 7 s. After a rotation, the new key was refused for quota on 4 of 5 calls. A count
-that restarted would refuse none of them: five short calls are about 90 tokens of a fresh 300.
-The one call that passed fits the per-node counting described in the POC README.
+403 held at once. After a rotation, the new key was refused for quota on 5 of 5 calls (4 of 5
+in run `10111606`). A count that restarted would refuse none of them: five short calls are
+about 90 tokens of a fresh 300. The call that passed in `10111606` fits the per-node counting
+described in the POC README.
 
 The detector first named here, `x-budget-remaining` before and after a rotation, could not
 decide it: the header read 199984 on three consecutive calls in run `10111520`.
@@ -74,20 +75,25 @@ reference (updated 2026-06-26), which keys the count on `counter-key`, here
 `ANTHROPIC_*` key variables set:
 
 - `claude -p` answered.
-- A session waiting 60 s in a tool call kept working across two rotations. Its key was refused
-  7.2 s after the rotations began, the helper ran twice in the session (at the start, and after
-  the refusal), and the session finished.
+- A session waiting 60 s in a tool call kept working across two rotations. The helper logs the
+  secret version each read returned. The session's first read returned the old version; the
+  rotations began after it; the old key was refused (401) from 9.2 s after they began; the
+  session's next read, 65 s after the first, returned the new version; and the session
+  finished.
 - A new session afterwards needed no settings change.
 
-The re-read after a refusal is documented: the helper's output is sent as `X-Api-Key` and
-`Authorization: Bearer`, cached for five minutes by default, and re-read after a 401 or 403
+Two reads in 65 s, against a five-minute cache, fit the documented re-read after a refusal:
+the helper's output is sent as `X-Api-Key` and `Authorization: Bearer`, cached for five
+minutes by default, and re-read after a 401 or 403
 ([settings reference](https://code.claude.com/docs/en/settings-reference), read 2026-10-11).
+An earlier run counted reads only, which a session holding a key the rotations never refused
+would also have passed (council QA, P37).
 
 ### U26 — Is `context.Product` empty for the all-access key, so an API policy can refuse it? — RESOLVED
 
 **Yes.** The probe returned `product: null` for the all-access key. The routes' `context.Product
 == null` check refused that key, an all-APIs key and a key scoped to the Claude API with 403
-`product_required`, in all four runs.
+`product_required`, in all five runs.
 
 Without that check such keys would bypass every product budget: "If you're using an API-scoped
 subscription, an all-APIs subscription, or the built-in all-access subscription, policies
@@ -97,21 +103,25 @@ updated 2026-06-25). That page does not say `context.Product` is then null.
 
 ### U25 — How long do a suspended subscription and a regenerated key take to reach a Standard v2 gateway? — MEASURED
 
-Time until the gateway answered the same way five times in a row, checked once a second (run
-`10111606`, one Standard v2 unit, eastus2):
+Time from just before each change (the issue, rotation, suspension or reactivation request)
+until the gateway answered the same way five times in a row, checked once a second (run
+`10111658`, one Standard v2 unit, eastus2):
 
 | Change | Time |
 |---|---|
-| New key accepted | 2.2 s |
-| Rotated key accepted; the key clients held still accepted on 5 of 5 checks | 8.3 s |
-| Regenerated key refused | 8.2 s |
-| Suspended key refused (401) | 6.2 s |
-| Reactivated key accepted | 6.2 s |
+| New key accepted | 6.4 s |
+| Rotated key accepted; the key clients held still accepted on 5 of 5 checks | 1.5 s |
+| Regenerated key refused (401); its replacement accepted | 5.7 s; 9.8 s |
+| Suspended key refused (401) | 1.4 s |
+| Reactivated key accepted | 9.8 s |
+
+The earlier run `10111606` reported 2.2 s for a new key, timed after four more keys had been
+issued, and refusal times taken from the end of the change rather than its start. The council
+review of P37 found this; the timing now starts before each request and is unit-tested.
 
 One check is not enough. In run `10111549` a new key scoped to one API was accepted and then
 refused on the next call, and a regenerated key was refused at 1 s and accepted on the next
-check. First-refusal times in the earlier runs: regenerated 8.2 s and 9.3 s; suspended 6.2 s
-and 5.2 s.
+check.
 
 Not documented: the subscriptions concept page, the create-subscriptions how-to and the service
 limits page give no propagation time (searched 2026-10-07). The JWT design's denylist took 1 s
@@ -129,8 +139,8 @@ three runs. Also measured:
   renewed"*.
 - The gateway kept accepting a key whose stored expiry had passed.
 
-Expiry therefore needs a job. `Suspend-ExpiredPocKeys` suspends keys past their stored date,
-which took effect in 6.2 s.
+Expiry therefore needs a job. `Suspend-ExpiredPocKeys` suspends keys past their stored date;
+the suspended key was refused from 1.4 s after the job started.
 
 The REST contract calls `expirationDate` "for audit purposes only and the subscription is not
 automatically expired"

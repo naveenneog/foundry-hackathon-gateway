@@ -4,9 +4,11 @@
 //
 // Adds to an existing virtual network: a private endpoint and privatelink DNS zone for the
 // vault, a small subnet whose only way out is a NAT gateway, and a Linux VM with a managed
-// identity, driven through Run Command. Nothing reaches the VM from outside: its NIC has no
-// public IP and the subnet's NSG has only Azure's default rules, which deny inbound traffic
-// from the internet.
+// identity, driven through Run Command. Nothing reaches the VM from the internet: its NIC has no
+// public IP and the subnet's NSG has only Azure's default rules. Inside the virtual network
+// port 22 is reachable under the default AllowVnetInBound rule, but there is no login: password
+// login is off and the SSH key is discarded at deployment. Anyone with Run Command on the VM can
+// act as its identity, so the runner is removed after a run (Remove-Poc.ps1 -Runner).
 
 param vnetName string
 param vaultName string

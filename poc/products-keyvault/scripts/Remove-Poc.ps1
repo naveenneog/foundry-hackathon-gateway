@@ -1,7 +1,9 @@
 <#
-    P37 proof of concept: remove everything poc.bicep and the key scripts created. Products are
-    deleted with their subscriptions; the routes, any leftover poc- subscriptions, the operator's
-    role assignment and the vault follow. Each step that finds nothing is skipped.
+    P37 proof of concept: remove everything poc.bicep, runner.bicep and the key scripts created.
+    Products are deleted with their subscriptions; the routes, any leftover poc- subscriptions,
+    the operator's role assignment and the vault follow. A step that finds nothing is skipped.
+    Each step's result is checked: a failure is reported, the rest still run, and the script
+    exits 1 if anything was left behind.
 #>
 param(
     [Parameter(Mandatory)][string]$Subscription,
@@ -9,14 +11,25 @@ param(
     [Parameter(Mandatory)][string]$ApimName,
     [string]$VaultName = '',
     [switch]$PurgeVault,
-    # Also remove what runner.bicep added: the VM and its roles, NAT, subnet, private endpoint
-    # and DNS zone.
+    # Also remove what runner.bicep added: the VM and its roles, NAT, subnet and private endpoint,
+    # and the privatelink DNS zone if no other record is left in it.
     [switch]$Runner,
     [string]$VnetName = 'vnet-hackgw-pe'
 )
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'PocKeys.ps1')
 $ctx = New-PocContext -Subscription $Subscription -ResourceGroup $ResourceGroup -ApimName $ApimName -VaultName $(if ($VaultName) { $VaultName } else { 'none' })
+$failures = [System.Collections.Generic.List[string]]::new()
+
+# Runs one az command and reports what happened; a non-zero exit is recorded, not hidden.
+function Invoke-RemovalStep([string]$Label, [scriptblock]$Command) {
+    $output = & $Command 2>&1 | Out-String
+    if ($LASTEXITCODE -eq 0) { Write-Host "Removed $Label." }
+    else {
+        $failures.Add($Label)
+        Write-Host "Could not remove ${Label}: $(($output -split "`n" | Where-Object { $_ -match 'ERROR|Code:' } | Select-Object -First 1).Trim())"
+    }
+}
 
 if ($Runner) {
     $principal = "$(az vm show -g $ResourceGroup -n vm-poc-runner --subscription $Subscription --query identity.principalId -o tsv 2>$null)".Trim()
@@ -24,19 +37,27 @@ if ($Runner) {
         $apimId = "$(az apim show -g $ResourceGroup -n $ApimName --subscription $Subscription --query id -o tsv)".Trim()
         $vaultId = if ($VaultName) { "$(az keyvault show --name $VaultName --subscription $Subscription --query id -o tsv 2>$null)".Trim() } else { '' }
         foreach ($scope in @($apimId, $vaultId) | Where-Object { $_ }) {
-            az role assignment delete --assignee-object-id $principal --scope $scope --subscription $Subscription 2>$null
+            Invoke-RemovalStep "the runner's role on $($scope.Split('/')[-1])" { az role assignment delete --assignee-object-id $principal --scope $scope --subscription $Subscription }
         }
-        az vm delete -g $ResourceGroup -n vm-poc-runner --subscription $Subscription --yes -o none
-        Write-Host 'Removed the runner VM, its disk and NIC, and its role assignments.'
+        Invoke-RemovalStep 'the runner VM, its disk and NIC' { az vm delete -g $ResourceGroup -n vm-poc-runner --subscription $Subscription --yes -o none }
+    } else { Write-Host 'The runner VM was not there.' }
+    Invoke-RemovalStep 'the runner subnet' { az network vnet subnet delete -g $ResourceGroup --vnet-name $VnetName -n snet-poc-runner --subscription $Subscription -o none }
+    Invoke-RemovalStep 'the NAT gateway' { az network nat gateway delete -g $ResourceGroup -n nat-poc-runner --subscription $Subscription -o none }
+    Invoke-RemovalStep "the NAT gateway's public IP" { az network public-ip delete -g $ResourceGroup -n pip-poc-runner-nat --subscription $Subscription -o none }
+    Invoke-RemovalStep 'the runner NSG' { az network nsg delete -g $ResourceGroup -n nsg-poc-runner --subscription $Subscription -o none }
+    if ($VaultName) {
+        # The endpoint's DNS zone group removes its own record from the zone.
+        Invoke-RemovalStep "the vault's private endpoint" { az network private-endpoint delete -g $ResourceGroup -n "pe-$VaultName" --subscription $Subscription -o none }
     }
-    az network vnet subnet delete -g $ResourceGroup --vnet-name $VnetName -n snet-poc-runner --subscription $Subscription -o none 2>$null
-    az network nat gateway delete -g $ResourceGroup -n nat-poc-runner --subscription $Subscription -o none 2>$null
-    az network public-ip delete -g $ResourceGroup -n pip-poc-runner-nat --subscription $Subscription -o none 2>$null
-    az network nsg delete -g $ResourceGroup -n nsg-poc-runner --subscription $Subscription -o none 2>$null
-    if ($VaultName) { az network private-endpoint delete -g $ResourceGroup -n "pe-$VaultName" --subscription $Subscription -o none 2>$null }
-    az network private-dns link vnet delete -g $ResourceGroup -z privatelink.vaultcore.azure.net -n "link-$VnetName" --subscription $Subscription --yes -o none 2>$null
-    az network private-dns zone delete -g $ResourceGroup -n privatelink.vaultcore.azure.net --subscription $Subscription --yes -o none 2>$null
-    Write-Host 'Removed the runner network: subnet, NAT gateway and its IP, NSG, private endpoint and DNS zone.'
+    # The zone is the resource group's, not only this POC's: it goes only if no record is left.
+    $zone = 'privatelink.vaultcore.azure.net'
+    $records = @(az network private-dns record-set a list -g $ResourceGroup -z $zone --subscription $Subscription --query '[].name' -o tsv 2>$null | Where-Object { $_ })
+    if ($LASTEXITCODE -ne 0) { Write-Host "The $zone zone was not there." }
+    elseif ($records.Count -gt 0) { Write-Host "Kept the $zone zone: it still holds $($records.Count) other record(s)." }
+    else {
+        Invoke-RemovalStep "the $zone link to $VnetName" { az network private-dns link vnet delete -g $ResourceGroup -z $zone -n "link-$VnetName" --subscription $Subscription --yes -o none }
+        Invoke-RemovalStep "the $zone zone" { az network private-dns zone delete -g $ResourceGroup -n $zone --subscription $Subscription --yes -o none }
+    }
 }
 
 function Remove-PocItem([string]$Path, [string]$Label) {
@@ -44,7 +65,8 @@ function Remove-PocItem([string]$Path, [string]$Label) {
         $null = Invoke-PocApim -Context $ctx -Method DELETE -Path $Path -IfMatch
         Write-Host "Removed $Label."
     } catch {
-        if ("$_" -match '404|NotFound') { Write-Host "$Label was not there." } else { throw }
+        if ("$_" -match '404|NotFound') { Write-Host "$Label was not there." }
+        else { $failures.Add($Label); Write-Host "Could not remove ${Label}: $_" }
     }
 }
 
@@ -63,12 +85,13 @@ while ($page) {
 if ($VaultName) {
     $vaultId = "$(az keyvault show --name $VaultName --subscription $Subscription --query id -o tsv 2>$null)".Trim()
     if ($vaultId) {
-        az role assignment delete --scope $vaultId --role 'Key Vault Secrets Officer' --subscription $Subscription 2>$null
-        az keyvault delete --name $VaultName --subscription $Subscription -o none
-        Write-Host "Deleted vault $VaultName (soft-deleted for its retention period)."
-        if ($PurgeVault) {
-            az keyvault purge --name $VaultName --subscription $Subscription -o none
-            Write-Host "Purged vault $VaultName."
-        }
+        Invoke-RemovalStep "the operator's role on $VaultName" { az role assignment delete --scope $vaultId --role 'Key Vault Secrets Officer' --subscription $Subscription }
+        Invoke-RemovalStep "vault $VaultName (soft-deleted for its retention period)" { az keyvault delete --name $VaultName --subscription $Subscription -o none }
+        if ($PurgeVault) { Invoke-RemovalStep "vault $VaultName, purged" { az keyvault purge --name $VaultName --subscription $Subscription -o none } }
     } else { Write-Host "Vault $VaultName was not there." }
+}
+
+if ($failures.Count -gt 0) {
+    Write-Host "Left behind: $($failures -join '; ')."
+    exit 1
 }

@@ -220,6 +220,15 @@ describe("P37 key scripts", { skip: !pwsh && "PowerShell 7 not found" }, () => {
     }
   });
 
+  test("a path with its own query keeps it, and the api-version is added once", () => {
+    const r = runKeys({
+      responses: [{ method: "DELETE", match: "/products/poc-tiny-pack", body: null }],
+      call: "$null = Invoke-PocApim -Context $ctx -Method DELETE -Path '/products/poc-tiny-pack?deleteSubscriptions=true' -IfMatch",
+    });
+    assert.equal(r.failed, "", r.failed);
+    assert.match(r.calls[0].uri, /\/products\/poc-tiny-pack\?deleteSubscriptions=true&api-version=2024-05-01$/);
+  });
+
   test("only active proof-of-concept keys past their expiry are suspended, across every page", () => {
     const scope = (p) => `/subscriptions/s/resourceGroups/rg-x/providers/Microsoft.ApiManagement/service/apim-x${p}`;
     const r = runKeys({

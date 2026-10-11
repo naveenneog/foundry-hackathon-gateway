@@ -70,7 +70,10 @@ function Invoke-PocRest {
 function Invoke-PocApim {
     param([Parameter(Mandatory)]$Context, [Parameter(Mandatory)][string]$Method, [Parameter(Mandatory)][string]$Path, $Body, [switch]$IfMatch)
     # A nextLink is already absolute and carries its own api-version.
-    $uri = if ($Path -like 'https://*') { $Path } else { "$($Context.ApimBase)$Path`?api-version=$script:PocApimApiVersion" }
+    $uri = if ($Path -like 'https://*') { $Path } else {
+        $separator = if ($Path.Contains('?')) { '&' } else { '?' }
+        "$($Context.ApimBase)$Path${separator}api-version=$script:PocApimApiVersion"
+    }
     Invoke-PocRest -Context $Context -Method $Method -Uri $uri -Resource 'https://management.azure.com/' -Body $Body -IfMatch:$IfMatch
 }
 

@@ -33,13 +33,61 @@ assumption is only closed if it names its blast radius and the detector that wou
 | U21 | Why `Set-Acl` needs `SeSecurityPrivilege` on the second call | RESOLVED |
 | U22 | Does APIM store `;` (EMPTY_MAP) as a named value? | RESOLVED |
 | U23 | Does the gateway work when Foundry is reachable only through a private endpoint? | RESOLVED |
+| U24 | Does `context.Subscription.EndDate` reflect a subscription's `expirationDate`? | OPEN |
+| U25 | How long do a suspended subscription and a regenerated key take to reach a Standard v2 gateway? | OPEN |
+| U26 | Is `context.Product` empty for the all-access key, so an API policy can refuse it? | OPEN |
+| U27 | Does Claude Code with `apiKeyHelper` reading Key Vault keep working across key rotation? | OPEN |
+| U28 | Does a budget counted per subscription carry across key regeneration? | OPEN |
 
 ---
 
 
 ## Open
 
-_None._
+All five belong to P37, the proof of concept on branch `poc/apim-products-keyvault`
+(`poc/products-keyvault/`). Each is closed by a measurement on the Standard v2 test instance.
+
+### U24 — Does `context.Subscription.EndDate` reflect a subscription's `expirationDate`? — OPEN
+
+The REST contract describes `expirationDate` as "for audit purposes only and the subscription is
+not automatically expired", and `endDate` as the "date when subscription was cancelled or
+expired" ([Subscription - Update](https://learn.microsoft.com/rest/api/apimanagement/subscription/update),
+read 2026-10-11). The policy expression reference lists `EndDate: DateTime?` on
+`context.Subscription` without saying which field fills it
+([policy expressions](https://learn.microsoft.com/azure/api-management/api-management-policy-expressions),
+updated 2026-06-25). If it reflects `expirationDate`, a product policy can refuse an expired key
+with no scheduled job. **Detector:** the POC's probe API returns `EndDate` before and after
+`expirationDate` is set.
+
+### U25 — How long do a suspended subscription and a regenerated key take to reach a Standard v2 gateway? — OPEN
+
+Not documented (searched the subscriptions concept page, the create-subscriptions how-to and the
+service limits page, 2026-10-07). The JWT design measured 1 s and 7 s for its denylist (U16).
+**Detector:** the POC polls the probe API every second after each change.
+
+### U26 — Is `context.Product` empty for the all-access key, so an API policy can refuse it? — OPEN
+
+"If you're using an API-scoped subscription, an all-APIs subscription, or the built-in
+all-access subscription, policies configured at the product scope aren't applied"
+([subscriptions](https://learn.microsoft.com/azure/api-management/api-management-subscriptions),
+updated 2026-06-25). Such a key would bypass every product budget. Whether `context.Product` is
+then null is not stated. **Detector:** the POC calls the Claude route with the all-access key and
+expects the API policy's 403.
+
+### U27 — Does Claude Code with `apiKeyHelper` reading Key Vault keep working across key rotation? — OPEN
+
+The helper's output is sent as `X-Api-Key` and `Authorization: Bearer`, cached for five minutes by
+default, and re-read after a 401 or 403
+([settings reference](https://code.claude.com/docs/en/settings-reference), read 2026-10-11).
+**Detector:** a `claude -p` run before rotation, then two rotations (so the first key no longer
+works), then a second run with the settings unchanged.
+
+### U28 — Does a budget counted per subscription carry across key regeneration? — OPEN
+
+The quota counter is keyed on `context.Subscription.Id`, which regeneration does not change, so
+the count should carry over. Not stated in the
+[llm-token-limit](https://learn.microsoft.com/azure/api-management/llm-token-limit-policy)
+reference. **Detector:** `x-budget-remaining` before and after a rotation.
 
 ---
 

@@ -1,7 +1,15 @@
 # Status
 
-**Active packet:** none. P32–P34 are done; the open packets are P36, P35, P30 and P20 in the
-roadmap.
+**Active packet:** P37 — products and Key Vault on Standard v2, a proof of concept on branch
+`poc/apim-products-keyvault`. Acceptance criteria are in the roadmap (M7). Open unknowns:
+U24–U28.
+
+### P37 — products and Key Vault on Standard v2 — IN PROGRESS
+
+Work lives in `poc/products-keyvault/` and runs against the Standard v2 test instance in
+`rg-hackgw-pe-test` (Foundry reachable only through a private endpoint, UNKNOWNS U23). Every
+resource it creates is named `poc-`; the instance's `deepseek-gateway` and `claude-gateway`
+APIs are not changed.
 
 ### P32–P34 — handouts and the key list — DONE (`119d94b`, `222c109`, `b31ec20` + council fixes)
 

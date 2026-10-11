@@ -1,0 +1,35 @@
+<!--
+    P37 proof of concept: a probe that reports what the gateway knows about the calling key,
+    for UNKNOWNS U24-U26. It never calls a backend and never returns the key.
+
+    No <base /> in inbound: the probe answers before the product's pack and budgets would run,
+    so measuring a key costs no tokens. This is also how any API in a product could skip that
+    product's policies, which is why both model routes put <base /> first.
+-->
+<policies>
+    <inbound>
+        <return-response>
+            <set-status code="200" reason="OK" />
+            <set-header name="Content-Type" exists-action="override">
+                <value>application/json</value>
+            </set-header>
+            <set-body>@{
+                return new JObject(
+                    new JProperty("subscription", context.Subscription.Id),
+                    new JProperty("product", context.Product == null ? null : context.Product.Id),
+                    new JProperty("startDate", context.Subscription.StartDate.HasValue ? context.Subscription.StartDate.Value.ToString("o") : null),
+                    new JProperty("endDate", context.Subscription.EndDate.HasValue ? context.Subscription.EndDate.Value.ToString("o") : null),
+                    new JProperty("utcNow", DateTime.UtcNow.ToString("o"))).ToString();
+            }</set-body>
+        </return-response>
+    </inbound>
+    <backend>
+        <base />
+    </backend>
+    <outbound>
+        <base />
+    </outbound>
+    <on-error>
+        <base />
+    </on-error>
+</policies>

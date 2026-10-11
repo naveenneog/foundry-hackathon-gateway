@@ -139,6 +139,21 @@ that are actually deployed in the subscription, and serve Claude models to Claud
       *Acceptance:* option 6 writes an owner-only `keys.csv` whose keys verify against the
       signing secret, with formula-safe names; handout files holding a key are owner-only.
 
+## Milestone M7 — Long-lived keys on API Management products (proof of concept)
+
+Branch `poc/apim-products-keyvault` only. Explores the alternative to ADR-0002 for keys that
+live for months: one APIM product per model pack, one subscription key per user, keys held in
+Key Vault. Nothing here changes the gateway on `main`.
+
+- [ ] **P37** Products and Key Vault on Standard v2, measured
+      *Acceptance:* on the Standard v2 test instance, with `poc-` resources only:
+      a product key calls its pack's models and is refused others; a monthly per-key budget
+      returns 403 when spent and reports what remains; the all-access key is refused; a key
+      rotation keeps both the budget count and a Claude Code session working, with the key read
+      from Key Vault; suspension and regeneration reach the gateway in a measured time; and
+      UNKNOWNS U24–U28 are closed by measurement.
+      *Why:* asked 2026-10-11, after the comparison of products, Key Vault and HashiCorp Vault.
+
 ## Milestone M6 — Only if this outlives one event
 
 - [ ] **P36** An unreadable key list is not written over

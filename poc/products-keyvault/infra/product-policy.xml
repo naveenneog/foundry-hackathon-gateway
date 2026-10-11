@@ -1,0 +1,75 @@
+<!--
+    P37 proof of concept: the policy on every model-pack product. poc.bicep fills the four
+    __PLACEHOLDERS__ per product. It runs where a route's inbound section has <base />, which is
+    first in both routes.
+
+    A product policy runs only for a key issued on that product. The all-access key, an
+    all-APIs key and a key scoped to one API skip it, budgets included
+    (https://learn.microsoft.com/azure/api-management/api-management-subscriptions); each route
+    refuses such keys (UNKNOWNS U26).
+-->
+<policies>
+    <inbound>
+        <base />
+        <!-- The pack. `model` is a top-level field in both the OpenAI and the Anthropic request
+             body. Any other model is refused here, before a token is counted or Foundry is
+             called. An unreadable body reads as no model, which is refused. -->
+        <set-variable name="pocModel" value="@{
+            try { return (string)context.Request.Body.As<JObject>(preserveContent: true)["model"] ?? ""; }
+            catch { return ""; }
+        }" />
+        <choose>
+            <when condition="@(!"__MODELS__".Split('|').Contains((string)context.Variables["pocModel"]))">
+                <return-response>
+                    <set-status code="403" reason="Forbidden" />
+                    <set-header name="Content-Type" exists-action="override">
+                        <value>application/json</value>
+                    </set-header>
+                    <set-body>@{
+                        var message = "model_not_allowed: this key's product does not include the model '" + (string)context.Variables["pocModel"] + "'.";
+                        if (context.Api.Id == "poc-claude") {
+                            return new JObject(
+                                new JProperty("type", "error"),
+                                new JProperty("error", new JObject(
+                                    new JProperty("type", "permission_error"),
+                                    new JProperty("message", message)))).ToString();
+                        }
+                        return new JObject(new JProperty("error", new JObject(
+                            new JProperty("code", "model_not_allowed"),
+                            new JProperty("type", "invalid_request_error"),
+                            new JProperty("message", message)))).ToString();
+                    }</set-body>
+                </return-response>
+            </when>
+        </choose>
+
+        <!-- Per key: a monthly budget. Counted on the subscription, not the key, so regenerating
+             the key keeps the count (UNKNOWNS U28). The window starts at 00:00 UTC on the 1st;
+             a spent quota returns 403, a spent per-minute limit 429
+             (https://learn.microsoft.com/azure/api-management/llm-token-limit-policy). -->
+        <llm-token-limit
+            counter-key="@(context.Subscription.Id)"
+            tokens-per-minute="__TPM__"
+            token-quota="__KEY_TOKENS__"
+            token-quota-period="Monthly"
+            estimate-prompt-tokens="false"
+            remaining-quota-tokens-header-name="x-budget-remaining"
+            remaining-tokens-header-name="x-ratelimit-remaining-tokens" />
+
+        <!-- Per product: one monthly pool that every key on the pack draws from. -->
+        <llm-token-limit
+            counter-key="@("pool-" + context.Product.Id)"
+            token-quota="__POOL_TOKENS__"
+            token-quota-period="Monthly"
+            estimate-prompt-tokens="false" />
+    </inbound>
+    <backend>
+        <base />
+    </backend>
+    <outbound>
+        <base />
+    </outbound>
+    <on-error>
+        <base />
+    </on-error>
+</policies>

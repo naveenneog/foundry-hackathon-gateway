@@ -174,6 +174,9 @@ Key Vault. Nothing here changes the gateway on `main`.
       opencode and curl. Every client example is a file that `Test-PocClients.ps1` runs against
       the live gateway; operator actions the guide names exist as script actions with tests.
       *Why:* asked 2026-10-12.
+      *Amended 2026-10-12 (council finding Q2):* the one-time copies of a key are shown as `az`
+      commands, not script actions, because the scripts print no key (P37 design). Every other
+      operator action in the guide is a script action with tests.
 
 - [ ] **P40** The per-key per-minute header does not overwrite Foundry's
       *Acceptance:* the product policy reports its per-key per-minute count under a header
@@ -189,6 +192,14 @@ Key Vault. Nothing here changes the gateway on `main`.
       *Why:* found writing SETUP.md (P38). The script deletes `poc-claude-pack`,
       `poc-deepseek-pack` and `poc-tiny-pack` by name (`scripts/Remove-Poc.ps1`), and a
       deployment is incremental, so any other pack stays.
+
+- [ ] **P42** Keys are read from headers only
+      *Acceptance:* a request to a proof-of-concept route with its key in the `subscription-key`
+      query parameter is refused before Foundry is called, and a test checks the policy.
+      *Why:* council finding S3 on P38. `poc.bicep` sets `subscriptionKeyParameterNames.query`
+      to `subscription-key`, so API Management also accepts a key in the URL, and the route
+      policies remove only the key headers (`infra/api-claude-policy.xml`,
+      `infra/api-openai-policy.xml`).
 
 ## Milestone M6 — Only if this outlives one event
 

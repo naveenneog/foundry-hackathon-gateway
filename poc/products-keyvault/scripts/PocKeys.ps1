@@ -19,6 +19,10 @@
 
 $script:PocApimApiVersion = '2024-05-01'
 $script:PocVaultApiVersion = '7.4'
+$script:PocRoleApiVersion = '2022-04-01'
+# Key Vault Secrets User: read a secret's value and metadata
+# (https://learn.microsoft.com/azure/role-based-access-control/built-in-roles/security).
+$script:PocSecretsUserRole = '4633458b-17de-408a-b874-0445c86b69e6'
 
 function New-PocContext {
     param(
@@ -27,12 +31,18 @@ function New-PocContext {
         [Parameter(Mandatory)][string]$ApimName,
         [Parameter(Mandatory)][string]$VaultName
     )
+    # The vault name becomes part of a URL and of a role assignment's scope.
+    if ($VaultName -ne 'none' -and $VaultName -cnotmatch '^[A-Za-z][A-Za-z0-9-]{1,22}[A-Za-z0-9]$') {
+        throw "'$VaultName' is not a Key Vault name."
+    }
     $id = "$(az account show --subscription $Subscription --query id -o tsv)".Trim()
     if ($LASTEXITCODE -ne 0 -or -not $id) { throw "The Azure CLI cannot use subscription '$Subscription'. Run az login." }
     [pscustomobject]@{
         SubscriptionId = $id
         ApimBase       = "https://management.azure.com/subscriptions/$id/resourceGroups/$ResourceGroup/providers/Microsoft.ApiManagement/service/$ApimName"
         VaultBase      = "https://$VaultName.vault.azure.net"
+        # poc.bicep creates the vault in the instance's resource group.
+        VaultId        = "/subscriptions/$id/resourceGroups/$ResourceGroup/providers/Microsoft.KeyVault/vaults/$VaultName"
         Gateway        = "https://$ApimName.azure-api.net"
         Tokens         = @{}
     }
@@ -180,6 +190,38 @@ function Set-PocKeyExpiry {
         properties = @{ expirationDate = (ConvertTo-PocUtc $ExpiresUtc).ToString('o') }
     }
     Write-Host "poc-$Name expires on $((ConvertTo-PocUtc $ExpiresUtc).ToString('yyyy-MM-dd')) (00:00 UTC; API Management keeps the date only)."
+}
+
+# Gives one identity read access to one key: Key Vault Secrets User on the secret poc-key-<name>,
+# not on the vault. The identity is named by object id and principal type, so no directory
+# (Microsoft Graph) lookup is made. A role assignment is a management-plane call, so this works
+# where the vault accepts private traffic only. Granting the same identity again is not an error.
+function Grant-PocKeyAccess {
+    param(
+        [Parameter(Mandatory)]$Context,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Name,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$ObjectId,
+        [ValidateSet('User', 'Group', 'ServicePrincipal')][string]$PrincipalType = 'User'
+    )
+    Assert-PocName $Name
+    if ($ObjectId -notmatch '^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$') {
+        throw "'$ObjectId' is not an object id: use the identity's object id, a GUID."
+    }
+    $secret = "poc-key-$Name"
+    $scope = "$($Context.VaultId)/secrets/$secret"
+    $uri = "https://management.azure.com$scope/providers/Microsoft.Authorization/roleAssignments/$([guid]::NewGuid())?api-version=$script:PocRoleApiVersion"
+    $body = @{ properties = @{
+            roleDefinitionId = "/subscriptions/$($Context.SubscriptionId)/providers/Microsoft.Authorization/roleDefinitions/$script:PocSecretsUserRole"
+            principalId      = $ObjectId
+            principalType    = $PrincipalType
+        }
+    }
+    try { $null = Invoke-PocRest -Context $Context -Method PUT -Uri $uri -Resource 'https://management.azure.com/' -Body $body }
+    catch {
+        if ("$_" -match 'RoleAssignmentExists') { Write-Host "$ObjectId already has read access to $secret."; return }
+        throw
+    }
+    Write-Host "Granted $ObjectId Key Vault Secrets User on $secret only. Role assignments can take a few minutes to apply."
 }
 
 # Every key on a proof-of-concept product: name, product, state and stored expiry date (API

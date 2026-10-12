@@ -171,7 +171,10 @@ function Invoke-RestMethod {
     param($Method, $Uri, $Headers, $Body, $ContentType)
     $global:Calls.Add([pscustomobject]@{ method = "$Method"; uri = "$Uri"; body = $Body; auth = $Headers.Authorization; ifMatch = $Headers['If-Match'] })
     foreach ($r in $global:Responses) {
-        if ("$Method" -eq $r.method -and "$Uri" -match $r.match) { return $r.body }
+        if ("$Method" -eq $r.method -and "$Uri" -match $r.match) {
+            if ($r.error) { throw $r.error }
+            return $r.body
+        }
     }
     throw "unexpected call: $Method $Uri"
 }
@@ -446,6 +449,63 @@ describe("P38 operator actions", { skip: !pwsh && "PowerShell 7 not found" }, ()
   });
 });
 
+describe("P38 handover", { skip: !pwsh && "PowerShell 7 not found" }, () => {
+  const OID = "11111111-2222-3333-4444-555555555555";
+  const SECRET_SCOPE = "https://management\\.azure\\.com/subscriptions/sub-123/resourceGroups/rg-x/providers/Microsoft\\.KeyVault/vaults/kv-x/secrets/poc-key-alice/providers/Microsoft\\.Authorization/roleAssignments/";
+  const grant = (extra = "") => `Grant-PocKeyAccess -Context $ctx -Name 'alice' -ObjectId '${OID}'${extra}`;
+
+  test("a grant is Key Vault Secrets User on the one secret, by object id, with no vault or directory call", () => {
+    const r = runKeys({ responses: [{ method: "PUT", match: SECRET_SCOPE, body: {} }], call: grant() });
+    assert.equal(r.failed, "", r.failed);
+    assert.equal(r.calls.length, 1);
+    const [c] = r.calls;
+    assert.match(c.uri, new RegExp(`^${SECRET_SCOPE}[0-9a-f-]{36}\\?api-version=2022-04-01$`));
+    assert.deepEqual(c.body.properties, {
+      roleDefinitionId: "/subscriptions/sub-123/providers/Microsoft.Authorization/roleDefinitions/4633458b-17de-408a-b874-0445c86b69e6",
+      principalId: OID,
+      principalType: "User",
+    });
+    const sp = runKeys({ responses: [{ method: "PUT", match: SECRET_SCOPE, body: {} }], call: grant(" -PrincipalType ServicePrincipal") });
+    assert.equal(sp.calls[0].body.properties.principalType, "ServicePrincipal");
+  });
+
+  test("granting an identity that already has the role is not an error; any other refusal is", () => {
+    const exists = '{"error":{"code":"RoleAssignmentExists","message":"The role assignment already exists."}}';
+    const again = runKeys({ responses: [{ method: "PUT", match: SECRET_SCOPE, error: exists }], call: grant() });
+    assert.equal(again.failed, "", again.failed);
+    assert.match(again.own, /already/);
+    const denied = '{"error":{"code":"AuthorizationFailed","message":"no roleAssignments/write"}}';
+    const no = runKeys({ responses: [{ method: "PUT", match: SECRET_SCOPE, error: denied }], call: grant() });
+    assert.match(no.failed, /AuthorizationFailed/);
+  });
+
+  test("an object id, principal type or name that is not plain is refused before any call", () => {
+    for (const call of [
+      "Grant-PocKeyAccess -Context $ctx -Name 'alice' -ObjectId ''",
+      "Grant-PocKeyAccess -Context $ctx -Name 'alice' -ObjectId 'alice@example.com'",
+      `Grant-PocKeyAccess -Context $ctx -Name 'alice' -ObjectId '${OID}/../x'`,
+      `Grant-PocKeyAccess -Context $ctx -Name '' -ObjectId '${OID}'`,
+      `Grant-PocKeyAccess -Context $ctx -Name 'alice/../../x' -ObjectId '${OID}'`,
+      `Grant-PocKeyAccess -Context $ctx -Name 'alice' -ObjectId '${OID}' -PrincipalType Everyone`,
+    ]) {
+      const r = runKeys({ responses: [], call });
+      assert.notEqual(r.failed, "", `accepted: ${call}`);
+      assert.equal(r.calls.length, 0, `called Azure for: ${call}`);
+    }
+  });
+
+  test("the command line grants with -ObjectId, and needs -VaultName before any call", () => {
+    const cli = q(join(poc, "scripts", "Invoke-PocKey.ps1"));
+    const target = "-Subscription s -ResourceGroup rg-x -ApimName apim-x";
+    const ok = runKeys({ responses: [{ method: "PUT", match: SECRET_SCOPE, body: {} }], call: `& ${cli} -Action Grant -Name alice -ObjectId ${OID} ${target} -VaultName kv-x` });
+    assert.equal(ok.failed, "", ok.failed);
+    assert.equal(ok.calls.length, 1);
+    const none = runKeys({ responses: [], call: `& ${cli} -Action Grant -Name alice -ObjectId ${OID} ${target}` });
+    assert.match(none.failed, /VaultName/);
+    assert.equal(none.calls.length, 0);
+  });
+});
+
 describe("P38 client examples", () => {
   const dir = join(poc, "examples");
   const files = () => readdirSync(dir).filter((f) => !f.startsWith("."));
@@ -600,10 +660,16 @@ describe("P38 setup guide", () => {
     const onRunner = [...text.matchAll(/-KeyAction (\w+)/g)].map((m) => m[1]);
     const steps = [...text.matchAll(/Invoke-PocRunner\.ps1\b[^\n]*?-Step (\w+)/g)].map((m) => m[1]);
     const valid = validSet("Invoke-PocKey.ps1", "Action");
-    assert.deepEqual([...actions, ...onRunner].filter((a) => !valid.includes(a)), []);
+    const runnerValid = validSet("Invoke-PocRunner.ps1", "KeyAction");
+    assert.deepEqual(actions.filter((a) => !valid.includes(a)), []);
+    assert.deepEqual(onRunner.filter((a) => !runnerValid.includes(a)), [], "-KeyAction values the runner refuses");
+    assert.deepEqual(runnerValid.filter((a) => !valid.includes(a)), [], "runner key actions Invoke-PocKey.ps1 lacks");
     assert.deepEqual(valid.filter((a) => !actions.includes(a)), [], "key actions the guide does not show");
     assert.deepEqual(steps.filter((s) => !validSet("Invoke-PocRunner.ps1", "Step").includes(s)), []);
     assert.ok(steps.includes("Key") && onRunner.length > 0, "the guide does not show key actions on the runner");
+    // The guide's list of runner key actions is the runner's own.
+    const listed = (text.match(/`-Step Key` takes `-KeyAction` \(([^)]*)\)/) || [])[1] || "";
+    assert.deepEqual([...listed.matchAll(/`(\w+)`/g)].map((m) => m[1]).sort(), [...runnerValid].sort());
   });
 
   test("every relative link in the guide resolves to a file", () => {

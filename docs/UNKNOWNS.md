@@ -40,6 +40,7 @@ assumption is only closed if it names its blast radius and the detector that wou
 | U27 | Does Claude Code with `apiKeyHelper` reading Key Vault keep working across key rotation? | RESOLVED |
 | U28 | Does a budget counted per subscription carry across key regeneration? | RESOLVED |
 | U29 | Does a Foundry deployment's per-minute token limit count `max_tokens`, and how large is an opencode request? | MEASURED |
+| U30 | Can an identity holding Key Vault Secrets User on one secret read that secret and no other? | RESOLVED |
 
 ---
 
@@ -50,11 +51,31 @@ _None._
 
 ---
 
-U24–U29 belong to the proof of concept on branch `poc/apim-products-keyvault`
+U24–U30 belong to the proof of concept on branch `poc/apim-products-keyvault`
 (`poc/products-keyvault/`). U24–U28 (P37) were measured on 2026-10-11 on the Standard v2 test
 instance of U23, from a VM inside its virtual network; the final run (`10111658`) passed 22 of
-22 checks. Run details are in `poc/products-keyvault/README.md`. U29 (P38) was measured on
-2026-10-12 from a laptop, through the gateway.
+22 checks. Run details are in `poc/products-keyvault/README.md`. U29 and U30 (P38) were measured
+on 2026-10-12.
+
+### U30 — Can an identity holding Key Vault Secrets User on one secret read that secret and no other? — RESOLVED
+
+**Yes.** A user-assigned managed identity with no other role was attached to the runner VM
+inside the virtual network. `Invoke-PocKey.ps1 -Action Grant` gave it Key Vault Secrets User on
+one key's secret, run from a laptop with no network path to the vault: a role assignment is an
+Azure Resource Manager call. Signed in as that identity on the VM:
+
+| Request | Result |
+|---|---|
+| Read the granted secret | read on the first attempt, 48 s after the grant |
+| Read another key's secret | `Forbidden` |
+| List the vault's secrets | `Forbidden` |
+
+A second grant of the same identity reported that it already had access (`RoleAssignmentExists`).
+The role assignment and the identity were then removed, and the VM deallocated again. Microsoft
+documents role assignments on individual secrets and recommends vault-scope roles except where
+"individual secrets require individual user access"
+([Key Vault RBAC](https://learn.microsoft.com/azure/key-vault/general/rbac-guide), updated
+2026-08-21).
 
 ### U29 — Does a Foundry deployment's per-minute token limit count `max_tokens`, and how large is an opencode request? — MEASURED
 
@@ -418,12 +439,13 @@ empty `CLAUDE_CONFIG_DIR`:
 
 | Key passed as | Without `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS` | With it set to `1` |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | 400 naming `advisor-tool-2026-03-01`, 3 of 3 runs | answered, 4 of 4 |
-| `apiKeyHelper` in `settings.json` (`claude-code/settings.example.json`) | answered, 1 of 1 | answered, 2 of 2 |
+| `ANTHROPIC_API_KEY` | 400 naming `advisor-tool-2026-03-01`, 3 of 3 runs | answered, 5 of 5 |
+| `apiKeyHelper` in `settings.json` (`claude-code/settings.example.json`) | answered, 1 of 1 | answered, 3 of 3 |
 
 The cause of the difference between the two rows was not isolated. `ANTHROPIC_AUTH_TOKEN`, which
-the handout on `main` uses, was not measured: the proof of concept's route reads keys from
-`x-api-key` only. Claude Code documents the variable: *"Set to 1 to strip pre-release
+the handout on `main` uses, was not measured: it is sent as `Authorization`, and the proof of
+concept's Claude route reads keys from `x-api-key` or a `subscription-key` query parameter only.
+Claude Code documents the variable: *"Set to 1 to strip pre-release
 anthropic-beta request headers, the body fields that pair with them, and beta tool-schema
 fields … Use this when a proxy gateway rejects requests with an Unexpected value(s) error for
 the anthropic-beta header"* ([environment variables](https://code.claude.com/docs/en/env-vars),

@@ -37,6 +37,7 @@ Each entry of `products` in [`infra/poc.bicep`](infra/poc.bicep) becomes one pro
 | Field | Meaning | Default packs: Claude, DeepSeek, tiny |
 |---|---|---|
 | `id` | Product id, starting `poc-` | `poc-claude-pack`, `poc-deepseek-pack`, `poc-tiny-pack` |
+| `displayName` | Product name shown in API Management | `POC: Claude pack`; `POC: DeepSeek pack`; `POC: tiny budget` |
 | `routes` | Routes in the product: `poc-claude`, `poc-openai` | `poc-claude`; `poc-openai`; `poc-claude` |
 | `models` | Deployment names a key may call | `claude-haiku-4-5`; `deepseek-v4-flash`; `claude-haiku-4-5` |
 | `keyTokens` | Tokens per key per calendar month (UTC) | 200,000; 200,000; 300 |
@@ -81,30 +82,9 @@ while deployed: [README](README.md#cost-while-deployed).
 
 ### Check
 
-The probe answers for any key without calling a model. For a key issued as `alice` on the Claude
-pack:
-
-```bash
-curl -sS --fail-with-body -H "x-api-key: $POC_KEY" "$POC_GATEWAY/poc/probe/whoami"
-```
-
-```json
-{
-  "subscription": "poc-alice",
-  "product": "poc-claude-pack",
-  "startDate": null,
-  "endDate": null,
-  "utcNow": "2026-10-12T10:05:33.7011592Z"
-}
-```
-
-`product` is `null` for a key not issued on a product, and the model routes refuse such keys
-([U26](../../docs/UNKNOWNS.md)). `endDate` stays empty even when an expiry is set
-([U24](../../docs/UNKNOWNS.md)).
-
-`./scripts/Test-PocClients.ps1 @target` runs every client example in this guide against the
-gateway, with two temporary keys it deletes afterwards. It needs Python 3, Node.js and curl, and
-runs opencode and Claude Code when they are installed.
+`./scripts/Test-PocClients.ps1 @target` runs every client command and example in this guide
+against the gateway, with two temporary keys it deletes afterwards
+([Connect a client](#connect-a-client)). `-Plan` lists its checks without calling Azure.
 
 ## Issue a key
 
@@ -125,33 +105,54 @@ A name is 1 to 40 lowercase letters, digits and hyphens. The same action on the 
 ./scripts/Invoke-PocRunner.ps1 @target -VaultName $vault -Step Key -KeyAction New -KeyName alice -KeyProduct poc-claude-pack
 ```
 
-`-Step Key` takes `-KeyAction` (any action in this guide), `-KeyName`, `-KeyProduct` and
-`-KeyExpiresOn` (`yyyy-MM-dd`), and prints no key.
+`-Step Key` takes `-KeyAction` (`New`, `Rotate`, `SetExpiry`, `SuspendExpired`, `Suspend`,
+`Resume` or `List`), `-KeyName`, `-KeyProduct` and `-KeyExpiresOn` (`yyyy-MM-dd`), and prints no
+key. Run Command returns the last 4,096 bytes of the VM's output, so a long key list loses its
+first lines.
 
 ## Hand a key over
 
 | | Read access to the secret | One-time copy |
 |---|---|---|
-| How | Key Vault Secrets User on the one secret; Claude Code reads it through `apiKeyHelper` ([Claude Code](#claude-code)) | The operator reads the value once and passes it on |
+| How | `Grant`: Key Vault Secrets User on the one secret. Claude Code reads it through `apiKeyHelper` ([Claude Code](#claude-code)) | The operator reads the key once and passes it on |
 | The developer needs | An Azure sign-in and a network path to the vault | The key |
 | After a rotation | The helper reads the new version ([U27](../../docs/UNKNOWNS.md)) | The key works through one rotation and is refused after the second |
+| Vault that accepts private traffic only | The developer's machine reaches the vault through the private network | The key is read from API Management, which needs no path to the vault |
 
 Read access to one secret:
 
 ```powershell
-az role assignment create --assignee <developer-object-id> --role "Key Vault Secrets User" --scope "/subscriptions/<subscription-id>/resourceGroups/<resource-group>/providers/Microsoft.KeyVault/vaults/<vault-name>/secrets/poc-key-alice"
+./scripts/Invoke-PocKey.ps1 @target -VaultName $vault -Action Grant -Name alice -ObjectId <object-id>
 ```
 
-Microsoft recommends roles at vault scope, with an exception where "individual secrets require
-individual user access"
+`-PrincipalType` is `User` (the default), `Group` or `ServicePrincipal`. `Grant` assigns the role
+through Azure Resource Manager, so it needs no network path to the vault, and it names the
+identity by object id, so it makes no Microsoft Graph lookup. Granting the same identity again
+reports that it already has access. Measured on 2026-10-12 with a managed identity that held only
+this role: it read its secret 48 s after the grant, and was refused (`Forbidden`) another secret
+and the list of secrets ([U30](../../docs/UNKNOWNS.md)). Microsoft recommends roles at vault scope,
+with an exception where "individual secrets require individual user access"
 ([Key Vault RBAC](https://learn.microsoft.com/azure/key-vault/general/rbac-guide), updated
-2026-08-21). A role on a single secret was not measured in this proof of concept.
+2026-08-21).
 
-A one-time copy, which prints the key:
+A one-time copy from the vault, where the vault is reachable. It prints the key:
 
 ```powershell
 az keyvault secret show --vault-name $vault --name poc-key-alice --query value -o tsv
 ```
+
+A one-time copy from API Management, which needs no path to the vault. It prints the key:
+
+```powershell
+az rest --method post --url "https://management.azure.com/subscriptions/<subscription-id>/resourceGroups/<resource-group>/providers/Microsoft.ApiManagement/service/<apim-name>/subscriptions/poc-alice/listSecrets?api-version=2024-05-01" --query primaryKey -o tsv
+```
+
+Clients get the primary key after `New`. Each `Rotate` prints the slot Key Vault then holds
+(*"Key Vault now holds the new secondary key"*), which `--query secondaryKey` reads. The vault
+copy is the settings example's helper command, which returned the key on the runner on
+2026-10-11 ([README](README.md#running-it)). The API Management copy returned a 32-character key
+on 2026-10-12 from a machine with no path to the vault. The copies are `az` commands rather than
+script actions because the scripts print no key.
 
 ## Rotate a key
 
@@ -242,24 +243,53 @@ its network address.
 
 A key works on its product's routes (a Claude-pack key on the OpenAI route gets 401) and for its
 pack's models (other models get 403 `model_not_allowed`). The gateway reads the key from the
-header in the table only, and replaces `Authorization` with its own credential before calling
-Foundry.
+header in the table, or from a `subscription-key` query parameter (`subscriptionKeyParameterNames`
+in [`infra/poc.bicep`](infra/poc.bicep); roadmap P42). It does not read keys from
+`Authorization`, which it replaces with its own credential before calling Foundry.
 
-The examples read the gateway and the key from two environment variables:
+The examples read the gateway and the key from two environment variables. Typing the key at a
+prompt keeps it out of the shell's history file:
 
 ```powershell
 $env:POC_GATEWAY = 'https://<apim-name>.azure-api.net'
-$env:POC_KEY = '<key>'
+$env:POC_KEY = Read-Host -MaskInput 'Key'
 ```
 
 ```bash
 export POC_GATEWAY='https://<apim-name>.azure-api.net'
-export POC_KEY='<key>'
+printf 'Key: ' && read -rs POC_KEY && echo && export POC_KEY
 ```
 
-[`scripts/Test-PocClients.ps1`](scripts/Test-PocClients.ps1) runs every example below against the
-gateway, and a test checks that each file shown here matches the file it runs. Last run:
-2026-10-12, 11 of 11.
+PSReadLine leaves a command line out of its history file only when it contains `password`,
+`asplaintext`, `token`, `apikey` or `secret`
+([about_PSReadLine](https://learn.microsoft.com/powershell/module/psreadline/about/about_psreadline),
+updated 2026-06-16), so `$env:POC_KEY = '…'` typed with the key is saved there. `read -s`
+does not echo the input ([Bash builtins](https://www.gnu.org/software/bash/manual/html_node/Bash-Builtins.html)).
+
+The probe answers for any key without calling a model. For a key issued as `alice` on the Claude
+pack:
+
+```bash
+curl -sS --fail-with-body -H "x-api-key: $POC_KEY" "$POC_GATEWAY/poc/probe/whoami"
+```
+
+```json
+{
+  "subscription": "poc-alice",
+  "product": "poc-claude-pack",
+  "startDate": null,
+  "endDate": null,
+  "utcNow": "2026-10-12T10:05:33.7011592Z"
+}
+```
+
+`product` is `null` for a key not issued on a product, and the model routes refuse such keys
+([U26](../../docs/UNKNOWNS.md)). `endDate` stays empty even when an expiry is set
+([U24](../../docs/UNKNOWNS.md)).
+
+[`scripts/Test-PocClients.ps1`](scripts/Test-PocClients.ps1) runs the probe and every example below
+against the gateway, and a test checks that each file shown here matches the file it runs. Last
+run: 2026-10-12, 11 of 11.
 
 ### Claude Code
 

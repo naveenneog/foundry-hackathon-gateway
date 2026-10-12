@@ -64,11 +64,24 @@ const subscriptionVerbs = (script) => {
   });
   return [...new Set(verbs)];
 };
-// A claim that a key does not get to Foundry: "never" with a verb of movement, or "not" with one
-// and Foundry or the backend in the same clause.
-const MOVES = String.raw`(?:leaves?|reach(?:es)?|pass(?:es|ed)?|forward(?:s|ed)?|sen[dt]s?|goes|go|travels?|sees?|seen)`;
-const NEVER_MOVES = new RegExp(String.raw`\bnever\b(?:\s+\w+){0,2}?\s+${MOVES}\b`, "i");
-const NOT_TO_FOUNDRY = new RegExp(String.raw`(?:\bnot\b|n['’]t\b)(?:\s+\w+){0,2}?\s+${MOVES}\b[^.;]*?\b(?:Foundry|backend)\b`, "i");
+// A claim that a client's key does not get past the gateway, read clause by clause: a clause whose
+// subject is a key, saying it never or does not move on to Foundry, the backend or past the
+// gateway, that no key does, or that it stays inside the gateway. A clause about a key in a header,
+// and not the query parameter, is true: the route policies remove both key headers.
+const MOVES = String.raw`(?:leaves?|reach(?:es)?|pass(?:es|ed)?|forward(?:s|ed)?|sen[dt]s?|goes|go|travels?|gets?|makes it)`;
+const PLACE = String.raw`\b(?:Foundry|backend|the gateway|API Management|models?)\b`;
+const KEY_FIRST = /^(?:(?:the|a|an|each|every|any|no|its|their|this)\s+)?(?:(?:client|user|developer|caller|subscription)(?:['’]s)?\s+|valid\s+)*keys?\b/i;
+const clauses = (text) => flat(text)
+  .split(/[.;:!?](?=\s|$)|,\s+(?:and|but|so|while|whereas)\s+|\s+[—–]\s+|\|/)
+  .map((c) => c.replace(/^[^\p{L}\p{N}]+/u, "").trim()).filter(Boolean);
+const keyStopsClaim = (clause) => {
+  if (!KEY_FIRST.test(clause)) return false;
+  if (/\bheaders?\b/i.test(clause) && !/\bquery\b/i.test(clause)) return false;
+  return new RegExp(String.raw`(?:\bnever\b|\bnot\b|n['’]t\b)(?:\s+\w+){0,3}?\s+${MOVES}\b.*?${PLACE}`, "i").test(clause)
+    || (/^no\b/i.test(clause) && new RegExp(String.raw`\b${MOVES}\b.*?${PLACE}`, "i").test(clause))
+    || /\b(?:stays?|remains?|kept)\b(?:\s+\w+){0,2}?\s+(?:in|inside|within|at|behind)\s+(?:the\s+)?(?:gateway|API Management)\b/i.test(clause);
+};
+const paragraphs = (text) => text.split(/\n\s*\n/).map(flat);
 
 // Tables, read by column from the header row; a table inside a list item is indented.
 const tables = (text) => {
@@ -152,8 +165,7 @@ const sharedChecks = (name) => {
       assert.match(m[1], /^<[^>]+>$/, `${m[0]} is not a placeholder`);
     }
     if (queryKeyReachesFoundry()) {
-      assert.doesNotMatch(flat(text), NEVER_MOVES, "a key in the query parameter reaches Foundry (P42)");
-      assert.doesNotMatch(flat(text), NOT_TO_FOUNDRY, "a key in the query parameter reaches Foundry (P42)");
+      assert.deepEqual(clauses(text).filter(keyStopsClaim), [], "a key in the query parameter reaches Foundry (P42)");
     }
   });
 
@@ -177,6 +189,34 @@ const sharedChecks = (name) => {
     assert.match(read("SETUP.md"), new RegExp(`\\]\\(${name.replace(".", "\\.")}\\)`));
   });
 };
+
+describe("P43 claim check", () => {
+  test("it flags a key said to stop at the gateway, and passes true sentences about keys and requests", () => {
+    const flagged = (s) => clauses(s).some(keyStopsClaim);
+    for (const s of [
+      "The client's key never leaves the gateway.",
+      "A client's key is never forwarded to Foundry.",
+      "A client's key does not travel to the backend.",
+      "The client's key stays inside the gateway.",
+      "Keys are not sent on to Foundry.",
+      "No key reaches the backend.",
+      "Both headers are removed, and the key never reaches Foundry.",
+      "The key, in a header or the query parameter, never reaches Foundry.",
+      "| Design | The key never leaves the gateway |",
+    ]) assert.ok(flagged(s), `not flagged: ${s}`);
+    for (const s of [
+      "A request refused for its pack does not reach Foundry.",
+      "A request without a valid key does not reach Foundry.",
+      "Keys never go to disk.",
+      "Keys stay in memory; names are validated before they reach a URL or a shell.",
+      "Rotation never invalidates the key clients hold.",
+      "No Foundry key exists in the design.",
+      "The client's key is not a Foundry credential.",
+      "A key in a header does not reach Foundry.",
+      "A key sent in the `subscription-key` query parameter is passed on to Foundry.",
+    ]) assert.ok(!flagged(s), `flagged: ${s}`);
+  });
+});
 
 describe("P43 portal steps", () => {
   sharedChecks("PORTAL.md");
@@ -341,22 +381,36 @@ describe("P43 portal steps", () => {
     const setup = sections(doc("SETUP.md"))["Vault access through the runner"] || "";
     const first = [...setup.matchAll(/-Step (\w+)/g)].map((m) => m[1]);
     assert.deepEqual(first, ["Deploy", "Setup", "Push"], "SETUP.md's runner steps changed");
-    const text = flat(doc("PORTAL.md"));
-    const named = (text.match(/set up as in \[SETUP\.md\]\(SETUP\.md#vault-access-through-the-runner\) \(([^)]*)\):\s*`[^`]*Invoke-PocRunner\.ps1[^`]*-Step Key\b/) || [])[1];
-    assert.ok(named, "the runner's key step does not point to the runner's setup");
-    assert.deepEqual([...named.matchAll(/`(\w+)`/g)].map((m) => m[1]), first);
+    const paras = paragraphs(doc("PORTAL.md"));
+    const command = /`[^`]*Invoke-PocRunner\.ps1[^`]*-Step Key\b[^`]*`/;
+    const keyPara = paras.find((p) => command.test(p)) || "";
+    assert.ok(keyPara, "no paragraph with the runner's key step");
+    const before = keyPara.slice(0, keyPara.search(command));
+    assert.match(before, /\]\(SETUP\.md#vault-access-through-the-runner\)/, "the runner's key step does not point to the runner's setup");
+    assert.deepEqual([...before.matchAll(/`(\w+)`/g)].map((m) => m[1]).filter((s) => first.includes(s)), first, "the setup steps are not named, in order, before the key step");
     const runner = lf("scripts", "Invoke-PocRunner.ps1");
     assert.match(runner, /'Deploy' \{[\s\S]*?--template-file \(Join-Path \$poc 'infra' 'runner\.bicep'\)/, "the Deploy step does not deploy runner.bicep");
     const rb = runnerBicep();
     assert.match(rb, /privateDnsZones@[^\n]+\n\s+name: 'privatelink\.vaultcore\.azure\.net'/);
     assert.match(rb, /privateEndpoints\/privateDnsZoneGroups@[^\n]+\n\s+parent: vaultEndpoint/);
+    assert.match(rb, /^resource vault 'Microsoft\.KeyVault\/vaults@[^']+' existing = \{\n\s+name: vaultName\n\}/m, "runner.bicep no longer finds the vault in its own resource group");
     const conn = (rb.match(/privateLinkServiceConnections: \[\n\s+\{\n\s+name: '([^']+)'/) || [])[1];
     const link = ((rb.match(/virtualNetworkLinks@[^\n]+\n\s+parent: vaultZone\n\s+name: '([^']+)'/) || [])[1] || "").replace("${vnetName}", "<vnet-name>");
     assert.ok(conn && link, "the endpoint's connection or the zone's link was not found");
-    assert.ok(text.includes(`The runner's \`Deploy\` step creates the vault's private endpoint \`pe-<vault-name>\` with the connection \`${conn}\`, the zone, and the zone's link \`${link}\``),
-      "the endpoint, connection and link that Deploy creates are not given");
-    // Measured 2026-10-12 (U34): Azure refuses both, so Deploy cannot adopt step 1's endpoint.
-    assert.match(text, /\(\[U34\]\(\.\.\/\.\.\/docs\/UNKNOWNS\.md\)\), so a vault reached through the runner gets its private endpoint from `Deploy`, not from step 1\./);
+    // Measured 2026-10-12 (U34): Azure refuses another connection on an existing endpoint and a
+    // second link from the zone to the same virtual network, so Deploy cannot adopt step 1's.
+    const u34 = /\[U34\]\(\.\.\/\.\.\/docs\/UNKNOWNS\.md\)/;
+    const step1 = steps(sections(doc("PORTAL.md"))["Key Vault"] || "").map(flat).find((x) => x.includes("+ Create a private endpoint")) || "";
+    assert.match(step1, /`privatelink\.vaultcore\.azure\.net` in the vault's resource group/, "step 1 does not put the zone where runner.bicep and Remove-Poc.ps1 look for it");
+    for (const [what, re] of [["the runner", /\brunner\b/], ["its Deploy step", /`Deploy`/], ["U34", u34]]) assert.match(step1, re, `step 1 does not name ${what}`);
+    const lead = (step1.match(/\*\*([^*]+)\*\*, below,/) || [])[1];
+    assert.ok(lead, "step 1 does not point to the paragraph on the runner");
+    const deployPara = paras.find((p) => p.startsWith(`**${lead}.**`)) || "";
+    assert.ok(deployPara, `step 1 points to "${lead}", which is not a paragraph`);
+    for (const [what, re] of [["Deploy", /`Deploy`/], ["U34", u34]]) assert.match(deployPara, re, `"${lead}" does not name ${what}`);
+    for (const n of ["pe-<vault-name>", conn, link]) assert.ok(deployPara.includes(`\`${n}\``), `"${lead}" does not name ${n}`);
+    assert.match(deployPara, /\(https:\/\/learn\.microsoft\.com\/rest\/api\/dns\/privatedns\/virtual-network-links\/delete\)/, "deleting step 1's zone link is not given");
+    assert.match(deployPara, /\(https:\/\/learn\.microsoft\.com\/azure\/dns\/private-dns-overview\)/, "what the virtual network loses while the link is gone is not given");
   });
 
   test("the steps whose claims rest on one Learn page cite that page", () => {
@@ -365,7 +419,8 @@ describe("P43 portal steps", () => {
     for (const [section, marker, pages] of [
       ["Key Vault", "+ Create a private endpoint", ["/azure/key-vault/general/private-link-service"]],
       ["Rotate a key", "Find the slot clients hold", ["/rest/api/keyvault/secrets/get-secret/get-secret"]],
-      ["Remove", "The vault's private endpoint", ["/azure/private-link/private-endpoint-overview", "/azure/private-link/private-endpoint-dns-integration"]],
+      ["Remove", "The vault's private endpoint", ["/azure/private-link/private-endpoint-overview", "/azure/private-link/private-endpoint-dns-integration",
+        "/rest/api/dns/privatedns/private-zones/delete", "/rest/api/dns/privatedns/virtual-network-links/delete"]],
     ]) {
       const s = step(section, marker);
       assert.ok(s, `${section}: no step with "${marker}"`);

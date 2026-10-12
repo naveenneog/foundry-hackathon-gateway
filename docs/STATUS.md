@@ -5,14 +5,14 @@ of concept, on branch `poc/apim-products-keyvault` (not pushed; a push needs the
 approval). Acceptance criteria are in the roadmap (M7). Filed for this branch: P40, P41, P42.
 Open packets for `main`: P39 (recorded on this branch only), P36, P35, P30, P20.
 
-### P43 — portal steps and architecture — IN PROGRESS (round-2 notes addressed)
+### P43 — portal steps and architecture — IN PROGRESS (round-3 notes addressed)
 
 `poc/products-keyvault/PORTAL.md` builds in the Azure portal what `infra/poc.bicep` builds and
 runs each key operation by hand; every numbered step and prerequisite cites Microsoft Learn.
 `poc/products-keyvault/ARCHITECTURE.md` describes the components, identities and roles, network
 paths, the request flow, each key flow and the design decisions. U31 (ASSUMED, the steps were not
 run in the portal), U32 and U33 (RESOLVED) were logged before writing and closed by research.
-`tests/poc-products-keyvault-docs.test.mjs` (26 tests) reads both documents' tables by column and
+`tests/poc-products-keyvault-docs.test.mjs` (27 tests) reads both documents' tables by column and
 compares them with the templates, policies and scripts.
 
 **Council — P43, round 1.** BLOCK at every seat; all five BLOCKs fixed with tests.
@@ -61,6 +61,19 @@ the connection and link names from `runner.bicep`.
 Mutations caught: 24 of 24 on the round-2 checks and 3 of 3 on U34's. The round-1 sets still fail
 the tests that cover them (24 of 24, 3 of 3); the first set's expected test names predate the
 round-1 renames, and its mutants fail the renamed tests.
+
+**Council — P43, round 3.** No BLOCK. Architect, Coder and Security: PASS. QA and UX:
+PASS-WITH-NOTES. N1–N9, the nit and L1 confirmed resolved; three new notes, each fixed below.
+
+| Finding | Fix |
+|---|---|
+| R3-1. The runner limit (U34) appeared only after step 1, which had already created the endpoint; no recovery was given | Step 1 states that a vault whose key scripts run on the runner gets its endpoint, zone and link from `Deploy`, and when `Deploy` fails; **The runner and step 1** gives the recovery (delete step 1's endpoint, then the zone's link) and its effect: the virtual network resolves none of the zone's records until `Deploy` links it again (Learn's Private DNS overview). Step 1 puts the zone in the vault's resource group, where `runner.bicep` and `Remove-Poc.ps1` look for it |
+| R3-2. Remove step 3 cited the virtual network links page, which does not cover deleting a link or a zone | Cites the Private DNS REST pages Private Zones - Delete ("Private DNS zone cannot be deleted unless all virtual network links to it are removed") and Virtual Network Links - Delete |
+| R3-3. The claim check rejected true sentences ("A request refused for its pack does not reach Foundry", "Keys never go to disk") and missed "The client's key stays inside the gateway"; two assertions pinned whole sentences | The check reads clause by clause and needs a key as the subject; a self-test holds 9 sentences it flags and 9 it passes, the council's included. The runner test checks facts (names, links, order, U34) in the paragraphs instead of sentences; rewording three sentences without changing their facts passes |
+
+Mutations caught: 17 of 17 on the round-3 checks (seven of them on the claim check, each caught by
+its self-test) and 3 of 3 replacing two mutants whose text was rewritten; the earlier sets are
+still caught.
 
 ### P38 — setup and usage guide — DONE (branch only)
 

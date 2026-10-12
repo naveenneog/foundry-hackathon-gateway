@@ -98,7 +98,8 @@ minute.
    role-based access control**; on **Networking**, **Disable public access** and **+ Create a
    private endpoint** named `pe-<vault-name>` (the name `runner.bicep` uses, and the one
    `Remove-Poc.ps1` removes) in the private endpoint subnet (`snet-pe` in the test environment),
-   with the private DNS zone `privatelink.vaultcore.azure.net` › **Review + create**
+   with the private DNS zone `privatelink.vaultcore.azure.net` in the vault's resource group ›
+   **Review + create**
    ([quickstart](https://learn.microsoft.com/azure/key-vault/general/quick-create-portal),
    [soft-delete](https://learn.microsoft.com/azure/key-vault/general/soft-delete-overview),
    [Key Vault RBAC](https://learn.microsoft.com/azure/key-vault/general/rbac-guide),
@@ -107,6 +108,11 @@ minute.
    For a vault that exists: **Networking** › **Private endpoint connections** › **+ Create**,
    the name `pe-<vault-name>`, resource type `Microsoft.KeyVault/vaults`, target sub-resource
    `vault`, the virtual network and subnet, the same zone › **Review + Create**.
+   A vault whose key scripts run on the runner gets this endpoint, the zone and the zone's link
+   from the runner's `Deploy` step instead. `Deploy` fails on an endpoint made here with a
+   connection not named `vault`, and on a zone already linked to the virtual network under
+   another name ([U34](../../docs/UNKNOWNS.md)); **The runner and step 1**, below, covers a vault
+   that has them.
 2. **Close the trusted-services bypass.** The template sets the firewall's default action to Deny
    with no bypass. Learn: "Disabling public access doesn't suppress the trusted services bypass:
    trusted services continue to reach the vault and don't require a private endpoint." The vault
@@ -138,13 +144,19 @@ script actions `New` and `Rotate` need a path to the vault as well; from outside
 run on the runner, once it is set up as in
 [SETUP.md](SETUP.md#vault-access-through-the-runner) (`Deploy`, `Setup`, `Push`):
 `./scripts/Invoke-PocRunner.ps1 @target -VaultName $vault -Step Key -KeyAction New -KeyName alice -KeyProduct poc-claude-pack`.
-The runner's `Deploy` step creates the vault's private endpoint `pe-<vault-name>` with the
-connection `vault`, the zone, and the zone's link `link-<vnet-name>`
-([`infra/runner.bicep`](infra/runner.bicep)). Azure refuses a change to an existing endpoint's
-connection and a second link from the zone to the same virtual network
-([U34](../../docs/UNKNOWNS.md)), so a vault reached through the runner gets its private endpoint
-from `Deploy`, not from step 1.
 The script actions `Grant`, `Revoke`, `SetExpiry`, `SuspendExpired`, `Suspend`, `Resume` and `List` need no path to the vault.
+
+**The runner and step 1.** The runner's `Deploy` step creates the vault's private endpoint
+`pe-<vault-name>` with the connection `vault`, the zone, and the zone's link `link-<vnet-name>`
+([`infra/runner.bicep`](infra/runner.bicep)). Azure refuses another connection on an existing
+endpoint, and a second link from the zone to the same virtual network
+([U34](../../docs/UNKNOWNS.md)). On a vault given an endpoint in step 1, deleting that endpoint and
+then the zone's link to the virtual network
+([Virtual Network Links - Delete](https://learn.microsoft.com/rest/api/dns/privatedns/virtual-network-links/delete))
+removes both conditions before `Deploy`. Until `Deploy` links the zone again, the virtual network
+resolves none of the zone's records, other vaults' included: "To resolve the records of a private
+DNS zone from your virtual network, you must link the virtual network with the zone"
+([What is Azure Private DNS?](https://learn.microsoft.com/azure/dns/private-dns-overview)).
 
 ## Issue a key
 
@@ -261,8 +273,10 @@ which a vault created again under the same name would reuse.
    With a private vault this needs the private network ([U32](../../docs/UNKNOWNS.md)).
 3. **The vault's private endpoint.** The private endpoint `pe-<vault-name>`; then, when no other
    record is left in the zone `privatelink.vaultcore.azure.net`, the zone's virtual network link
-   and the zone
-   ([virtual network links](https://learn.microsoft.com/azure/dns/private-dns-virtual-network-links)).
+   and the zone, in that order: "Private DNS zone cannot be deleted unless all virtual network
+   links to it are removed"
+   ([Private Zones - Delete](https://learn.microsoft.com/rest/api/dns/privatedns/private-zones/delete),
+   [Virtual Network Links - Delete](https://learn.microsoft.com/rest/api/dns/privatedns/virtual-network-links/delete)).
    The endpoint's network interface is "created for the lifecycle of the private endpoint"
    ([What is a private endpoint?](https://learn.microsoft.com/azure/private-link/private-endpoint-overview)),
    and "when you delete the private endpoint, all the DNS records within the DNS zone group are
@@ -310,7 +324,9 @@ Microsoft Learn, read 2026-10-12; the dates are each page's last update.
 - [Monitor Azure Key Vault](https://learn.microsoft.com/azure/key-vault/general/monitor-key-vault) (2026-06-12)
 - [What is a private endpoint?](https://learn.microsoft.com/azure/private-link/private-endpoint-overview) (2026-08-11)
 - [Azure Private Endpoint DNS integration](https://learn.microsoft.com/azure/private-link/private-endpoint-dns-integration) (2026-04-14)
-- [Virtual network links of Azure DNS private zones](https://learn.microsoft.com/azure/dns/private-dns-virtual-network-links) (2025-06-19)
+- [What is Azure Private DNS?](https://learn.microsoft.com/azure/dns/private-dns-overview) (2026-10-01)
+- [Private DNS REST API, Private Zones - Delete](https://learn.microsoft.com/rest/api/dns/privatedns/private-zones/delete) (2023-10-31)
+- [Private DNS REST API, Virtual Network Links - Delete](https://learn.microsoft.com/rest/api/dns/privatedns/virtual-network-links/delete) (2023-10-31)
 - [Key Vault recovery management](https://learn.microsoft.com/azure/key-vault/general/key-vault-recovery) (2026-06-12)
 - [llm-token-limit policy](https://learn.microsoft.com/azure/api-management/llm-token-limit-policy) (2026-06-26)
 - [Automate the rotation of a secret with two sets of credentials](https://learn.microsoft.com/azure/key-vault/secrets/tutorial-rotation-dual) (2026-07-08)

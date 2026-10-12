@@ -71,8 +71,10 @@ again with another connection name returned `CannotChangePrivateLinkConnectionOn
 ("Cannot change the private link connection on private endpoint"), and a second link from the
 zone to the same virtual network returned `Conflict` ("is already linked to the virtual
 network"). The probe endpoint was deleted afterwards; the refused link was never created.
-`PORTAL.md` therefore states that a vault reached through the runner gets its private endpoint
-from `Deploy`, not from step 1.
+Key Vault step 1 in `PORTAL.md` therefore states that a vault whose key scripts run on the runner
+gets its private endpoint, zone and link from `Deploy`; **The runner and step 1** gives what
+deleting step 1's endpoint and the zone's link removes, and that the virtual network resolves
+none of the zone's records until `Deploy` links it again.
 
 ### U33 — Does the Azure portal set a subscription's expiry, and suspend and reactivate it? — RESOLVED
 

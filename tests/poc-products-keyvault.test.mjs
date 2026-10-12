@@ -1,7 +1,7 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -442,6 +442,116 @@ describe("P38 operator actions", { skip: !pwsh && "PowerShell 7 not found" }, ()
       const r = spawnSync(pwsh, ["-NoProfile", "-NonInteractive", "-File", script, "-Step", "Key", ...Object.entries(args).flatMap(([k, v]) => [`-${k}`, v])], { encoding: "utf8" });
       assert.notEqual(r.status, 0, `${param}=${value} accepted`);
       assert.match(`${r.stdout}${r.stderr}`, new RegExp(param), `${param}=${value} not refused by validation`);
+    }
+  });
+});
+
+describe("P38 client examples", () => {
+  const dir = join(poc, "examples");
+  const files = () => readdirSync(dir).filter((f) => !f.startsWith("."));
+
+  test("every example is run by Test-PocClients.ps1, so none is documented without being tried", () => {
+    const runner = read("scripts", "Test-PocClients.ps1");
+    const names = files();
+    assert.ok(names.length >= 6, `expected the client examples, found ${names.length}`);
+    assert.deepEqual(names.filter((f) => !runner.includes(f)), []);
+  });
+
+  test("no example holds a key: each reads it from POC_KEY", () => {
+    for (const f of files()) {
+      const text = readFileSync(join(dir, f), "utf8");
+      assert.doesNotMatch(text, /\b[0-9a-f]{32}\b/, `${f} holds something shaped like a subscription key`);
+      if (/\.(py|mjs)$/.test(f)) assert.match(text, /POC_KEY/, `${f} does not read POC_KEY`);
+    }
+  });
+
+  test("the JSON examples parse, and opencode sends the key in the header each route reads", () => {
+    for (const f of files().filter((x) => x.endsWith(".json"))) JSON.parse(readFileSync(join(dir, f), "utf8"));
+    const oc = JSON.parse(readFileSync(join(dir, "opencode.json"), "utf8")).provider;
+    const openai = Object.values(oc).find((p) => p.npm === "@ai-sdk/openai-compatible");
+    const claude = Object.values(oc).find((p) => p.npm === "@ai-sdk/anthropic");
+    assert.equal(openai.options.headers["api-key"], "{env:POC_KEY}");
+    assert.match(openai.options.baseURL, /\/poc\/v1$/);
+    assert.equal(claude.options.apiKey, "{env:POC_KEY}");
+    assert.match(claude.options.baseURL, /\/poc\/claude\/v1$/);
+  });
+
+  test("Claude Code runs with pre-release anthropic-beta values stripped, and the variable is restored afterwards", () => {
+    // Foundry refuses some of them with a 400 (UNKNOWNS U17, update of 2026-10-12).
+    const settings = JSON.parse(read("claude-code", "settings.example.json"));
+    assert.equal(settings.env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS, "1");
+    const runner = read("scripts", "Test-PocClients.ps1");
+    assert.match(runner, /\$env:CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS = '1'/);
+    const saved = runner.match(/foreach \(\$v in ([^)]*)\)/);
+    assert.ok(saved && saved[1].includes("'CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS'"), "the variable is not saved and restored");
+  });
+
+  test("the Claude Code settings example is run through its apiKeyHelper, with a wrong key as a control", () => {
+    // The control fails if anything other than the helper's key reaches the gateway, such as
+    // ANTHROPIC_API_KEY, which outranks apiKeyHelper.
+    const runner = read("scripts", "Test-PocClients.ps1");
+    assert.match(runner, /'settings\.example\.json'/);
+    assert.match(runner, /Invoke-Example\b[^\n]*-Refused\b/);
+  });
+});
+
+describe("P38 setup guide", () => {
+  const guide = () => read("SETUP.md").replace(/\r\n/g, "\n");
+  const validSet = (script, param) => {
+    const m = read("scripts", script).match(new RegExp(`ValidateSet\\(([^)]*)\\)\\]\\[string\\]\\$${param}\\b`));
+    assert.ok(m, `${script} has no ValidateSet for -${param}`);
+    return [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]);
+  };
+
+  test("the guide exists and the proof of concept's README links it", () => {
+    assert.ok(existsSync(join(poc, "SETUP.md")), "SETUP.md is missing");
+    assert.match(read("README.md"), /\]\(SETUP\.md\)/);
+  });
+
+  test("the guide covers setup, every key action, every client, errors and removal", () => {
+    const have = guide().split("\n").filter((l) => /^#{2,3} /.test(l)).map((l) => l.replace(/^#+ /, "").trim());
+    const want = ["Requirements", "Set up", "Issue a key", "Hand a key over", "Rotate a key", "Expire a key",
+      "Suspend and resume a key", "List keys", "Monitor", "Connect a client", "Claude Code", "Anthropic SDK",
+      "OpenAI SDK", "opencode", "curl", "Errors", "Remove", "Sources"];
+    assert.deepEqual(want.filter((h) => !have.includes(h)), []);
+  });
+
+  test("each client example appears in the guide exactly as Test-PocClients.ps1 runs it", () => {
+    const shown = [...guide().matchAll(/<!-- file: (\S+) -->\n```[a-z]*\n([\s\S]*?)\n```/g)];
+    const expected = readdirSync(join(poc, "examples")).filter((f) => !f.startsWith(".")).map((f) => `examples/${f}`);
+    expected.push("claude-code/settings.example.json");
+    assert.deepEqual(shown.map((m) => m[1]).sort(), expected.sort());
+    for (const [, file, body] of shown) {
+      const actual = read(...file.split("/")).replace(/\r\n/g, "\n").replace(/\n$/, "");
+      assert.equal(body, actual, `the guide's copy of ${file} differs from the file`);
+    }
+  });
+
+  test("every key action and runner step the guide uses exists, and every key action is shown", () => {
+    const text = guide();
+    const actions = [...text.matchAll(/Invoke-PocKey\.ps1\b[^\n]*?-Action (\w+)/g)].map((m) => m[1]);
+    const onRunner = [...text.matchAll(/-KeyAction (\w+)/g)].map((m) => m[1]);
+    const steps = [...text.matchAll(/Invoke-PocRunner\.ps1\b[^\n]*?-Step (\w+)/g)].map((m) => m[1]);
+    const valid = validSet("Invoke-PocKey.ps1", "Action");
+    assert.deepEqual([...actions, ...onRunner].filter((a) => !valid.includes(a)), []);
+    assert.deepEqual(valid.filter((a) => !actions.includes(a)), [], "key actions the guide does not show");
+    assert.deepEqual(steps.filter((s) => !validSet("Invoke-PocRunner.ps1", "Step").includes(s)), []);
+    assert.ok(steps.includes("Key") && onRunner.length > 0, "the guide does not show key actions on the runner");
+  });
+
+  test("every relative link in the guide resolves to a file", () => {
+    const links = [...guide().matchAll(/\]\(([^)\s]+)\)/g)].map((m) => m[1])
+      .filter((l) => !/^(https?:|#|mailto:)/.test(l)).map((l) => l.split("#")[0]);
+    assert.ok(links.length >= 5, `expected links to the scripts and examples, found ${links.length}`);
+    for (const l of links) assert.ok(existsSync(join(poc, l)), `${l} does not exist`);
+  });
+
+  test("the guide holds no key and names no real instance", () => {
+    const text = guide();
+    assert.doesNotMatch(text, /\b[0-9a-f]{32}\b/i, "something shaped like a subscription key");
+    assert.doesNotMatch(text, /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i, "a GUID");
+    for (const m of text.matchAll(/https:\/\/([^/\s)`"']+)\.azure-api\.net/g)) {
+      assert.match(m[1], /^<[^>]+>$/, `${m[0]} is not a placeholder`);
     }
   });
 });

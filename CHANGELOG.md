@@ -6,6 +6,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · [Semantic Ve
 ## [Unreleased]
 
 ### Added
+- **Proof of concept, branch `poc/apim-products-keyvault` only: a setup and usage guide.**
+  `poc/products-keyvault/SETUP.md` covers requirements, deployment, issuing, handing over,
+  rotating, expiring, suspending and listing keys, monitoring, and connecting Claude Code, the
+  Anthropic and OpenAI SDKs, opencode and curl, with an error table. Each client example is a
+  file in `poc/products-keyvault/examples/`, run against the gateway by `Test-PocClients.ps1`
+  (10 of 10 on 2026-10-12); a test checks that the guide's copies match the files. New key
+  actions: `List`, `Suspend` and `Resume`, which need no vault, and `-Step Key` on the runner.
+  Claude Code examples set `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1`: with `ANTHROPIC_API_KEY`,
+  Claude Code 2.1.272 otherwise got a 400 for a pre-release `anthropic-beta` value (UNKNOWNS
+  U17). (P38)
 - **Proof of concept, branch `poc/apim-products-keyvault` only: long-lived keys on API
   Management products, with the keys in Key Vault.** One product per model pack, one
   subscription key per user, a monthly token budget per key and per product, two-key rotation

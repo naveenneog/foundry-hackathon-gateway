@@ -7,6 +7,8 @@ The question: can API Management's own products and subscription keys give users
 for months, with a token budget per key, rotated through Key Vault without breaking the clients
 that hold them? Measured on Standard v2 on 2026-10-11. The final run passed 22 of 22 checks.
 
+Setup, key operations and client configuration: [SETUP.md](SETUP.md).
+
 ## Design
 
 | Part | What it does | File |

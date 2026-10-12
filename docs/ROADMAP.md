@@ -206,7 +206,22 @@ Key Vault. Nothing here changes the gateway on `main`.
       *Why:* council finding S3 on P38. `poc.bicep` sets `subscriptionKeyParameterNames.query`
       to `subscription-key`, so API Management also accepts a key in the URL, and the route
       policies remove only the key headers (`infra/api-claude-policy.xml`,
-      `infra/api-openai-policy.xml`).
+      `infra/api-openai-policy.xml`). Microsoft documents the consequence: "When included in a
+      request header or query parameter, the subscription key is by default passed to the
+      backend and might be exposed in backend monitoring logs or other systems"
+      ([Subscriptions in API Management](https://learn.microsoft.com/azure/api-management/api-management-subscriptions),
+      updated 2026-06-25, read 2026-10-12).
+
+- [ ] **P43** Portal steps and an architecture document for the products proof of concept
+      *Acceptance:* `poc/products-keyvault/PORTAL.md` gives Azure portal steps that create what
+      `infra/poc.bicep` creates (routes, operations, key headers, policies, packs, vault, roles,
+      audit log, the vault's private endpoint) and the key operations of SETUP.md, each step
+      citing a Microsoft Learn page; a step the portal cannot do, or cannot do with a private
+      vault, says so and names the script action. `poc/products-keyvault/ARCHITECTURE.md`
+      describes the components, identities and roles, network paths, the request flow, each key
+      lifecycle flow and the design decisions with their reasons. Tests check that the names,
+      paths, headers, roles and pack values in both documents match the templates.
+      *Why:* asked 2026-10-12.
 
 ## Milestone M6 — Only if this outlives one event
 

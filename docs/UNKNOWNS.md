@@ -41,6 +41,9 @@ assumption is only closed if it names its blast radius and the detector that wou
 | U28 | Does a budget counted per subscription carry across key regeneration? | RESOLVED |
 | U29 | Does a Foundry deployment's per-minute token limit count `max_tokens`, and how large is an opencode request? | MEASURED |
 | U30 | Can an identity holding Key Vault Secrets User on one secret read that secret and no other? | RESOLVED |
+| U31 | Which Azure portal pages and labels create what `poc.bicep` creates, and run the key operations? | ASSUMED |
+| U32 | What can the Azure portal do with a vault whose public network access is Disabled? | RESOLVED |
+| U33 | Does the Azure portal set a subscription's expiry, and suspend and reactivate it? | RESOLVED |
 
 ---
 
@@ -51,11 +54,60 @@ _None._
 
 ---
 
-U24–U30 belong to the proof of concept on branch `poc/apim-products-keyvault`
+U24–U33 belong to the proof of concept on branch `poc/apim-products-keyvault`
 (`poc/products-keyvault/`). U24–U28 (P37) were measured on 2026-10-11 on the Standard v2 test
 instance of U23, from a VM inside its virtual network; the final run (`10111658`) passed 22 of
 22 checks. Run details are in `poc/products-keyvault/README.md`. U29 and U30 (P38) were measured
-on 2026-10-12.
+on 2026-10-12. U31–U33 (P43) were researched on 2026-10-12.
+
+### U33 — Does the Azure portal set a subscription's expiry, and suspend and reactivate it? — RESOLVED
+
+**No documented expiry field; suspension is documented without its portal labels.** Microsoft
+Learn: "API Management doesn't provide built-in features to manage the lifecycle of subscription
+keys, such as setting expiration dates or automatically rotating keys", and "you can suspend,
+cancel, or delete any subscription (including the built-in all-access subscription) to prevent API
+access"
+([Subscriptions in API Management](https://learn.microsoft.com/azure/api-management/api-management-subscriptions),
+updated 2026-06-25). The REST API's `expirationDate` "is for audit purposes only and the
+subscription is not automatically expired"
+([REST reference](https://learn.microsoft.com/rest/api/apimanagement/subscription/create-or-update)).
+`PORTAL.md` therefore points to `SetExpiry`, `SuspendExpired`, `Suspend` and `Resume` for these.
+
+### U32 — What can the Azure portal do with a vault whose public network access is Disabled? — RESOLVED
+
+**Operations on the vault resource work; listing its secrets may not.** Microsoft Learn:
+"Although users can browse to a key vault from the Azure portal, they might not be able to list
+keys, secrets, or certificates if their client machine is not in the allowed list"
+([network security](https://learn.microsoft.com/azure/key-vault/general/network-security), updated
+2026-10-06), and control-plane operations "are not affected by firewalls and virtual network
+rules"
+([service endpoints](https://learn.microsoft.com/azure/key-vault/general/overview-vnet-service-endpoints),
+updated 2026-10-09). Learn's path to a role on one secret opens the secret first ("Open a
+previously created secret. Select the Access control (IAM) tab",
+[Key Vault RBAC](https://learn.microsoft.com/azure/key-vault/general/rbac-guide)), so `PORTAL.md`
+places issuing, per-secret roles and rotation on the private network, and names `Grant` and
+`Revoke`, which use Azure Resource Manager only (U30).
+
+### U31 — Which Azure portal pages and labels create what `poc.bicep` creates, and run the key operations? — ASSUMED
+
+Researched on 2026-10-12 from Microsoft Learn; every page and its date is in `PORTAL.md`'s
+sources, and fifteen of the quotes were checked against the live pages. Learn names the labels for
+the managed identity, role assignments, a blank HTTP API, operations, the policy editors, a
+product's fields, a subscription's fields, vault creation (permission model, **Disable public
+access**, **+ Create a private endpoint**), secret creation, a role on one secret, diagnostic
+settings and purging. It does not name: the subscription key header and query parameter fields
+(only that they are on the API's **Settings** tab), a product id field, the entries that show,
+regenerate or suspend a subscription's keys, a secret's content type and tag fields, or creating a
+secret version. `PORTAL.md` describes those actions without quoting labels and names the script
+action for each.
+
+**Assumption:** the documented portal steps create the same configuration as `poc.bicep`; they
+were not run in the portal in this project.
+**Blast radius:** a label differs from the page or a value is entered differently, for example a
+product id other than the table's. Nothing is shared with other workloads; a wrong product id
+makes the scripts' `List` and `New` miss the pack.
+**Detector:** `Invoke-PocKey.ps1 -Action List` shows each key's pack id and state, and
+`Test-PocClients.ps1` checks both routes, the probe and a wrong-key control against the gateway.
 
 ### U30 — Can an identity holding Key Vault Secrets User on one secret read that secret and no other? — RESOLVED
 

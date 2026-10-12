@@ -4,7 +4,8 @@ This guide covers deploying the proof of concept onto an existing API Management
 operating its keys, and connecting clients. It applies to branch `poc/apim-products-keyvault`
 only; the gateway on `main` issues signed JWT keys instead
 ([ADR-0002](../../docs/adr/0002-credential-transport.md)). Design and measured results are in
-[README.md](README.md).
+[README.md](README.md); components and flows in [ARCHITECTURE.md](ARCHITECTURE.md); the same
+setup in the Azure portal in [PORTAL.md](PORTAL.md).
 
 Commands are PowerShell 7, run from `poc/products-keyvault/`. They name the target explicitly
 and leave the Azure CLI's default subscription unchanged:

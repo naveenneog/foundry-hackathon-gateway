@@ -1,8 +1,14 @@
 # Status
 
-**Active packet:** none. P38 is done on branch `poc/apim-products-keyvault` (not pushed; a push
-needs the owner's approval). Filed for this branch: P40, P41, P42. Open packets for `main`: P39
-(recorded on this branch only), P36, P35, P30, P20.
+**Active packet:** P43 — Azure portal steps and an architecture document for the products proof
+of concept, on branch `poc/apim-products-keyvault` (not pushed; a push needs the owner's
+approval). Acceptance criteria are in the roadmap (M7). Filed for this branch: P40, P41, P42.
+Open packets for `main`: P39 (recorded on this branch only), P36, P35, P30, P20.
+
+### P43 — portal steps and architecture — IN PROGRESS
+
+Unknowns U31–U33 are logged before writing: the portal's labels and flows, what the portal can
+do with a private vault, and whether it exposes a key's expiry and state.
 
 ### P38 — setup and usage guide — DONE (branch only)
 

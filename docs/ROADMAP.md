@@ -212,7 +212,7 @@ Key Vault. Nothing here changes the gateway on `main`.
       ([Subscriptions in API Management](https://learn.microsoft.com/azure/api-management/api-management-subscriptions),
       updated 2026-06-25, read 2026-10-12).
 
-- [ ] **P43** Portal steps and an architecture document for the products proof of concept
+- [x] **P43** Portal steps and an architecture document for the products proof of concept
       *Acceptance:* `poc/products-keyvault/PORTAL.md` gives Azure portal steps that create what
       `infra/poc.bicep` creates (routes, operations, key headers, policies, packs, vault, roles,
       audit log, the vault's private endpoint) and the key operations of SETUP.md, each step
@@ -222,6 +222,11 @@ Key Vault. Nothing here changes the gateway on `main`.
       lifecycle flow and the design decisions with their reasons. Tests check that the names,
       paths, headers, roles and pack values in both documents match the templates.
       *Why:* asked 2026-10-12.
+      *Verified 2026-10-12:* 28 tests compare both documents with `infra/poc.bicep`,
+      `infra/runner.bicep`, the policies and the key scripts: tables by column, roles with their
+      scopes, resource names and resource groups, script commands, and the Learn page behind each
+      step. Four council rounds, the last with no BLOCK; every mutation set was caught. U34 was
+      measured on the test instance. The steps were not run in the Azure portal (U31, ASSUMED).
 
 ## Milestone M6 — Only if this outlives one event
 

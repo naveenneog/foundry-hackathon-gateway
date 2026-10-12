@@ -1,11 +1,10 @@
 # Status
 
-**Active packet:** P43 — Azure portal steps and an architecture document for the products proof
-of concept, on branch `poc/apim-products-keyvault` (not pushed; a push needs the owner's
-approval). Acceptance criteria are in the roadmap (M7). Filed for this branch: P40, P41, P42.
-Open packets for `main`: P39 (recorded on this branch only), P36, P35, P30, P20.
+**Active packet:** none. P43 is done on branch `poc/apim-products-keyvault` (not pushed; a push
+needs the owner's approval). Filed for this branch: P40, P41, P42. Open packets for `main`: P39
+(recorded on this branch only), P36, P35, P30, P20.
 
-### P43 — portal steps and architecture — IN PROGRESS (round-4 note addressed)
+### P43 — portal steps and architecture — DONE (branch only)
 
 `poc/products-keyvault/PORTAL.md` builds in the Azure portal what `infra/poc.bicep` builds and
 runs each key operation by hand; every numbered step and prerequisite cites Microsoft Learn.
@@ -83,6 +82,11 @@ PASS-WITH-NOTES. R3-1, R3-2 and R3-3 confirmed resolved; one new note, fixed bel
 | R4-1. Step 1 did not say where to create the vault. The scripts build its id in `$target`'s resource group, the instance's, where `poc.bicep` creates it, and `runner.bicep` and `Remove-Poc.ps1` look there for the vault, the endpoint and the zone. With the vault elsewhere, `Grant`, `Revoke` and `Deploy` fail, and `Remove-Poc.ps1` reads the vault as absent and leaves it, the roles on its secrets, the endpoint and the zone | Step 1 creates the vault in the **Subscription** and **Resource Group** in `$target`, with the zone in the same group, and ties a vault that exists to that group. A test reads the placement from `poc.bicep`, `PocKeys.ps1` and `Remove-Poc.ps1` |
 
 Mutations caught: 6 of 6, three on the document and three on the code it is compared with.
+
+Commits: `e99f007` (documents and tests), `1f19780` (round 1), `aff43f9` (round 2), `2ef8c84`
+(U34), `726826b` (round 3), `60a3713` (round 4). Proved by `node --test
+tests/poc-products-keyvault*.test.mjs` (91 of 91) and `node .ironclad/gate.mjs --stage packet`
+(exit 0). Not proved: the steps were not run in the Azure portal (U31, ASSUMED).
 
 ### P38 — setup and usage guide — DONE (branch only)
 

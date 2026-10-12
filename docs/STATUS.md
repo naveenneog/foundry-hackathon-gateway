@@ -5,14 +5,14 @@ of concept, on branch `poc/apim-products-keyvault` (not pushed; a push needs the
 approval). Acceptance criteria are in the roadmap (M7). Filed for this branch: P40, P41, P42.
 Open packets for `main`: P39 (recorded on this branch only), P36, P35, P30, P20.
 
-### P43 — portal steps and architecture — IN PROGRESS (round-3 notes addressed)
+### P43 — portal steps and architecture — IN PROGRESS (round-4 note addressed)
 
 `poc/products-keyvault/PORTAL.md` builds in the Azure portal what `infra/poc.bicep` builds and
 runs each key operation by hand; every numbered step and prerequisite cites Microsoft Learn.
 `poc/products-keyvault/ARCHITECTURE.md` describes the components, identities and roles, network
 paths, the request flow, each key flow and the design decisions. U31 (ASSUMED, the steps were not
 run in the portal), U32 and U33 (RESOLVED) were logged before writing and closed by research.
-`tests/poc-products-keyvault-docs.test.mjs` (27 tests) reads both documents' tables by column and
+`tests/poc-products-keyvault-docs.test.mjs` (28 tests) reads both documents' tables by column and
 compares them with the templates, policies and scripts.
 
 **Council — P43, round 1.** BLOCK at every seat; all five BLOCKs fixed with tests.
@@ -67,13 +67,22 @@ PASS-WITH-NOTES. N1–N9, the nit and L1 confirmed resolved; three new notes, ea
 
 | Finding | Fix |
 |---|---|
-| R3-1. The runner limit (U34) appeared only after step 1, which had already created the endpoint; no recovery was given | Step 1 states that a vault whose key scripts run on the runner gets its endpoint, zone and link from `Deploy`, and when `Deploy` fails; **The runner and step 1** gives the recovery (delete step 1's endpoint, then the zone's link) and its effect: the virtual network resolves none of the zone's records until `Deploy` links it again (Learn's Private DNS overview). Step 1 puts the zone in the vault's resource group, where `runner.bicep` and `Remove-Poc.ps1` look for it |
+| R3-1. The runner limit (U34) appeared only after step 1, which had already created the endpoint; no recovery was given | Step 1 states that a vault whose key scripts run on the runner gets its endpoint, zone and link from `Deploy`, and when `Deploy` fails; **The runner and step 1** gives the recovery (delete step 1's endpoint, then the zone's link) and its effect: the virtual network resolves none of the zone's records until `Deploy` links it again (Learn's Private DNS overview). Step 1 puts the zone in the vault's resource group (R4-1 below corrects where the vault goes) |
 | R3-2. Remove step 3 cited the virtual network links page, which does not cover deleting a link or a zone | Cites the Private DNS REST pages Private Zones - Delete ("Private DNS zone cannot be deleted unless all virtual network links to it are removed") and Virtual Network Links - Delete |
 | R3-3. The claim check rejected true sentences ("A request refused for its pack does not reach Foundry", "Keys never go to disk") and missed "The client's key stays inside the gateway"; two assertions pinned whole sentences | The check reads clause by clause and needs a key as the subject; a self-test holds 9 sentences it flags and 9 it passes, the council's included. The runner test checks facts (names, links, order, U34) in the paragraphs instead of sentences; rewording three sentences without changing their facts passes |
 
 Mutations caught: 17 of 17 on the round-3 checks (seven of them on the claim check, each caught by
 its self-test) and 3 of 3 replacing two mutants whose text was rewritten; the earlier sets are
 still caught.
+
+**Council — P43, round 4.** No BLOCK. Architect, Coder, QA and Security: PASS. UX:
+PASS-WITH-NOTES. R3-1, R3-2 and R3-3 confirmed resolved; one new note, fixed below.
+
+| Finding | Fix |
+|---|---|
+| R4-1. Step 1 did not say where to create the vault. The scripts build its id in `$target`'s resource group, the instance's, where `poc.bicep` creates it, and `runner.bicep` and `Remove-Poc.ps1` look there for the vault, the endpoint and the zone. With the vault elsewhere, `Grant`, `Revoke` and `Deploy` fail, and `Remove-Poc.ps1` reads the vault as absent and leaves it, the roles on its secrets, the endpoint and the zone | Step 1 creates the vault in the **Subscription** and **Resource Group** in `$target`, with the zone in the same group, and ties a vault that exists to that group. A test reads the placement from `poc.bicep`, `PocKeys.ps1` and `Remove-Poc.ps1` |
+
+Mutations caught: 6 of 6, three on the document and three on the code it is compared with.
 
 ### P38 — setup and usage guide — DONE (branch only)
 

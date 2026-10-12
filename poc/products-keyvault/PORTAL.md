@@ -92,22 +92,25 @@ minute.
 
 ## Key Vault
 
-1. **Create the vault.** **Key vaults** › **Create**: a name, the region, the Standard tier;
+1. **Create the vault.** **Key vaults** › **Create**: the **Subscription** and **Resource Group** in
+   `$target`, the instance's, where `poc.bicep` creates the vault and the scripts look for it; a
+   name, the region, the Standard tier;
    soft-delete retention 7 days and purge protection off, the template's settings, so the vault
    can be removed completely (Learn: retention is 7 to 90 days); the permission model **Azure
    role-based access control**; on **Networking**, **Disable public access** and **+ Create a
    private endpoint** named `pe-<vault-name>` (the name `runner.bicep` uses, and the one
    `Remove-Poc.ps1` removes) in the private endpoint subnet (`snet-pe` in the test environment),
-   with the private DNS zone `privatelink.vaultcore.azure.net` in the vault's resource group ›
+   with the private DNS zone `privatelink.vaultcore.azure.net` in the same resource group ›
    **Review + create**
    ([quickstart](https://learn.microsoft.com/azure/key-vault/general/quick-create-portal),
    [soft-delete](https://learn.microsoft.com/azure/key-vault/general/soft-delete-overview),
    [Key Vault RBAC](https://learn.microsoft.com/azure/key-vault/general/rbac-guide),
    [network security](https://learn.microsoft.com/azure/key-vault/general/network-security),
    [Private Link](https://learn.microsoft.com/azure/key-vault/general/private-link-service)).
-   For a vault that exists: **Networking** › **Private endpoint connections** › **+ Create**,
-   the name `pe-<vault-name>`, resource type `Microsoft.KeyVault/vaults`, target sub-resource
-   `vault`, the virtual network and subnet, the same zone › **Review + Create**.
+   For a vault that exists, in the same resource group: **Networking** › **Private endpoint
+   connections** › **+ Create**, the name `pe-<vault-name>`, resource type
+   `Microsoft.KeyVault/vaults`, target sub-resource `vault`, the virtual network and subnet, the
+   same zone › **Review + Create**.
    A vault whose key scripts run on the runner gets this endpoint, the zone and the zone's link
    from the runner's `Deploy` step instead. `Deploy` fails on an endpoint made here with a
    connection not named `vault`, and on a zone already linked to the virtual network under

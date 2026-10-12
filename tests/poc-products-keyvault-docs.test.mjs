@@ -377,6 +377,21 @@ describe("P43 portal steps", () => {
     for (const n of [name, link]) assert.ok(script.includes(`\`${n}\``), `Remove-Poc.ps1's removal does not name ${n}`);
   });
 
+  test("step 1 creates the vault, its endpoint and the zone where the template and the scripts look for them", () => {
+    // poc.bicep creates the vault next to the instance, in the deployment's resource group; the
+    // scripts build the vault's id, and Remove-Poc.ps1 finds the endpoint and zone, in $target's.
+    assert.match(bicep(), /^resource apim 'Microsoft\.ApiManagement\/service@[^']+' existing = \{\n\s+name: apimName\n\}/m, "the template no longer finds the instance in its own resource group");
+    assert.match(bicep(), /^resource vault 'Microsoft\.KeyVault\/vaults@[^']+' = \{\n\s+name: vaultName\n/m, "the template no longer creates the vault in its own resource group");
+    assert.match(keysPs(), /VaultId\s+= "\/subscriptions\/\$id\/resourceGroups\/\$ResourceGroup\/providers\/Microsoft\.KeyVault\/vaults\/\$VaultName"/, "the scripts look for the vault elsewhere");
+    const remover = lf("scripts", "Remove-Poc.ps1");
+    assert.match(remover, /az network private-endpoint delete -g \$ResourceGroup /, "Remove-Poc.ps1 looks for the endpoint elsewhere");
+    assert.match(remover, /az network private-dns record-set a list -g \$ResourceGroup /, "Remove-Poc.ps1 looks for the zone elsewhere");
+    const step1 = steps(sections(doc("PORTAL.md"))["Key Vault"] || "").map(flat).find((x) => x.includes("+ Create a private endpoint")) || "";
+    assert.match(step1, /\*\*Subscription\*\* and \*\*Resource Group\*\* in `\$target`/, "step 1 does not put the vault in $target's resource group");
+    assert.match(step1, /`privatelink\.vaultcore\.azure\.net` in the same resource group/, "step 1 does not put the zone in the vault's resource group");
+    assert.match(step1.split("For a vault that exists")[1] || "", /in the same resource group/, "a vault that exists is not tied to $target's resource group");
+  });
+
   test("the runner's key step comes after the runner's setup steps, and its Deploy step creates the vault's endpoint", () => {
     const setup = sections(doc("SETUP.md"))["Vault access through the runner"] || "";
     const first = [...setup.matchAll(/-Step (\w+)/g)].map((m) => m[1]);
@@ -401,7 +416,6 @@ describe("P43 portal steps", () => {
     // second link from the zone to the same virtual network, so Deploy cannot adopt step 1's.
     const u34 = /\[U34\]\(\.\.\/\.\.\/docs\/UNKNOWNS\.md\)/;
     const step1 = steps(sections(doc("PORTAL.md"))["Key Vault"] || "").map(flat).find((x) => x.includes("+ Create a private endpoint")) || "";
-    assert.match(step1, /`privatelink\.vaultcore\.azure\.net` in the vault's resource group/, "step 1 does not put the zone where runner.bicep and Remove-Poc.ps1 look for it");
     for (const [what, re] of [["the runner", /\brunner\b/], ["its Deploy step", /`Deploy`/], ["U34", u34]]) assert.match(step1, re, `step 1 does not name ${what}`);
     const lead = (step1.match(/\*\*([^*]+)\*\*, below,/) || [])[1];
     assert.ok(lead, "step 1 does not point to the paragraph on the runner");

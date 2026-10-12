@@ -136,9 +136,13 @@ describe("P38 removal", { skip: !pwsh && "PowerShell 7 not found" }, () => {
     { method: "GET", match: "next-page-2", body: { value: [{ name: "poc-old", properties: { scope: subs("/products/poc-claude-pack") } }] } },
     { method: "DELETE", match: "/subscriptions/poc-(client-claude-1|old)\\?api-version", body: {} },
   ];
+  // Role assignments are listed at the resource group: without a filter the list holds those
+  // below it too, measured 2026-10-12 (a grant on one secret was in it).
+  const RG_ROLES = "/resourceGroups/rg-x/providers/Microsoft\\.Authorization/roleAssignments\\?api-version=2022-04-01$";
+  const noGrants = { method: "GET", match: RG_ROLES, body: { value: [] } };
   const vault = [{ match: "^keyvault show --name kv-x", out: vaultId, exit: 0 }];
-  const run = ({ az = [], responses = apim, runner = false } = {}) => runScript({
-    file, responses, az: [...az, ...vault],
+  const run = ({ az = [], responses = [noGrants, ...apim], runner = false, vaultAz = vault } = {}) => runScript({
+    file, responses, az: [...az, ...vaultAz],
     args: `-Subscription s -ResourceGroup rg-x -ApimName apim-x -VaultName kv-x -PurgeVault${runner ? " -Runner" : ""}`,
   });
 
@@ -167,7 +171,7 @@ describe("P38 removal", { skip: !pwsh && "PowerShell 7 not found" }, () => {
   });
 
   test("something already gone is not a failure", () => {
-    const gone = [{ method: "DELETE", match: "/products/poc-tiny-pack\\?", error: '{"error":{"code":"ResourceNotFound","message":"not found"}}' }, ...apim];
+    const gone = [noGrants, { method: "DELETE", match: "/products/poc-tiny-pack\\?", error: '{"error":{"code":"ResourceNotFound","message":"not found"}}' }, ...apim];
     const r = run({ responses: gone });
     assert.equal(r.exit, 0, r.own);
     assert.match(r.own, /product poc-tiny-pack and its keys was not there/);
@@ -194,24 +198,48 @@ describe("P38 removal", { skip: !pwsh && "PowerShell 7 not found" }, () => {
     assert.ok(empty.az.some((a) => a.startsWith("network private-dns zone delete -g rg-x -n privatelink.vaultcore.azure.net")));
   });
 
-  test("the read access Grant gave on this vault's key secrets is removed before the vault, and other roles stay", () => {
-    const ra = (name, scope) => ({ id: `${scope}/providers/Microsoft.Authorization/roleAssignments/${name}`, scope, principalId: `p-${name}` });
-    const listed = JSON.stringify([
-      ra("g1", `${vaultId}/secrets/poc-key-alice`),
-      ra("g2", `${vaultId}/secrets/poc-key-bob`),
-      ra("other-vault", vaultId.replace("kv-x", "kv-other") + "/secrets/poc-key-alice"),
-      ra("other-secret", `${vaultId}/secrets/not-a-key`),
-      ra("vault-officer", vaultId),
-    ]);
-    const r = run({ az: [{ match: "^role assignment list --all", out: listed, exit: 0 }] });
+  // Role assignments the resource group's list holds: two on this vault's key secrets, and three
+  // that removal leaves alone.
+  const ra = (name, scope) => ({ id: `${scope}/providers/Microsoft.Authorization/roleAssignments/${name}`, properties: { scope, principalId: `p-${name}` } });
+  const listed = { method: "GET", match: RG_ROLES, body: { value: [
+    ra("g1", `${vaultId}/secrets/poc-key-alice`),
+    ra("g2", `${vaultId}/secrets/poc-key-bob`),
+    ra("other-vault", vaultId.replace("kv-x", "kv-other") + "/secrets/poc-key-alice"),
+    ra("other-secret", `${vaultId}/secrets/not-a-key`),
+    ra("vault-officer", vaultId),
+  ] } };
+  const deleteGrant = (name, error) => ({ method: "DELETE", match: `/roleAssignments/${name}\\?api-version=2022-04-01$`, ...(error ? { error } : { body: {} }) });
+
+  test("role assignments on this vault's key secrets are removed before the vault, and other roles stay", () => {
+    const r = run({ responses: [listed, deleteGrant("g1"), deleteGrant("g2"), ...apim] });
     assert.equal(r.exit, 0, r.own);
-    const deleted = r.az.filter((a) => a.startsWith("role assignment delete --ids ")).map((a) => a.split(" ")[4].split("/").pop());
+    const deleted = r.http.filter((h) => /^DELETE .*\/roleAssignments\//.test(h)).map((h) => h.split("?")[0].split("/").pop());
     assert.deepEqual(deleted.sort(), ["g1", "g2"]);
-    const vaultGone = r.az.findIndex((a) => a.startsWith("keyvault delete"));
-    assert.ok(r.az.findIndex((a) => a.startsWith("role assignment delete --ids ")) < vaultGone, "the vault was deleted before the access to its secrets");
-    const unlisted = run({ az: [{ match: "^role assignment list --all", out: "ERROR: AuthorizationFailed", exit: 1 }] });
-    assert.equal(unlisted.exit, 1, unlisted.own);
-    assert.match(unlisted.own, /Left behind: [^\n]*read access/);
+    const lastGrant = Math.max(...r.order.map((o, i) => (/^HTTP DELETE .*\/roleAssignments\//.test(o) ? i : -1)));
+    const vaultGone = r.order.findIndex((o) => o.startsWith("AZ keyvault delete"));
+    assert.ok(vaultGone > lastGrant, "the vault was deleted before the access to its secrets");
+    assert.ok(!r.az.some((a) => a.startsWith("role assignment list")), "listed role assignments across the subscription");
+  });
+
+  test("when a role assignment on a key secret cannot be listed or removed, the vault is kept and the run fails", () => {
+    const denied = '{"error":{"code":"AuthorizationFailed","message":"no roleAssignments/read"}}';
+    for (const [why, responses] of [
+      ["the list failed", [{ method: "GET", match: RG_ROLES, error: denied }, ...apim]],
+      ["a delete failed", [listed, deleteGrant("g1"), deleteGrant("g2", denied), ...apim]],
+    ]) {
+      const r = run({ responses });
+      assert.equal(r.exit, 1, `${why}: ${r.own}`);
+      assert.ok(!r.az.some((a) => /^keyvault (delete|purge)/.test(a)), `${why}: the vault was deleted`);
+      assert.match(r.own, /Kept vault kv-x/, why);
+      assert.match(r.own, /Left behind: /, why);
+    }
+  });
+
+  test("a run after the vault is gone still removes the role assignments on its key secrets", () => {
+    const r = run({ responses: [listed, deleteGrant("g1"), deleteGrant("g2"), ...apim], vaultAz: [{ match: "^keyvault show --name kv-x", out: "", exit: 3 }] });
+    assert.equal(r.exit, 0, r.own);
+    assert.deepEqual(r.http.filter((h) => /^DELETE .*\/roleAssignments\//.test(h)).map((h) => h.split("?")[0].split("/").pop()).sort(), ["g1", "g2"]);
+    assert.match(r.own, /Vault kv-x was not there/);
   });
 });
 

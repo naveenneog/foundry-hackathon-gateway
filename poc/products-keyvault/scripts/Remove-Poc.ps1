@@ -83,27 +83,38 @@ while ($page) {
 }
 
 if ($VaultName) {
+    # Role assignments on the vault's key secrets, such as the read access Grant gave, go first: one
+    # left behind would also cover a key that a vault created again under this name stores. They
+    # are looked for even when the vault is already gone, and while any is left the vault is kept.
+    $grantsLeft = $false
+    $grants = @()
+    try { $grants = @(Get-PocKeyGrants -Context $ctx) }
+    catch {
+        $grantsLeft = $true
+        $failures.Add("the role assignments on $VaultName's key secrets")
+        Write-Host "Could not list the role assignments on ${VaultName}'s key secrets: $_"
+    }
+    foreach ($g in $grants) {
+        $label = "the role assignment on $("$($g.properties.scope)".Split('/')[-1]) for $($g.properties.principalId)"
+        try { Remove-PocRoleAssignment -Context $ctx -Id $g.id; Write-Host "Removed $label." }
+        catch { $grantsLeft = $true; $failures.Add($label); Write-Host "Could not remove ${label}: $_" }
+    }
     $vaultId = "$(az keyvault show --name $VaultName --subscription $Subscription --query id -o tsv 2>$null)".Trim()
-    if ($vaultId) {
-        # Read access given by Grant: Key Vault Secrets User on single key secrets of this vault.
-        # Removed before the vault, so none outlives it.
-        $listed = az role assignment list --all --subscription $Subscription -o json 2>$null
-        if ($LASTEXITCODE -ne 0) {
-            $failures.Add("the read access Grant gave on $VaultName's secrets")
-            Write-Host "Could not list the role assignments on $VaultName's secrets."
-        } else {
-            $all = if ($listed) { @(($listed | Out-String) | ConvertFrom-Json) } else { @() }
-            foreach ($g in @($all | Where-Object { $_.id -and "$($_.scope)" -like "$vaultId/secrets/poc-key-*" })) {
-                Invoke-RemovalStep "read access to $("$($g.scope)".Split('/')[-1]) for $($g.principalId)" { az role assignment delete --ids $g.id --subscription $Subscription }
-            }
-        }
+    if (-not $vaultId) { Write-Host "Vault $VaultName was not there." }
+    elseif ($grantsLeft) {
+        $failures.Add("vault $VaultName")
+        Write-Host "Kept vault ${VaultName}: role assignments on its key secrets are still there."
+    } else {
         Invoke-RemovalStep "the operator's role on $VaultName" { az role assignment delete --scope $vaultId --role 'Key Vault Secrets Officer' --subscription $Subscription }
         Invoke-RemovalStep "vault $VaultName (soft-deleted for its retention period)" { az keyvault delete --name $VaultName --subscription $Subscription -o none }
         if ($PurgeVault) { Invoke-RemovalStep "vault $VaultName, purged" { az keyvault purge --name $VaultName --subscription $Subscription -o none } }
-    } else { Write-Host "Vault $VaultName was not there." }
+    }
 }
 
 if ($failures.Count -gt 0) {
     Write-Host "Left behind: $($failures -join '; ')."
     exit 1
 }
+# Explicit, so the exit code of the last az call (3 for a vault that is not there) is not the
+# script's.
+exit 0

@@ -60,6 +60,15 @@ round-1 BLOCKs confirmed fixed; no new BLOCK.
 Mutations caught: 12 of 12 on the round-2 tests (one survivor at first, closed by adding a
 vault-scope assignment to the test data).
 
+**Council — P38, round 3.** Architect, QA and UX: PASS. Security: PASS-WITH-NOTES. Coder: BLOCK,
+cleared.
+
+| Finding | Fix |
+|---|---|
+| **BLOCK R3-C1.** When the grant cleanup failed, `Remove-Poc.ps1` deleted the vault anyway, and a re-run found no vault, skipped the grants and exited 0. The subscription-wide `az role assignment list --all` also needs read rights on the whole subscription | Role assignments on key secrets are listed at the resource group (`Get-PocKeyGrants`): measured to include assignments on single secrets, and it works after the vault is gone. While one cannot be listed or removed, the vault is kept and the run exits 1. The script now ends with an explicit `exit 0`, which a new test showed was missing (the last `az` call's code 3 leaked). Live: the listing found a temporary grant on a secret |
+
+Mutations caught: 7 of 7 on the R3-C1 tests.
+
 ### P37 — products and Key Vault on Standard v2 — DONE (branch only)
 
 Work lives in `poc/products-keyvault/` and runs against the Standard v2 test instance in

@@ -74,12 +74,13 @@ foreach ($c in $global:Calls) { $c | ConvertTo-Json -Compress -Depth 8 }
  * Run a whole script with `az` and Invoke-RestMethod stubbed. `az` rules match the joined
  * arguments in order ({ match, out, exit }); any other az call succeeds with no output. A file
  * passed to az as @path (a Run Command script) is recorded. Returns the output, the script's
- * exit code, a terminating error if any, and every az and HTTP call.
+ * exit code, a terminating error if any, every az and HTTP call, and both in the order made.
  */
 export const runScript = ({ file, args, az = [], responses = [] }) => {
   const script = `
 $ErrorActionPreference = 'Stop'
 $global:AzCalls = [System.Collections.Generic.List[string]]::new()
+$global:Order = [System.Collections.Generic.List[string]]::new()
 $global:AzScripts = [System.Collections.Generic.List[string]]::new()
 $global:AzRules = @(${q(JSON.stringify(az))} | ConvertFrom-Json)
 function az {
@@ -88,6 +89,7 @@ function az {
     if ($line -like 'account show*') { return '00000000-0000-0000-0000-000000000123' }
     if ($line -like 'account get-access-token*') { return (@{ accessToken = 'TOKEN'; expires_on = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() + 3600 } | ConvertTo-Json -Compress) }
     $global:AzCalls.Add($line)
+    $global:Order.Add("AZ $line")
     foreach ($a in $args) { if ("$a" -like '@*' -and (Test-Path -LiteralPath "$a".Substring(1))) { $global:AzScripts.Add((Get-Content -Raw -LiteralPath "$a".Substring(1))) } }
     foreach ($r in $global:AzRules) { if ($line -match $r.match) { $global:LASTEXITCODE = [int]$r.exit; return $r.out } }
 }
@@ -96,6 +98,7 @@ $global:Responses = @(${q(JSON.stringify(responses))} | ConvertFrom-Json)
 function Invoke-RestMethod {
     param($Method, $Uri, $Headers, $Body, $ContentType)
     $global:Calls.Add([pscustomobject]@{ method = "$Method"; uri = "$Uri" })
+    $global:Order.Add("HTTP $Method $Uri")
     foreach ($r in $global:Responses) {
         if ("$Method" -eq $r.method -and "$Uri" -match $r.match) {
             if ($r.error) { throw $r.error }
@@ -115,6 +118,8 @@ foreach ($c in $global:AzCalls) { "AZ $c" }
 foreach ($s in $global:AzScripts) { $s | ConvertTo-Json -Compress }
 "=== HTTP"
 foreach ($c in $global:Calls) { "HTTP $($c.method) $($c.uri)" }
+"=== ORDER"
+foreach ($o in $global:Order) { "ORDER $o" }
 `;
   const r = spawnSync(pwsh, ["-NoProfile", "-NonInteractive", "-Command", script], { encoding: "utf8" });
   const out = String(r.stdout);
@@ -126,6 +131,7 @@ foreach ($c in $global:Calls) { "HTTP $($c.method) $($c.uri)" }
     az: [...section("AZ").matchAll(/^AZ (.*)$/gm)].map((m) => m[1].trim()),
     scripts: section("SCRIPTS").split(/\r?\n/).filter((l) => l.startsWith('"')).map((l) => JSON.parse(l)),
     http: [...section("HTTP").matchAll(/^HTTP (\S+) (\S+)$/gm)].map((m) => `${m[1]} ${m[2]}`),
+    order: [...section("ORDER").matchAll(/^ORDER (.*)$/gm)].map((m) => m[1].trim()),
     stderr: String(r.stderr),
   };
 };

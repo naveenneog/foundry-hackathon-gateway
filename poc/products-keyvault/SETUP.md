@@ -23,7 +23,7 @@ $vault = '<vault-name>'    # printed by Deploy-Poc.ps1
 | A Foundry account in the same resource group, on which the instance's identity holds Cognitive Services User | The routes call Foundry with that identity ([`infra/poc.bicep`](infra/poc.bicep), parameter `foundryAccountName`) |
 | Model deployments named as in the packs: `claude-haiku-4-5` and `deepseek-v4-flash` by default | A pack lists deployment names, and requests for other models are refused |
 | A per-minute token limit on each deployment above the largest single request | All keys on a deployment share its limit. One opencode prompt (64.5 KB) was refused at 10,000 tokens a minute and answered at 50,000 ([U29](../../docs/UNKNOWNS.md)) |
-| The operator can deploy to the resource group and create role assignments | The template gives the operator Key Vault Secrets Officer on the vault. Creating a role assignment needs `Microsoft.Authorization/roleAssignments/write`, held by Owner, User Access Administrator and Role Based Access Control Administrator ([built-in roles](https://learn.microsoft.com/azure/role-based-access-control/built-in-roles/privileged)) |
+| The operator can deploy to the resource group, and create and delete role assignments in it | The template gives the operator Key Vault Secrets Officer on the vault; `Grant`, `Revoke` and `Remove-Poc.ps1` add and delete role assignments. Creating one needs `Microsoft.Authorization/roleAssignments/write`, held by Owner, User Access Administrator and Role Based Access Control Administrator ([built-in roles](https://learn.microsoft.com/azure/role-based-access-control/built-in-roles/privileged)) |
 | The operator can read subscription keys | `listSecrets` is held by API Management Service Contributor; the Reader and Operator roles lack it ([finding 6](README.md#what-the-runs-showed)) |
 | A network path to the vault, for issuing and rotating keys and for the Claude Code helper | The vault is created with public network access `Disabled` (`vaultPublicNetworkAccess`). The path is a private endpoint inside the virtual network, or the runner VM below |
 | Optional: a Log Analytics workspace in the resource group | Receives the vault's audit log: who read or wrote which key |
@@ -575,8 +575,11 @@ curl's command line, which other users of the same machine can list.
 
 [`Remove-Poc.ps1`](scripts/Remove-Poc.ps1) deletes the products `poc-claude-pack`,
 `poc-deepseek-pack` and `poc-tiny-pack` with their keys, the three routes, any other `poc-` key,
-the read access `Grant` gave on the vault's key secrets, the operator's vault role and the vault.
-`-PurgeVault` also purges the deleted vault, which
+every role assignment on the vault's key secrets (such as the read access `Grant` gave), the
+operator's vault role and the vault. The role assignments are listed at the resource group, also
+when the vault is already gone. While one cannot be listed or removed, the vault is kept and the
+script exits 1: an assignment names the secret's path, which a vault created again under the same
+name would reuse. `-PurgeVault` also purges the deleted vault, which
 otherwise stays soft-deleted for its retention period. `-Runner` removes the runner's roles, VM,
 subnet, NAT gateway, public IP, NSG and private endpoint, and the `privatelink.vaultcore.azure.net`
 zone when no other record is left in it. A pack with another id stays (roadmap P41). Each step's

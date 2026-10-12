@@ -39,6 +39,7 @@ function New-PocContext {
     if ($LASTEXITCODE -ne 0 -or -not $id) { throw "The Azure CLI cannot use subscription '$Subscription'. Run az login." }
     [pscustomobject]@{
         SubscriptionId = $id
+        ResourceGroupId = "/subscriptions/$id/resourceGroups/$ResourceGroup"
         ApimBase       = "https://management.azure.com/subscriptions/$id/resourceGroups/$ResourceGroup/providers/Microsoft.ApiManagement/service/$ApimName"
         VaultBase      = "https://$VaultName.vault.azure.net"
         # poc.bicep creates the vault in the instance's resource group.
@@ -258,6 +259,28 @@ function Revoke-PocKeyAccess {
         $null = Invoke-PocRest -Context $Context -Method DELETE -Uri "https://management.azure.com$($a.id)?api-version=$script:PocRoleApiVersion" -Resource $arm
     }
     Write-Host "Removed $ObjectId's read access to $secret. The key itself is unchanged."
+}
+
+# Every role assignment on one of the vault's key secrets (poc-key-*), such as the read access
+# Grant gives, with any role and for any identity. Listed at the resource group: without a filter
+# that list holds the assignments below it too (measured 2026-10-12), it needs no
+# subscription-wide read, and it still works once the vault is gone.
+function Get-PocKeyGrants {
+    param([Parameter(Mandatory)]$Context)
+    $arm = 'https://management.azure.com/'
+    $page = Invoke-PocRest -Context $Context -Method GET -Uri "https://management.azure.com$($Context.ResourceGroupId)/providers/Microsoft.Authorization/roleAssignments?api-version=$script:PocRoleApiVersion" -Resource $arm
+    while ($page) {
+        foreach ($a in @($page.value)) {
+            if ($a.id -and "$($a.properties.scope)" -like "$($Context.VaultId)/secrets/poc-key-*") { $a }
+        }
+        $page = if ($page.nextLink) { Invoke-PocRest -Context $Context -Method GET -Uri $page.nextLink -Resource $arm } else { $null }
+    }
+}
+
+function Remove-PocRoleAssignment {
+    param([Parameter(Mandatory)]$Context, [Parameter(Mandatory)][string]$Id)
+    if ($Id -notmatch '^/.+/providers/Microsoft\.Authorization/roleAssignments/[^/?]+$') { throw "'$Id' is not a role assignment id." }
+    $null = Invoke-PocRest -Context $Context -Method DELETE -Uri "https://management.azure.com$($Id)?api-version=$script:PocRoleApiVersion" -Resource 'https://management.azure.com/'
 }
 
 # Every key on a proof-of-concept product: name, product, state and stored expiry date (API

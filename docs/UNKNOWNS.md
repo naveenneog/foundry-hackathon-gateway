@@ -27,7 +27,8 @@ assumption is only closed if it names its blast radius and the detector that wou
 | U14 | Claude deployment needs provider metadata | RESOLVED |
 | U15 | Streamed traffic: the budget stops, but the counter lies | MEASURED |
 | U16 | Revocation latency | MEASURED |
-| U17 | Foundry rejects some `anthropic-beta` values Claude Code sends | MEASURED || U18 | Does the AIGateway SKU meter Anthropic tokens? | ASSUMED |
+| U17 | Foundry rejects some `anthropic-beta` values Claude Code sends | MEASURED |
+| U18 | Does the AIGateway SKU meter Anthropic tokens? | ASSUMED |
 | U19 | File permissions for the signing secret on macOS and Linux | RESOLVED |
 | U20 | Is `pwsh` present on the GitHub-hosted macOS and Linux runners? | RESOLVED |
 | U21 | Why `Set-Acl` needs `SeSecurityPrivilege` on the second call | RESOLVED |
@@ -38,6 +39,7 @@ assumption is only closed if it names its blast radius and the detector that wou
 | U26 | Is `context.Product` empty for the all-access key, so an API policy can refuse it? | RESOLVED |
 | U27 | Does Claude Code with `apiKeyHelper` reading Key Vault keep working across key rotation? | RESOLVED |
 | U28 | Does a budget counted per subscription carry across key regeneration? | RESOLVED |
+| U29 | Does a Foundry deployment's per-minute token limit count `max_tokens`, and how large is an opencode request? | MEASURED |
 
 ---
 
@@ -48,10 +50,38 @@ _None._
 
 ---
 
-U24–U28 belong to P37, the proof of concept on branch `poc/apim-products-keyvault`
-(`poc/products-keyvault/`). All were measured on 2026-10-11 on the Standard v2 test instance of
-U23, from a VM inside its virtual network; the final run (`10111658`) passed 22 of 22 checks.
-Run details are in `poc/products-keyvault/README.md`.
+U24–U29 belong to the proof of concept on branch `poc/apim-products-keyvault`
+(`poc/products-keyvault/`). U24–U28 (P37) were measured on 2026-10-11 on the Standard v2 test
+instance of U23, from a VM inside its virtual network; the final run (`10111658`) passed 22 of
+22 checks. Run details are in `poc/products-keyvault/README.md`. U29 (P38) was measured on
+2026-10-12 from a laptop, through the gateway.
+
+### U29 — Does a Foundry deployment's per-minute token limit count `max_tokens`, and how large is an opencode request? — MEASURED
+
+**It did not count `max_tokens`; one opencode request is larger than 10,000 tokens a minute
+allows.** Measured on `deepseek-v4-flash` (model `DeepSeek-V4-Flash-0731`, GlobalStandard),
+called through the proof of concept's OpenAI-compatible route.
+
+- opencode 1.18.21 sent two requests for one prompt, captured with a local server: a title
+  request of 2.4 KB and the prompt itself, 64.5 KB with 10 tool definitions. Both asked for
+  `max_tokens: 32000`.
+- At capacity 10 (Foundry's headers: `x-ratelimit-limit-tokens: 10000`,
+  `x-ratelimit-limit-requests: 10`), opencode got Foundry's 429 *"…have exceeded token rate
+  limit"* in two runs. The other examples, each under 100 tokens, passed.
+- Under that same 10,000 limit, four requests asking for `max_tokens: 20000` each, sent within
+  15 s, all returned 200. A limiter counting `max_tokens` would have refused the first. Microsoft
+  documents that Azure OpenAI deployments count `max_tokens` in the estimate
+  ([quota](https://learn.microsoft.com/azure/foundry/openai/how-to/quota), updated 2026-08-13);
+  this DeepSeek deployment did not.
+- The capacity was raised to 50 at 09:31:46 UTC; Foundry reported the new limits from 09:40:22
+  UTC, 8.5 minutes later. The same page says: *"After you edit a quota allocation or submit a
+  request, allow up to 15 minutes for changes to propagate."* At 50,000 tokens a minute the
+  opencode example passed.
+
+**A header is overwritten.** The product policy names its per-key per-minute counter
+`x-ratelimit-remaining-tokens`, the name Foundry uses for the deployment's count. Responses
+carried the policy's value (19,989 of the pack's 20,000) beside Foundry's
+`x-ratelimit-limit-tokens: 10000`. Renaming the policy's header is roadmap P40.
 
 ### U28 — Does a budget counted per subscription carry across key regeneration? — RESOLVED
 
@@ -381,6 +411,25 @@ $env:CLAUDE_CONFIG_DIR = "$env:TEMP\gw-claude"
 **Revisit:** P23. The honest fix is for the gateway to retry once without `anthropic-beta` when
 the backend returns a 400 naming that header — self-healing, and it cannot break a feature that
 was already being rejected.
+
+**Update, 2026-10-12: a scratch config directory no longer avoids it in every setup.** Claude
+Code 2.1.272 against the proof of concept's Claude route (P38), each run with `-p` and a new
+empty `CLAUDE_CONFIG_DIR`:
+
+| Key passed as | Without `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS` | With it set to `1` |
+|---|---|---|
+| `ANTHROPIC_API_KEY` | 400 naming `advisor-tool-2026-03-01`, 3 of 3 runs | answered, 4 of 4 |
+| `apiKeyHelper` in `settings.json` (`claude-code/settings.example.json`) | answered, 1 of 1 | answered, 2 of 2 |
+
+The cause of the difference between the two rows was not isolated. `ANTHROPIC_AUTH_TOKEN`, which
+the handout on `main` uses, was not measured: the proof of concept's route reads keys from
+`x-api-key` only. Claude Code documents the variable: *"Set to 1 to strip pre-release
+anthropic-beta request headers, the body fields that pair with them, and beta tool-schema
+fields … Use this when a proxy gateway rejects requests with an Unexpected value(s) error for
+the anthropic-beta header"* ([environment variables](https://code.claude.com/docs/en/env-vars),
+read 2026-10-12). The client strips the values itself, so the gateway still forwards
+`anthropic-beta` unchanged ([ADR-0009](adr/0009-claude-code-connection.md)). The handout and
+RUNBOOK on `main` name only the scratch directory; roadmap P39.
 
 
 **Within seconds.** Measured live 2026-10-04 on both routes: a key returning 200, its `jti` added

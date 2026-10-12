@@ -138,6 +138,16 @@ that are actually deployed in the subscription, and serve Claude models to Claud
 - [x] **P34** Bulk keys in one CSV
       *Acceptance:* option 6 writes an owner-only `keys.csv` whose keys verify against the
       signing secret, with formula-safe names; handout files holding a key are owner-only.
+- [ ] **P39** Claude Code handouts strip pre-release `anthropic-beta` values where needed
+      *Acceptance:* the handout's Claude Code setup (`ANTHROPIC_AUTH_TOKEN`, scratch
+      `CLAUDE_CONFIG_DIR`) is measured against the Claude route with and without
+      `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1`. If it gets the 400, the handout's Claude Code
+      lines and the README set the variable. The 400 `anthropic-beta` rows in the handout and
+      RUNBOOK name it either way. A test checks each place.
+      *Why:* UNKNOWNS U17, update of 2026-10-12. With `ANTHROPIC_API_KEY`, a scratch
+      `CLAUDE_CONFIG_DIR`, the advice on `main` today (`scripts/Keys.ps1:687`,
+      `docs/RUNBOOK.md:296`), no longer avoided the 400 with Claude Code 2.1.272; the variable
+      did. The `ANTHROPIC_AUTH_TOKEN` path is unmeasured.
 
 ## Milestone M7 — Long-lived keys on API Management products (proof of concept)
 
@@ -164,6 +174,21 @@ Key Vault. Nothing here changes the gateway on `main`.
       opencode and curl. Every client example is a file that `Test-PocClients.ps1` runs against
       the live gateway; operator actions the guide names exist as script actions with tests.
       *Why:* asked 2026-10-12.
+
+- [ ] **P40** The per-key per-minute header does not overwrite Foundry's
+      *Acceptance:* the product policy reports its per-key per-minute count under a header
+      name Foundry does not send, and a live response carries both counts.
+      *Why:* UNKNOWNS U29. The policy writes `x-ratelimit-remaining-tokens`, Foundry's name for
+      the deployment's count, so a response pairs the policy's remaining count with Foundry's
+      limit.
+
+- [ ] **P41** Removal deletes every proof-of-concept product
+      *Acceptance:* `Remove-Poc.ps1` deletes every product whose id starts `poc-`, with its
+      keys, including packs added to `products` in `poc.bicep`; a test with the API stubbed
+      shows a fourth pack removed.
+      *Why:* found writing SETUP.md (P38). The script deletes `poc-claude-pack`,
+      `poc-deepseek-pack` and `poc-tiny-pack` by name (`scripts/Remove-Poc.ps1`), and a
+      deployment is incremental, so any other pack stays.
 
 ## Milestone M6 — Only if this outlives one event
 

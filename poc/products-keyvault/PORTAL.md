@@ -138,9 +138,12 @@ script actions `New` and `Rotate` need a path to the vault as well; from outside
 run on the runner, once it is set up as in
 [SETUP.md](SETUP.md#vault-access-through-the-runner) (`Deploy`, `Setup`, `Push`):
 `./scripts/Invoke-PocRunner.ps1 @target -VaultName $vault -Step Key -KeyAction New -KeyName alice -KeyProduct poc-claude-pack`.
-The runner's `Deploy` step creates the vault's private endpoint `pe-<vault-name>` and its DNS zone
-itself ([`infra/runner.bicep`](infra/runner.bicep)), so a vault reached through the runner needs
-no private endpoint from step 1.
+The runner's `Deploy` step creates the vault's private endpoint `pe-<vault-name>` with the
+connection `vault`, the zone, and the zone's link `link-<vnet-name>`
+([`infra/runner.bicep`](infra/runner.bicep)). Azure refuses a change to an existing endpoint's
+connection and a second link from the zone to the same virtual network
+([U34](../../docs/UNKNOWNS.md)), so a vault reached through the runner gets its private endpoint
+from `Deploy`, not from step 1.
 The script actions `Grant`, `Revoke`, `SetExpiry`, `SuspendExpired`, `Suspend`, `Resume` and `List` need no path to the vault.
 
 ## Issue a key

@@ -44,6 +44,7 @@ assumption is only closed if it names its blast radius and the detector that wou
 | U31 | Which Azure portal pages and labels create what `poc.bicep` creates, and run the key operations? | ASSUMED |
 | U32 | What can the Azure portal do with a vault whose public network access is Disabled? | RESOLVED |
 | U33 | Does the Azure portal set a subscription's expiry, and suspend and reactivate it? | RESOLVED |
+| U34 | Can the runner's `Deploy` run on a vault given a private endpoint in the portal? | MEASURED |
 
 ---
 
@@ -54,11 +55,24 @@ _None._
 
 ---
 
-U24–U33 belong to the proof of concept on branch `poc/apim-products-keyvault`
+U24–U34 belong to the proof of concept on branch `poc/apim-products-keyvault`
 (`poc/products-keyvault/`). U24–U28 (P37) were measured on 2026-10-11 on the Standard v2 test
 instance of U23, from a VM inside its virtual network; the final run (`10111658`) passed 22 of
 22 checks. Run details are in `poc/products-keyvault/README.md`. U29 and U30 (P38) were measured
-on 2026-10-12. U31–U33 (P43) were researched on 2026-10-12.
+on 2026-10-12. U31–U33 (P43) were researched, and U34 measured, on 2026-10-12.
+
+### U34 — Can the runner's `Deploy` run on a vault given a private endpoint in the portal? — MEASURED
+
+**Not where the endpoint or the zone's link already exists under other names.** `runner.bicep`
+declares the endpoint `pe-<vault-name>` with the connection `vault`, and the link
+`link-<vnet-name>` from the zone `privatelink.vaultcore.azure.net` in its resource group to the
+virtual network. Measured on 2026-10-12 in the test resource group: declaring an existing endpoint
+again with another connection name returned `CannotChangePrivateLinkConnectionOnPrivateEndpoint`
+("Cannot change the private link connection on private endpoint"), and a second link from the
+zone to the same virtual network returned `Conflict` ("is already linked to the virtual
+network"). The probe endpoint was deleted afterwards; the refused link was never created.
+`PORTAL.md` therefore states that a vault reached through the runner gets its private endpoint
+from `Deploy`, not from step 1.
 
 ### U33 — Does the Azure portal set a subscription's expiry, and suspend and reactivate it? — RESOLVED
 

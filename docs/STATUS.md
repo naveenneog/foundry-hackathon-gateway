@@ -52,9 +52,15 @@ Also new: each document's Sources list holds exactly the pages it cites, each wi
 caught the virtual network links page missing from PORTAL.md and ARCHITECTURE.md's undated
 entries.
 
-Mutations caught: 24 of 24 on the round-2 checks. The round-1 sets still fail the tests that
-cover them (24 of 24, 3 of 3); the first set's expected test names predate the round-1 renames,
-and its mutants fail the renamed tests.
+Found while checking the N5 fix: the runner's `Deploy` cannot take over a private endpoint or
+zone link made in step 1. Azure refused a change to an existing endpoint's connection and a
+second link from the zone to the same virtual network (U34, measured 2026-10-12). PORTAL.md states
+that a vault reached through the runner gets its private endpoint from `Deploy`, and a test reads
+the connection and link names from `runner.bicep`.
+
+Mutations caught: 24 of 24 on the round-2 checks and 3 of 3 on U34's. The round-1 sets still fail
+the tests that cover them (24 of 24, 3 of 3); the first set's expected test names predate the
+round-1 renames, and its mutants fail the renamed tests.
 
 ### P38 — setup and usage guide — DONE (branch only)
 

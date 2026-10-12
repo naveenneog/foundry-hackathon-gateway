@@ -350,7 +350,13 @@ describe("P43 portal steps", () => {
     const rb = runnerBicep();
     assert.match(rb, /privateDnsZones@[^\n]+\n\s+name: 'privatelink\.vaultcore\.azure\.net'/);
     assert.match(rb, /privateEndpoints\/privateDnsZoneGroups@[^\n]+\n\s+parent: vaultEndpoint/);
-    assert.match(text, /The runner's `Deploy` step creates the vault's private endpoint `pe-<vault-name>` and its DNS zone/);
+    const conn = (rb.match(/privateLinkServiceConnections: \[\n\s+\{\n\s+name: '([^']+)'/) || [])[1];
+    const link = ((rb.match(/virtualNetworkLinks@[^\n]+\n\s+parent: vaultZone\n\s+name: '([^']+)'/) || [])[1] || "").replace("${vnetName}", "<vnet-name>");
+    assert.ok(conn && link, "the endpoint's connection or the zone's link was not found");
+    assert.ok(text.includes(`The runner's \`Deploy\` step creates the vault's private endpoint \`pe-<vault-name>\` with the connection \`${conn}\`, the zone, and the zone's link \`${link}\``),
+      "the endpoint, connection and link that Deploy creates are not given");
+    // Measured 2026-10-12 (U34): Azure refuses both, so Deploy cannot adopt step 1's endpoint.
+    assert.match(text, /\(\[U34\]\(\.\.\/\.\.\/docs\/UNKNOWNS\.md\)\), so a vault reached through the runner gets its private endpoint from `Deploy`, not from step 1\./);
   });
 
   test("the steps whose claims rest on one Learn page cite that page", () => {

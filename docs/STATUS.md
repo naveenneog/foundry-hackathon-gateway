@@ -1,7 +1,14 @@
 # Status
 
-**Active packet:** none. P37 is done on branch `poc/apim-products-keyvault` (not pushed; a push
-needs the owner's approval). U24–U28 are closed. Open packets on `main`: P36, P35, P30, P20.
+**Active packet:** P38 — a setup and usage guide for the products proof of concept, on branch
+`poc/apim-products-keyvault` (not pushed; a push needs the owner's approval). Acceptance criteria
+are in the roadmap (M7). Open packets on `main`: P36, P35, P30, P20.
+
+### P38 — setup and usage guide — IN PROGRESS
+
+The guide's client examples are files run by `Test-PocClients.ps1` against the live gateway, so
+the guide cannot drift from what works. Operator actions it needs that did not exist yet (list
+keys, suspend and resume one key, key actions on the runner) are added test-first.
 
 ### P37 — products and Key Vault on Standard v2 — DONE (branch only)
 

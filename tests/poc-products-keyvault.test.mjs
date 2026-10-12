@@ -380,3 +380,68 @@ describe("P37 measurement", { skip: !pwsh && "PowerShell 7 not found" }, () => {
     }
   });
 });
+
+describe("P38 operator actions", { skip: !pwsh && "PowerShell 7 not found" }, () => {
+  const scope = (p) => `/subscriptions/s/resourceGroups/rg-x/providers/Microsoft.ApiManagement/service/apim-x${p}`;
+  const pages = [
+    {
+      method: "GET",
+      match: "/service/apim-x/subscriptions\\?api-version",
+      body: {
+        value: [
+          { name: "poc-alice", properties: { scope: scope("/products/poc-claude-pack"), state: "active", expirationDate: "2026-11-10T00:00:00Z" } },
+          { name: "master", properties: { scope: scope("/"), state: "active", expirationDate: null } },
+          { name: "team-x", properties: { scope: scope("/products/starter"), state: "active", expirationDate: null } },
+        ],
+        nextLink: "https://management.azure.com/next-page-2",
+      },
+    },
+    { method: "GET", match: "next-page-2", body: { value: [{ name: "poc-bob", properties: { scope: scope("/products/poc-deepseek-pack"), state: "suspended", expirationDate: null } }] } },
+  ];
+
+  test("the key list shows proof-of-concept keys with product, state and expiry, across pages, and fetches no key", () => {
+    const r = runKeys({ responses: pages, call: "Get-PocKeyList -Context $ctx | ForEach-Object { \"ROW $($_.Name)|$($_.Product)|$($_.State)|$($_.Expires)\" }" });
+    assert.equal(r.failed, "", r.failed);
+    const rows = [...r.own.matchAll(/ROW (.*)/g)].map((m) => m[1].trim());
+    assert.deepEqual(rows, ["poc-alice|poc-claude-pack|active|2026-11-10", "poc-bob|poc-deepseek-pack|suspended|"]);
+    assert.ok(r.calls.every((c) => c.method === "GET" && !/listSecrets/.test(c.uri)), "the list fetched a key");
+  });
+
+  test("suspending and resuming one key changes only its state", () => {
+    const r = runKeys({
+      responses: [{ method: "PATCH", match: "/subscriptions/poc-alice\\?", body: {} }],
+      call: "Set-PocKeyState -Context $ctx -Name 'alice' -State suspended; Set-PocKeyState -Context $ctx -Name 'alice' -State active",
+    });
+    assert.equal(r.failed, "", r.failed);
+    assert.deepEqual(r.calls.map((c) => [c.method, c.body.properties, c.ifMatch]), [
+      ["PATCH", { state: "suspended" }, "*"],
+      ["PATCH", { state: "active" }, "*"],
+    ]);
+    const bad = runKeys({ responses: [], call: "Set-PocKeyState -Context $ctx -Name 'alice' -State deleted" });
+    assert.notEqual(bad.failed, "", "an unknown state was accepted");
+    assert.equal(bad.calls.length, 0);
+  });
+
+  test("listing, suspending and resuming need no vault; issuing and rotating say they do, before any call", () => {
+    const cli = q(join(poc, "scripts", "Invoke-PocKey.ps1"));
+    const target = "-Subscription s -ResourceGroup rg-x -ApimName apim-x";
+    const list = runKeys({ responses: pages, call: `& ${cli} -Action List ${target}` });
+    assert.equal(list.failed, "", list.failed);
+    assert.match(list.own, /poc-alice/);
+    for (const action of ["New", "Rotate"]) {
+      const r = runKeys({ responses: [], call: `& ${cli} -Action ${action} -Name alice -Product poc-claude-pack ${target}` });
+      assert.match(r.failed, /VaultName/, `${action} without a vault: ${r.failed}`);
+      assert.equal(r.calls.length, 0);
+    }
+  });
+
+  test("the runner's key step refuses names and products that are not plain ids, before any Azure call", () => {
+    const script = join(poc, "scripts", "Invoke-PocRunner.ps1");
+    for (const [param, value] of [["KeyName", "alice;reboot"], ["KeyName", "Alice"], ["KeyProduct", "starter"], ["KeyProduct", "poc-x$(id)"]]) {
+      const args = { Subscription: "s", ResourceGroup: "rg-x", ApimName: "apim-x", VaultName: "kv-x", KeyAction: "New", KeyName: "alice", KeyProduct: "poc-claude-pack", [param]: value };
+      const r = spawnSync(pwsh, ["-NoProfile", "-NonInteractive", "-File", script, "-Step", "Key", ...Object.entries(args).flatMap(([k, v]) => [`-${k}`, v])], { encoding: "utf8" });
+      assert.notEqual(r.status, 0, `${param}=${value} accepted`);
+      assert.match(`${r.stdout}${r.stderr}`, new RegExp(param), `${param}=${value} not refused by validation`);
+    }
+  });
+});

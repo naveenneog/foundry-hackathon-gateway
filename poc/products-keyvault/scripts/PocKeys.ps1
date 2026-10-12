@@ -182,26 +182,54 @@ function Set-PocKeyExpiry {
     Write-Host "poc-$Name expires on $((ConvertTo-PocUtc $ExpiresUtc).ToString('yyyy-MM-dd')) (00:00 UTC; API Management keeps the date only)."
 }
 
+# Every key on a proof-of-concept product: name, product, state and stored expiry date (API
+# Management keeps the date only). Reads subscriptions; never fetches a key.
+function Get-PocKeyList {
+    param([Parameter(Mandatory)]$Context)
+    $page = Invoke-PocApim -Context $Context -Method GET -Path '/subscriptions'
+    while ($page) {
+        foreach ($s in @($page.value)) {
+            $m = [regex]::Match("$($s.properties.scope)", '/products/(poc-[a-z0-9-]+)$')
+            if (-not $m.Success) { continue }
+            $expires = ConvertTo-PocUtc $s.properties.expirationDate
+            [pscustomobject]@{
+                Name       = $s.name
+                Product    = $m.Groups[1].Value
+                State      = "$($s.properties.state)"
+                Expires    = if ($expires) { $expires.ToString('yyyy-MM-dd') } else { '' }
+                ExpiresUtc = $expires
+            }
+        }
+        $page = if ($page.nextLink) { Invoke-PocApim -Context $Context -Method GET -Path $page.nextLink } else { $null }
+    }
+}
+
+# Suspends or resumes one key. Measured on Standard v2: a suspended key was refused (401) from
+# 1.4 s after the request, a resumed one accepted again from 9.8 s (UNKNOWNS U25).
+function Set-PocKeyState {
+    param(
+        [Parameter(Mandatory)]$Context,
+        [Parameter(Mandatory)][string]$Name,
+        [Parameter(Mandatory)][ValidateSet('active', 'suspended')][string]$State
+    )
+    Assert-PocName $Name
+    $null = Invoke-PocApim -Context $Context -Method PATCH -Path "/subscriptions/poc-$Name" -IfMatch -Body @{ properties = @{ state = $State } }
+    Write-Host "poc-$Name is now $State."
+}
+
 # Suspends every active key on a proof-of-concept product whose expiry has passed. Keys on other
 # products, the all-access key and keys already suspended are left alone.
 function Suspend-ExpiredPocKeys {
     param([Parameter(Mandatory)]$Context, [datetime]$Now = [datetime]::UtcNow)
     $now = ConvertTo-PocUtc $Now
     $suspended = [System.Collections.Generic.List[string]]::new()
-    $page = Invoke-PocApim -Context $Context -Method GET -Path '/subscriptions'
-    while ($page) {
-        foreach ($s in @($page.value)) {
-            $p = $s.properties
-            if ("$($p.scope)" -notmatch '/products/poc-[a-z0-9-]+$' -or $p.state -ne 'active') { continue }
-            $expires = ConvertTo-PocUtc $p.expirationDate
-            if ($null -eq $expires -or $expires -gt $now) { continue }
-            $null = Invoke-PocApim -Context $Context -Method PATCH -Path "/subscriptions/$($s.name)" -IfMatch -Body @{
-                properties = @{ state = 'suspended'; stateComment = "Expired $($expires.ToString('u'))" }
-            }
-            Write-Host "Suspended $($s.name): expired $($expires.ToString('u'))."
-            $suspended.Add($s.name)
+    foreach ($k in @(Get-PocKeyList -Context $Context)) {
+        if ($k.State -ne 'active' -or $null -eq $k.ExpiresUtc -or $k.ExpiresUtc -gt $now) { continue }
+        $null = Invoke-PocApim -Context $Context -Method PATCH -Path "/subscriptions/$($k.Name)" -IfMatch -Body @{
+            properties = @{ state = 'suspended'; stateComment = "Expired $($k.Expires)" }
         }
-        $page = if ($page.nextLink) { Invoke-PocApim -Context $Context -Method GET -Path $page.nextLink } else { $null }
+        Write-Host "Suspended $($k.Name): expired $($k.Expires)."
+        $suspended.Add($k.Name)
     }
     return , $suspended.ToArray()
 }

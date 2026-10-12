@@ -10,9 +10,12 @@
         -Step Push    copy the key scripts and the apiKeyHelper to /opt/poc, verified by SHA-256
         -Step Test    start Test-Poc.ps1 on the VM as a systemd unit, so no call stays open
         -Step Fetch   print a page of the run's check lines (-From, -Lines); no keys are logged
+        -Step Key     run Invoke-PocKey.ps1 on the VM (-KeyAction, -KeyName, -KeyProduct,
+                      -KeyExpiresOn): issue, rotate, expire, suspend, resume or list keys where
+                      the vault is reachable. It prints no key.
 #>
 param(
-    [Parameter(Mandatory)][ValidateSet('Deploy', 'Setup', 'Push', 'Test', 'Fetch')][string]$Step,
+    [Parameter(Mandatory)][ValidateSet('Deploy', 'Setup', 'Push', 'Test', 'Fetch', 'Key')][string]$Step,
     [Parameter(Mandatory)][string]$Subscription,
     # These three reach a shell running as root on the VM, so only plain names are accepted.
     [Parameter(Mandatory)][ValidatePattern('^[A-Za-z0-9._-]{1,90}$')][string]$ResourceGroup,
@@ -21,7 +24,13 @@ param(
     [string]$VnetName = 'vnet-hackgw-pe',
     [string]$VmName = 'vm-poc-runner',
     [int]$From = 1,
-    [int]$Lines = 11
+    [int]$Lines = 11,
+    # -Step Key. These reach the same root shell, so they are checked the same way, and as
+    # case-sensitively as PocKeys.ps1 checks them (ValidatePattern ignores case by default).
+    [ValidateSet('New', 'Rotate', 'SetExpiry', 'SuspendExpired', 'Suspend', 'Resume', 'List')][string]$KeyAction = 'List',
+    [ValidatePattern('^[a-z0-9][a-z0-9-]{0,39}$', Options = 'None')][string]$KeyName,
+    [ValidatePattern('^poc-[a-z0-9-]+$', Options = 'None')][string]$KeyProduct,
+    [ValidatePattern('^\d{4}-\d{2}-\d{2}$')][string]$KeyExpiresOn
 )
 $ErrorActionPreference = 'Stop'
 $poc = Join-Path $PSScriptRoot '..'
@@ -36,6 +45,13 @@ function Invoke-OnRunner([string]$Bash) {
         # Run Command returns the last 4,096 bytes of standard output and of standard error.
         return (($out | ConvertFrom-Json).value | ForEach-Object { $_.message }) -join "`n"
     } finally { Remove-Item -LiteralPath $file -ErrorAction SilentlyContinue }
+}
+
+# The subscription id, checked to be a GUID before it is written into a shell command.
+function Get-SubscriptionId {
+    $id = "$(az account show --subscription $Subscription --query id -o tsv)".Trim()
+    if ($LASTEXITCODE -ne 0 -or $id -notmatch '^[0-9a-fA-F-]{36}$') { throw "The Azure CLI cannot use subscription '$Subscription'." }
+    return $id
 }
 
 switch ($Step) {
@@ -70,6 +86,7 @@ echo "subscriptions visible to the VM identity: $(az account list --query 'lengt
         $files = [ordered]@{
             '/opt/poc/scripts/PocKeys.ps1'        = Join-Path $poc 'scripts' 'PocKeys.ps1'
             '/opt/poc/scripts/PocMeasure.ps1'     = Join-Path $poc 'scripts' 'PocMeasure.ps1'
+            '/opt/poc/scripts/Invoke-PocKey.ps1'  = Join-Path $poc 'scripts' 'Invoke-PocKey.ps1'
             '/opt/poc/scripts/Test-Poc.ps1'       = Join-Path $poc 'scripts' 'Test-Poc.ps1'
             '/opt/poc/claude-code/Get-PocKey.ps1' = Join-Path $poc 'claude-code' 'Get-PocKey.ps1'
         }
@@ -88,8 +105,7 @@ echo "subscriptions visible to the VM identity: $(az account list --query 'lengt
         }
     }
     'Test' {
-        $id = "$(az account show --subscription $Subscription --query id -o tsv)".Trim()
-        if ($LASTEXITCODE -ne 0 -or $id -notmatch '^[0-9a-fA-F-]{36}$') { throw "The Azure CLI cannot use subscription '$Subscription'." }
+        $id = Get-SubscriptionId
         Invoke-OnRunner @"
 set -e
 rm -f /opt/poc/run.log /opt/poc/results.json
@@ -103,6 +119,17 @@ echo started
         $to = $From + $Lines - 1
         Invoke-OnRunner @"
 if [ -f /opt/poc/run.log ]; then grep -E '^(PASS|FAIL|SKIP|Run |EXIT|Results|[0-9]+ of )|failed:|Exception' /opt/poc/run.log | cut -c1-330 | sed -n '$From,${to}p'; else echo 'no run.log yet'; fi
+"@
+    }
+    'Key' {
+        $id = Get-SubscriptionId
+        $more = ''
+        if ($KeyName) { $more += " -Name '$KeyName'" }
+        if ($KeyProduct) { $more += " -Product '$KeyProduct'" }
+        if ($KeyExpiresOn) { $more += " -ExpiresUtc '$KeyExpiresOn'" }
+        Invoke-OnRunner @"
+export HOME=/root
+pwsh -NoProfile -File /opt/poc/scripts/Invoke-PocKey.ps1 -Action $KeyAction -Subscription '$id' -ResourceGroup '$ResourceGroup' -ApimName '$ApimName' -VaultName '$VaultName'$more 2>&1
 "@
     }
 }

@@ -157,6 +157,14 @@ Key Vault. Nothing here changes the gateway on `main`.
       network because the vault's public access was turned off outside this project. Results
       and the six findings: `poc/products-keyvault/README.md`.
 
+- [ ] **P38** A setup and usage guide for the products proof of concept
+      *Acceptance:* `poc/products-keyvault/SETUP.md` takes an operator from an existing v2
+      instance to issued keys, and covers issuing, handing over, rotating, expiring, suspending,
+      listing and monitoring keys, and connecting Claude Code, the Anthropic and OpenAI SDKs,
+      opencode and curl. Every client example is a file that `Test-PocClients.ps1` runs against
+      the live gateway; operator actions the guide names exist as script actions with tests.
+      *Why:* asked 2026-10-12.
+
 ## Milestone M6 — Only if this outlives one event
 
 - [ ] **P36** An unreadable key list is not written over

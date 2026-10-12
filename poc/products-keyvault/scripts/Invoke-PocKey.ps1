@@ -1,31 +1,41 @@
 <#
     P37 proof of concept: the command line for PocKeys.ps1. Keys are never printed.
 
-        ./Invoke-PocKey.ps1 -Action New -Name alice -Product poc-claude-pack @target
-        ./Invoke-PocKey.ps1 -Action Rotate -Name alice @target
-        ./Invoke-PocKey.ps1 -Action SetExpiry -Name alice -ExpiresUtc 2027-01-01T00:00:00Z @target
+        ./Invoke-PocKey.ps1 -Action New -Name alice -Product poc-claude-pack @target -VaultName <vault>
+        ./Invoke-PocKey.ps1 -Action Rotate -Name alice @target -VaultName <vault>
+        ./Invoke-PocKey.ps1 -Action SetExpiry -Name alice -ExpiresUtc 2027-01-31 @target
         ./Invoke-PocKey.ps1 -Action SuspendExpired @target
+        ./Invoke-PocKey.ps1 -Action Suspend -Name alice @target
+        ./Invoke-PocKey.ps1 -Action Resume -Name alice @target
+        ./Invoke-PocKey.ps1 -Action List @target
 
-    where $target = @{ Subscription = '<id or name>'; ResourceGroup = '<rg>'; ApimName = '<apim>';
-    VaultName = '<vault>' }. Deploy-Poc.ps1 prints the vault name.
+    where $target = @{ Subscription = '<id or name>'; ResourceGroup = '<rg>'; ApimName = '<apim>' }.
+    New and Rotate move a key into Key Vault, so they need -VaultName and a network path to the
+    vault; the other actions use API Management only. See ../SETUP.md.
 #>
 param(
-    [Parameter(Mandatory)][ValidateSet('New', 'Rotate', 'SetExpiry', 'SuspendExpired')][string]$Action,
+    [Parameter(Mandatory)][ValidateSet('New', 'Rotate', 'SetExpiry', 'SuspendExpired', 'Suspend', 'Resume', 'List')][string]$Action,
     [Parameter(Mandatory)][string]$Subscription,
     [Parameter(Mandatory)][string]$ResourceGroup,
     [Parameter(Mandatory)][string]$ApimName,
-    [Parameter(Mandatory)][string]$VaultName,
+    [string]$VaultName = '',
     [string]$Name,
     [string]$Product,
     [datetime]$ExpiresUtc
 )
 $ErrorActionPreference = 'Stop'
+if ($Action -in 'New', 'Rotate' -and -not $VaultName) {
+    throw "-VaultName is needed for ${Action}: the key goes into Key Vault."
+}
 . (Join-Path $PSScriptRoot 'PocKeys.ps1')
 
-$ctx = New-PocContext -Subscription $Subscription -ResourceGroup $ResourceGroup -ApimName $ApimName -VaultName $VaultName
+$ctx = New-PocContext -Subscription $Subscription -ResourceGroup $ResourceGroup -ApimName $ApimName -VaultName $(if ($VaultName) { $VaultName } else { 'none' })
 switch ($Action) {
     'New' { $null = New-PocKey -Context $ctx -Name $Name -Product $Product }
     'Rotate' { $null = Invoke-PocKeyRotation -Context $ctx -Name $Name }
     'SetExpiry' { Set-PocKeyExpiry -Context $ctx -Name $Name -ExpiresUtc $ExpiresUtc }
     'SuspendExpired' { $null = Suspend-ExpiredPocKeys -Context $ctx }
+    'Suspend' { Set-PocKeyState -Context $ctx -Name $Name -State suspended }
+    'Resume' { Set-PocKeyState -Context $ctx -Name $Name -State active }
+    'List' { Get-PocKeyList -Context $ctx | Format-Table Name, Product, State, Expires -AutoSize | Out-String | Write-Host }
 }

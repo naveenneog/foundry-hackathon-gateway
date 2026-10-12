@@ -567,8 +567,8 @@ the operator's vault role and the vault. `-PurgeVault` also purges the deleted v
 otherwise stays soft-deleted for its retention period. `-Runner` removes the runner's roles, VM,
 subnet, NAT gateway, public IP, NSG and private endpoint, and the `privatelink.vaultcore.azure.net`
 zone when no other record is left in it. A pack with another id stays (roadmap P41). Each step's
-result is checked, and the script exits 1 if anything is left. It has not yet been run against a
-deployment.
+result is checked, and the script exits 1 if anything is left. Offline tests run it with Azure
+stubbed; it has not yet been run against a deployment.
 
 ## Sources
 

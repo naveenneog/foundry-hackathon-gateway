@@ -198,6 +198,66 @@ foreach ($c in $global:Calls) { $c | ConvertTo-Json -Compress -Depth 8 }
 const KV = "https://kv-x\\.vault\\.azure\\.net/secrets/poc-key-alice";
 const SUB = "/service/apim-x/subscriptions/poc-alice";
 
+/**
+ * Run a whole script with `az` and Invoke-RestMethod stubbed. `az` rules match the joined
+ * arguments in order ({ match, out, exit }); any other az call succeeds with no output. A file
+ * passed to az as @path (a Run Command script) is recorded. Returns the output, the script's
+ * exit code, a terminating error if any, and every az and HTTP call.
+ */
+const runScript = ({ file, args, az = [], responses = [] }) => {
+  const script = `
+$ErrorActionPreference = 'Stop'
+$global:AzCalls = [System.Collections.Generic.List[string]]::new()
+$global:AzScripts = [System.Collections.Generic.List[string]]::new()
+$global:AzRules = @(${q(JSON.stringify(az))} | ConvertFrom-Json)
+function az {
+    $line = @($args) -join ' '
+    $global:LASTEXITCODE = 0
+    if ($line -like 'account show*') { return '00000000-0000-0000-0000-000000000123' }
+    if ($line -like 'account get-access-token*') { return (@{ accessToken = 'TOKEN'; expires_on = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() + 3600 } | ConvertTo-Json -Compress) }
+    $global:AzCalls.Add($line)
+    foreach ($a in $args) { if ("$a" -like '@*' -and (Test-Path -LiteralPath "$a".Substring(1))) { $global:AzScripts.Add((Get-Content -Raw -LiteralPath "$a".Substring(1))) } }
+    foreach ($r in $global:AzRules) { if ($line -match $r.match) { $global:LASTEXITCODE = [int]$r.exit; return $r.out } }
+}
+$global:Calls = [System.Collections.Generic.List[object]]::new()
+$global:Responses = @(${q(JSON.stringify(responses))} | ConvertFrom-Json)
+function Invoke-RestMethod {
+    param($Method, $Uri, $Headers, $Body, $ContentType)
+    $global:Calls.Add([pscustomobject]@{ method = "$Method"; uri = "$Uri" })
+    foreach ($r in $global:Responses) {
+        if ("$Method" -eq $r.method -and "$Uri" -match $r.match) {
+            if ($r.error) { throw $r.error }
+            return $r.body
+        }
+    }
+    throw "unexpected call: $Method $Uri"
+}
+$failed = ''
+$global:LASTEXITCODE = 0
+try { & ${q(file)} ${args} } catch { $failed = $_.Exception.Message }
+"=== EXIT $LASTEXITCODE"
+"=== FAILED $failed"
+"=== AZ"
+foreach ($c in $global:AzCalls) { "AZ $c" }
+"=== SCRIPTS"
+foreach ($s in $global:AzScripts) { $s | ConvertTo-Json -Compress }
+"=== HTTP"
+foreach ($c in $global:Calls) { "HTTP $($c.method) $($c.uri)" }
+`;
+  const r = spawnSync(pwsh, ["-NoProfile", "-NonInteractive", "-Command", script], { encoding: "utf8" });
+  const out = String(r.stdout);
+  const section = (name) => (out.split(`=== ${name}`)[1] || "").split("=== ")[0];
+  return {
+    own: out.split("=== EXIT")[0],
+    exit: Number((out.match(/=== EXIT (\d+)/) || [])[1]),
+    failed: (out.match(/=== FAILED (.*)/) || [])[1]?.trim() || "",
+    az: [...section("AZ").matchAll(/^AZ (.*)$/gm)].map((m) => m[1].trim()),
+    scripts: section("SCRIPTS").split(/\r?\n/).filter((l) => l.startsWith('"')).map((l) => JSON.parse(l)),
+    http: [...section("HTTP").matchAll(/^HTTP (\S+) (\S+)$/gm)].map((m) => `${m[1]} ${m[2]}`),
+    stderr: String(r.stderr),
+  };
+};
+
 describe("P37 key scripts", { skip: !pwsh && "PowerShell 7 not found" }, () => {
   test("a new key is created on its product and stored in the vault as the primary slot, unprinted", () => {
     const r = runKeys({
@@ -431,6 +491,13 @@ describe("P38 operator actions", { skip: !pwsh && "PowerShell 7 not found" }, ()
     const list = runKeys({ responses: pages, call: `& ${cli} -Action List ${target}` });
     assert.equal(list.failed, "", list.failed);
     assert.match(list.own, /poc-alice/);
+    const patch = [{ method: "PATCH", match: "/subscriptions/poc-alice\\?", body: {} }];
+    for (const action of ["Suspend", "Resume"]) {
+      const r = runKeys({ responses: patch, call: `& ${cli} -Action ${action} -Name alice ${target}` });
+      assert.equal(r.failed, "", `${action}: ${r.failed}`);
+      assert.deepEqual(r.calls.map((c) => [c.method, c.body.properties.state]), [["PATCH", action === "Suspend" ? "suspended" : "active"]]);
+      assert.ok(r.calls.every((c) => !/vault\.azure\.net/.test(c.uri)), `${action} called the vault`);
+    }
     for (const action of ["New", "Rotate"]) {
       const r = runKeys({ responses: [], call: `& ${cli} -Action ${action} -Name alice -Product poc-claude-pack ${target}` });
       assert.match(r.failed, /VaultName/, `${action} without a vault: ${r.failed}`);
@@ -438,14 +505,115 @@ describe("P38 operator actions", { skip: !pwsh && "PowerShell 7 not found" }, ()
     }
   });
 
-  test("the runner's key step refuses names and products that are not plain ids, before any Azure call", () => {
+  test("the runner's key step refuses names, products and dates that are not plain, before any Azure call", () => {
     const script = join(poc, "scripts", "Invoke-PocRunner.ps1");
-    for (const [param, value] of [["KeyName", "alice;reboot"], ["KeyName", "Alice"], ["KeyProduct", "starter"], ["KeyProduct", "poc-x$(id)"]]) {
+    for (const [param, value] of [["KeyName", "alice;reboot"], ["KeyName", "Alice"], ["KeyProduct", "starter"], ["KeyProduct", "poc-x$(id)"],
+      ["KeyExpiresOn", "2027-01-31'; reboot; '"], ["KeyExpiresOn", "tomorrow"]]) {
       const args = { Subscription: "s", ResourceGroup: "rg-x", ApimName: "apim-x", VaultName: "kv-x", KeyAction: "New", KeyName: "alice", KeyProduct: "poc-claude-pack", [param]: value };
       const r = spawnSync(pwsh, ["-NoProfile", "-NonInteractive", "-File", script, "-Step", "Key", ...Object.entries(args).flatMap(([k, v]) => [`-${k}`, v])], { encoding: "utf8" });
       assert.notEqual(r.status, 0, `${param}=${value} accepted`);
       assert.match(`${r.stdout}${r.stderr}`, new RegExp(param), `${param}=${value} not refused by validation`);
     }
+  });
+
+  // Run Command reports success whenever it ran the script, whatever the script's exit code.
+  const runCommand = (stdout) => JSON.stringify({ value: [{ message: `Enable succeeded: \n[stdout]\n${stdout}\n\n[stderr]\n` }] });
+  const runner = (stdout, step = "Fetch") => runScript({
+    file: join(poc, "scripts", "Invoke-PocRunner.ps1"),
+    args: `-Step ${step} -Subscription s -ResourceGroup rg-x -ApimName apim-x -VaultName kv-x`,
+    az: [{ match: "^vm run-command invoke", out: runCommand(stdout), exit: 0 }],
+  });
+
+  test("a runner step fails when its script fails on the VM, and says so", () => {
+    const ok = runner("PASS one\nPOC_EXIT 0");
+    assert.equal(ok.failed, "", ok.failed);
+    assert.match(ok.own, /PASS one/);
+    assert.doesNotMatch(ok.own, /POC_EXIT/);
+    const bad = runner("Invoke-PocKey.ps1: 404 Not Found\nPOC_EXIT 1", "Key");
+    assert.match(bad.failed, /exit code 1/);
+    assert.match(bad.own, /404 Not Found/, "the VM's output is not shown on failure");
+    const none = runner("cut off before the end");
+    assert.match(none.failed, /no exit status/);
+    assert.equal(ok.scripts.length, 1);
+    assert.match(ok.scripts[0], /\necho "POC_EXIT \$\?"\n?$/, "the script sent does not report its exit status last");
+  });
+});
+
+describe("P38 removal", { skip: !pwsh && "PowerShell 7 not found" }, () => {
+  const file = join(poc, "scripts", "Remove-Poc.ps1");
+  const vaultId = "/subscriptions/00000000-0000-0000-0000-000000000123/resourceGroups/rg-x/providers/Microsoft.KeyVault/vaults/kv-x";
+  const apimId = "/subscriptions/00000000-0000-0000-0000-000000000123/resourceGroups/rg-x/providers/Microsoft.ApiManagement/service/apim-x";
+  const subs = (scope) => `/subscriptions/00000000-0000-0000-0000-000000000123/resourceGroups/rg-x/providers/Microsoft.ApiManagement/service/apim-x${scope}`;
+  const apim = [
+    { method: "DELETE", match: "/products/poc-(claude|deepseek|tiny)-pack\\?deleteSubscriptions=true&api-version", body: {} },
+    { method: "DELETE", match: "/apis/poc-(claude|openai|probe)\\?api-version", body: {} },
+    {
+      method: "GET", match: "/service/apim-x/subscriptions\\?api-version",
+      body: { value: [
+        { name: "poc-client-claude-1", properties: { scope: subs("/apis/poc-claude") } },
+        { name: "master", properties: { scope: subs("/") } },
+        { name: "team-x", properties: { scope: subs("/products/starter") } },
+      ], nextLink: "https://management.azure.com/next-page-2" },
+    },
+    { method: "GET", match: "next-page-2", body: { value: [{ name: "poc-old", properties: { scope: subs("/products/poc-claude-pack") } }] } },
+    { method: "DELETE", match: "/subscriptions/poc-(client-claude-1|old)\\?api-version", body: {} },
+  ];
+  const vault = [{ match: "^keyvault show --name kv-x", out: vaultId, exit: 0 }];
+  const run = ({ az = [], responses = apim, runner = false } = {}) => runScript({
+    file, responses, az: [...az, ...vault],
+    args: `-Subscription s -ResourceGroup rg-x -ApimName apim-x -VaultName kv-x -PurgeVault${runner ? " -Runner" : ""}`,
+  });
+
+  test("removal deletes the packs with their keys, the routes, leftover poc- keys and the vault, and nothing else", () => {
+    const r = run();
+    assert.equal(r.exit, 0, r.own);
+    const deleted = r.http.filter((h) => h.startsWith("DELETE")).map((h) => h.replace(/^DELETE https:\/\/management\.azure\.com\/subscriptions\/[^/]+\/resourceGroups\/rg-x\/providers\/Microsoft\.ApiManagement\/service\/apim-x/, "").replace(/[?&]api-version=[^&]*/, ""));
+    assert.deepEqual(deleted.sort(), [
+      "/apis/poc-claude", "/apis/poc-openai", "/apis/poc-probe",
+      "/products/poc-claude-pack?deleteSubscriptions=true", "/products/poc-deepseek-pack?deleteSubscriptions=true", "/products/poc-tiny-pack?deleteSubscriptions=true",
+      "/subscriptions/poc-client-claude-1", "/subscriptions/poc-old",
+    ].sort());
+    assert.ok(r.az.some((a) => a.startsWith(`role assignment delete --scope ${vaultId} --role Key Vault Secrets Officer`)), r.az.join("\n"));
+    assert.ok(r.az.some((a) => a.startsWith("keyvault delete --name kv-x")));
+    assert.ok(r.az.some((a) => a.startsWith("keyvault purge --name kv-x")));
+    assert.ok(!r.az.some((a) => /^(vm|network) /.test(a)), "touched the runner without -Runner");
+    assert.doesNotMatch(r.own, /Left behind/);
+  });
+
+  test("a step that fails is reported, the others still run, and the exit code is 1", () => {
+    const r = run({ az: [{ match: "^keyvault delete", out: "ERROR: (Forbidden) The client does not have authorization", exit: 1 }] });
+    assert.equal(r.exit, 1, r.own);
+    assert.match(r.own, /Could not remove vault kv-x[^\n]*Forbidden/);
+    assert.match(r.own, /Left behind: vault kv-x/);
+    assert.ok(r.az.some((a) => a.startsWith("keyvault purge --name kv-x")), "the steps after the failure did not run");
+  });
+
+  test("something already gone is not a failure", () => {
+    const gone = [{ method: "DELETE", match: "/products/poc-tiny-pack\\?", error: '{"error":{"code":"ResourceNotFound","message":"not found"}}' }, ...apim];
+    const r = run({ responses: gone });
+    assert.equal(r.exit, 0, r.own);
+    assert.match(r.own, /product poc-tiny-pack and its keys was not there/);
+  });
+
+  test("with -Runner it removes the runner's roles and resources, and keeps a DNS zone that still has other records", () => {
+    const runnerAz = [
+      { match: "^vm show .*identity\\.principalId", out: "pid-1", exit: 0 },
+      { match: "^apim show", out: apimId, exit: 0 },
+    ];
+    const kept = run({ runner: true, az: [...runnerAz, { match: "^network private-dns record-set a list", out: "other-app", exit: 0 }] });
+    assert.equal(kept.exit, 0, kept.own);
+    for (const want of [
+      `role assignment delete --assignee-object-id pid-1 --scope ${apimId}`,
+      `role assignment delete --assignee-object-id pid-1 --scope ${vaultId}`,
+      "vm delete -g rg-x -n vm-poc-runner", "network vnet subnet delete -g rg-x --vnet-name vnet-hackgw-pe -n snet-poc-runner",
+      "network nat gateway delete -g rg-x -n nat-poc-runner", "network public-ip delete -g rg-x -n pip-poc-runner-nat",
+      "network nsg delete -g rg-x -n nsg-poc-runner", "network private-endpoint delete -g rg-x -n pe-kv-x",
+    ]) assert.ok(kept.az.some((a) => a.startsWith(want)), `missing: ${want}\n${kept.az.join("\n")}`);
+    assert.ok(!kept.az.some((a) => /private-dns (zone|link vnet) delete/.test(a)), "deleted a zone that still had records");
+    assert.match(kept.own, /Kept the privatelink\.vaultcore\.azure\.net zone/);
+    const empty = run({ runner: true, az: [...runnerAz, { match: "^network private-dns record-set a list", out: "", exit: 0 }] });
+    assert.ok(empty.az.some((a) => a.startsWith("network private-dns link vnet delete -g rg-x -z privatelink.vaultcore.azure.net")));
+    assert.ok(empty.az.some((a) => a.startsWith("network private-dns zone delete -g rg-x -n privatelink.vaultcore.azure.net")));
   });
 });
 

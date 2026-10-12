@@ -36,15 +36,23 @@ $ErrorActionPreference = 'Stop'
 $poc = Join-Path $PSScriptRoot '..'
 
 function Invoke-OnRunner([string]$Bash) {
+    # Run Command reports success whenever it ran the script, so the step runs in a subshell and
+    # its exit status is printed last; the end of the output survives the truncation to the
+    # last 4,096 bytes.
+    $script = "(`n$($Bash.TrimEnd())`n)`necho `"POC_EXIT `$?`"`n"
     $file = Join-Path ([IO.Path]::GetTempPath()) "poc-runner-$([guid]::NewGuid().ToString('N')).sh"
-    Set-Content -Path $file -Value ($Bash -replace "`r`n", "`n") -Encoding utf8NoBOM -NoNewline
+    Set-Content -Path $file -Value ($script -replace "`r`n", "`n") -Encoding utf8NoBOM -NoNewline
     try {
         $out = az vm run-command invoke --subscription $Subscription -g $ResourceGroup -n $VmName `
             --command-id RunShellScript --scripts "@$file" -o json
         if ($LASTEXITCODE -ne 0) { throw "Run Command on $VmName failed." }
-        # Run Command returns the last 4,096 bytes of standard output and of standard error.
-        return (($out | ConvertFrom-Json).value | ForEach-Object { $_.message }) -join "`n"
     } finally { Remove-Item -LiteralPath $file -ErrorAction SilentlyContinue }
+    $message = (($out | ConvertFrom-Json).value | ForEach-Object { $_.message }) -join "`n"
+    $status = [regex]::Matches($message, '(?m)^POC_EXIT (\d+)\s*$') | Select-Object -Last 1
+    $text = $message -replace '(?m)^POC_EXIT \d+\s*$\r?\n?', ''
+    if (-not $status) { Write-Host $text; throw "The step on $VmName reported no exit status." }
+    if ($status.Groups[1].Value -ne '0') { Write-Host $text; throw "The step on $VmName failed with exit code $($status.Groups[1].Value)." }
+    return $text
 }
 
 # The subscription id, checked to be a GUID before it is written into a shell command.

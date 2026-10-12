@@ -283,6 +283,17 @@ function Remove-PocRoleAssignment {
     $null = Invoke-PocRest -Context $Context -Method DELETE -Uri "https://management.azure.com$($Id)?api-version=$script:PocRoleApiVersion" -Resource 'https://management.azure.com/'
 }
 
+# A resource from Azure Resource Manager, or $null when it is not there (404). Any other error is
+# thrown, so a failed lookup is never read as "not there".
+function Get-PocResource {
+    param([Parameter(Mandatory)]$Context, [Parameter(Mandatory)][string]$Id, [Parameter(Mandatory)][string]$ApiVersion)
+    try { return Invoke-PocRest -Context $Context -Method GET -Uri "https://management.azure.com$($Id)?api-version=$ApiVersion" -Resource 'https://management.azure.com/' }
+    catch {
+        if ("$_" -match '\b404\b|ResourceNotFound') { return $null }
+        throw
+    }
+}
+
 # Every key on a proof-of-concept product: name, product, state and stored expiry date (API
 # Management keeps the date only). Reads subscriptions; never fetches a key.
 function Get-PocKeyList {

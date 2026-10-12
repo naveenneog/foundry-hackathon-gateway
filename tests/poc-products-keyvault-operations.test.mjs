@@ -140,9 +140,14 @@ describe("P38 removal", { skip: !pwsh && "PowerShell 7 not found" }, () => {
   // below it too, measured 2026-10-12 (a grant on one secret was in it).
   const RG_ROLES = "/resourceGroups/rg-x/providers/Microsoft\\.Authorization/roleAssignments\\?api-version=2022-04-01$";
   const noGrants = { method: "GET", match: RG_ROLES, body: { value: [] } };
-  const vault = [{ match: "^keyvault show --name kv-x", out: vaultId, exit: 0 }];
-  const run = ({ az = [], responses = [noGrants, ...apim], runner = false, vaultAz = vault } = {}) => runScript({
-    file, responses, az: [...az, ...vaultAz],
+  // The vault is looked up through Azure Resource Manager: `az keyvault show` exits 1 both for a
+  // vault that is not there and for other errors (measured 2026-10-12), a 404 does not.
+  const VAULT_GET = "/providers/Microsoft\\.KeyVault/vaults/kv-x\\?api-version=";
+  const vaultHere = { method: "GET", match: VAULT_GET, body: { id: vaultId } };
+  const vaultGone = { method: "GET", match: VAULT_GET, error: "Response status code does not indicate success: 404 (Not Found). ResourceNotFound" };
+  const vaultDenied = { method: "GET", match: VAULT_GET, error: "Response status code does not indicate success: 403 (Forbidden). AuthorizationFailed" };
+  const run = ({ az = [], responses = [noGrants, ...apim], runner = false, vault = vaultHere } = {}) => runScript({
+    file, responses: [vault, ...responses], az,
     args: `-Subscription s -ResourceGroup rg-x -ApimName apim-x -VaultName kv-x -PurgeVault${runner ? " -Runner" : ""}`,
   });
 
@@ -180,7 +185,6 @@ describe("P38 removal", { skip: !pwsh && "PowerShell 7 not found" }, () => {
   test("with -Runner it removes the runner's roles and resources, and keeps a DNS zone that still has other records", () => {
     const runnerAz = [
       { match: "^vm show .*identity\\.principalId", out: "pid-1", exit: 0 },
-      { match: "^apim show", out: apimId, exit: 0 },
     ];
     const kept = run({ runner: true, az: [...runnerAz, { match: "^network private-dns record-set a list", out: "other-app", exit: 0 }] });
     assert.equal(kept.exit, 0, kept.own);
@@ -236,10 +240,30 @@ describe("P38 removal", { skip: !pwsh && "PowerShell 7 not found" }, () => {
   });
 
   test("a run after the vault is gone still removes the role assignments on its key secrets", () => {
-    const r = run({ responses: [listed, deleteGrant("g1"), deleteGrant("g2"), ...apim], vaultAz: [{ match: "^keyvault show --name kv-x", out: "", exit: 3 }] });
+    const r = run({ responses: [listed, deleteGrant("g1"), deleteGrant("g2"), ...apim], vault: vaultGone });
     assert.equal(r.exit, 0, r.own);
     assert.deepEqual(r.http.filter((h) => /^DELETE .*\/roleAssignments\//.test(h)).map((h) => h.split("?")[0].split("/").pop()).sort(), ["g1", "g2"]);
     assert.match(r.own, /Vault kv-x was not there/);
+  });
+
+  test("a vault that cannot be read is neither deleted nor reported as gone, and the run fails", () => {
+    const r = run({ vault: vaultDenied });
+    assert.equal(r.exit, 1, r.own);
+    assert.ok(!r.az.some((a) => /^keyvault (delete|purge)/.test(a)), "the vault was deleted");
+    assert.doesNotMatch(r.own, /Vault kv-x was not there/);
+    assert.match(r.own, /Could not read vault kv-x/);
+    assert.match(r.own, /Left behind: [^\n]*vault kv-x/);
+  });
+
+  test("with -Runner, a runner VM that cannot be read is a failure, and one that is not there is not", () => {
+    const zone = { match: "^network private-dns record-set a list", out: "other-app", exit: 0 };
+    const unreadable = run({ runner: true, az: [{ match: "^vm show ", out: "ERROR: (AuthorizationFailed) no read", exit: 1 }, zone] });
+    assert.equal(unreadable.exit, 1, unreadable.own);
+    assert.match(unreadable.own, /Left behind: [^\n]*the runner VM/);
+    assert.ok(!unreadable.az.some((a) => a.startsWith("vm delete")), "deleted a VM it could not read");
+    const absent = run({ runner: true, az: [{ match: "^vm show ", out: "ERROR: (ResourceNotFound)", exit: 3 }, zone] });
+    assert.equal(absent.exit, 0, absent.own);
+    assert.match(absent.own, /The runner VM was not there/);
   });
 });
 

@@ -167,7 +167,7 @@ Key Vault. Nothing here changes the gateway on `main`.
       network because the vault's public access was turned off outside this project. Results
       and the six findings: `poc/products-keyvault/README.md`.
 
-- [ ] **P38** A setup and usage guide for the products proof of concept
+- [x] **P38** A setup and usage guide for the products proof of concept
       *Acceptance:* `poc/products-keyvault/SETUP.md` takes an operator from an existing v2
       instance to issued keys, and covers issuing, handing over, rotating, expiring, suspending,
       listing and monitoring keys, and connecting Claude Code, the Anthropic and OpenAI SDKs,
@@ -180,6 +180,10 @@ Key Vault. Nothing here changes the gateway on `main`.
       `Suspend`, `Resume`, `List`), the runner's key step and removal have offline tests.
       Deployment (`Deploy-Poc.ps1`) and the runner's `Deploy`, `Setup` and `Push` steps were
       tested live in P37 (run `10111658`) and have no offline tests.
+      *Verified 2026-10-12:* `Test-PocClients.ps1` 11 of 11 against the Standard v2 test
+      instance; `Grant`, `Revoke` and the one-time copy from API Management run live; 63
+      offline tests; council of four rounds with every BLOCK cleared; gate PASS. Details:
+      `docs/STATUS.md`.
 
 - [ ] **P40** The per-key per-minute header does not overwrite Foundry's
       *Acceptance:* the product policy reports its per-key per-minute count under a header

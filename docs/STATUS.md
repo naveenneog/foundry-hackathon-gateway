@@ -1,10 +1,10 @@
 # Status
 
-**Active packet:** P38 — a setup and usage guide for the products proof of concept, on branch
-`poc/apim-products-keyvault` (not pushed; a push needs the owner's approval). Acceptance criteria
-are in the roadmap (M7). Open packets on `main`: P36, P35, P30, P20.
+**Active packet:** none. P38 is done on branch `poc/apim-products-keyvault` (not pushed; a push
+needs the owner's approval). Filed for this branch: P40, P41, P42. Open packets for `main`: P39
+(recorded on this branch only), P36, P35, P30, P20.
 
-### P38 — setup and usage guide — IN PROGRESS (council round 2)
+### P38 — setup and usage guide — DONE (branch only)
 
 `poc/products-keyvault/SETUP.md` covers requirements, deployment, the runner, issuing, handing
 over, rotating, expiring, suspending and listing keys, monitoring, six clients and removal. Its
@@ -68,6 +68,20 @@ cleared.
 | **BLOCK R3-C1.** When the grant cleanup failed, `Remove-Poc.ps1` deleted the vault anyway, and a re-run found no vault, skipped the grants and exited 0. The subscription-wide `az role assignment list --all` also needs read rights on the whole subscription | Role assignments on key secrets are listed at the resource group (`Get-PocKeyGrants`): measured to include assignments on single secrets, and it works after the vault is gone. While one cannot be listed or removed, the vault is kept and the run exits 1. The script now ends with an explicit `exit 0`, which a new test showed was missing (the last `az` call's code 3 leaked). Live: the listing found a temporary grant on a secret |
 
 Mutations caught: 7 of 7 on the R3-C1 tests.
+
+**Council — P38, round 4.** Coder: PASS-WITH-NOTES, R3-C1 cleared. Security: PASS. Architect, QA
+and UX: PASS.
+
+| Finding | Fix |
+|---|---|
+| Every failure of `az keyvault show` was read as "the vault is not there"; with the new `exit 0` an authorisation or network error gave a clean exit (R4-C1) | The suggested rule (only exit code 3 means "not there") was measured first and does not hold: `az keyvault show` exits 1 for a missing vault, `az vm show` and `az apim show` exit 3. The vault is now read through Resource Manager (`Get-PocResource`: 404 means not there, any other error fails the run and keeps the vault); the runner VM's lookup treats only exit 3 as not there; the instance id comes from the context instead of a lookup. Live: the real vault read as there, a missing name as 404 |
+
+Mutations caught: 6 of 6 on the R4-C1 tests.
+
+**Done.** Gate (`node .ironclad/gate.mjs --stage packet`): PASS, 22 checks, one warning that
+predates this branch (`src/diagnose.mjs`). 63 offline tests in the three
+`tests/poc-products-keyvault*.test.mjs` suites. Commits: `338b57f`, `3c334e2`, `b91443d`, `a53a911`,
+`f0bd139`, `fd3e933`, `8093970`, `59a7482`, `e1c252e` and the commit that records this.
 
 ### P37 — products and Key Vault on Standard v2 — DONE (branch only)
 

@@ -579,7 +579,8 @@ every role assignment on the vault's key secrets (such as the read access `Grant
 operator's vault role and the vault. The role assignments are listed at the resource group, also
 when the vault is already gone. While one cannot be listed or removed, the vault is kept and the
 script exits 1: an assignment names the secret's path, which a vault created again under the same
-name would reuse. `-PurgeVault` also purges the deleted vault, which
+name would reuse. A vault or runner VM that cannot be read is reported and kept, not taken as
+gone. `-PurgeVault` also purges the deleted vault, which
 otherwise stays soft-deleted for its retention period. `-Runner` removes the runner's roles, VM,
 subnet, NAT gateway, public IP, NSG and private endpoint, and the `privatelink.vaultcore.azure.net`
 zone when no other record is left in it. A pack with another id stays (roadmap P41). Each step's

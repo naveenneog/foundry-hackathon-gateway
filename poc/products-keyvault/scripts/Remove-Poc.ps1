@@ -31,16 +31,34 @@ function Invoke-RemovalStep([string]$Label, [scriptblock]$Command) {
     }
 }
 
+# Whether the vault is there, read once. `az keyvault show` exits 1 both for a vault that is not
+# there and for other errors (measured 2026-10-12), so the vault is read through Azure Resource
+# Manager, where only a 404 means "not there". 'unknown' is a failure: the vault is then kept.
+$vaultState = ''
+if ($VaultName) {
+    try { $vaultState = if (Get-PocResource -Context $ctx -Id $ctx.VaultId -ApiVersion '2023-07-01') { 'there' } else { 'gone' } }
+    catch {
+        $vaultState = 'unknown'
+        $failures.Add("vault $VaultName (could not be read)")
+        Write-Host "Could not read vault ${VaultName}: $_"
+    }
+}
+
 if ($Runner) {
+    # az vm show exits 3 for a VM that is not there (measured 2026-10-12); any other error is a failure.
     $principal = "$(az vm show -g $ResourceGroup -n vm-poc-runner --subscription $Subscription --query identity.principalId -o tsv 2>$null)".Trim()
-    if ($principal) {
-        $apimId = "$(az apim show -g $ResourceGroup -n $ApimName --subscription $Subscription --query id -o tsv)".Trim()
-        $vaultId = if ($VaultName) { "$(az keyvault show --name $VaultName --subscription $Subscription --query id -o tsv 2>$null)".Trim() } else { '' }
-        foreach ($scope in @($apimId, $vaultId) | Where-Object { $_ }) {
+    $vmLookup = $LASTEXITCODE
+    if ($vmLookup -eq 0 -and $principal) {
+        $apimId = $ctx.ApimBase.Substring('https://management.azure.com'.Length)
+        foreach ($scope in @($apimId) + @($(if ($vaultState -eq 'there') { $ctx.VaultId }))) {
             Invoke-RemovalStep "the runner's role on $($scope.Split('/')[-1])" { az role assignment delete --assignee-object-id $principal --scope $scope --subscription $Subscription }
         }
         Invoke-RemovalStep 'the runner VM, its disk and NIC' { az vm delete -g $ResourceGroup -n vm-poc-runner --subscription $Subscription --yes -o none }
-    } else { Write-Host 'The runner VM was not there.' }
+    } elseif ($vmLookup -eq 3) { Write-Host 'The runner VM was not there.' }
+    else {
+        $failures.Add('the runner VM (could not be read)')
+        Write-Host "Could not read the runner VM (az exit code $vmLookup)."
+    }
     Invoke-RemovalStep 'the runner subnet' { az network vnet subnet delete -g $ResourceGroup --vnet-name $VnetName -n snet-poc-runner --subscription $Subscription -o none }
     Invoke-RemovalStep 'the NAT gateway' { az network nat gateway delete -g $ResourceGroup -n nat-poc-runner --subscription $Subscription -o none }
     Invoke-RemovalStep "the NAT gateway's public IP" { az network public-ip delete -g $ResourceGroup -n pip-poc-runner-nat --subscription $Subscription -o none }
@@ -99,13 +117,13 @@ if ($VaultName) {
         try { Remove-PocRoleAssignment -Context $ctx -Id $g.id; Write-Host "Removed $label." }
         catch { $grantsLeft = $true; $failures.Add($label); Write-Host "Could not remove ${label}: $_" }
     }
-    $vaultId = "$(az keyvault show --name $VaultName --subscription $Subscription --query id -o tsv 2>$null)".Trim()
-    if (-not $vaultId) { Write-Host "Vault $VaultName was not there." }
+    if ($vaultState -eq 'gone') { Write-Host "Vault $VaultName was not there." }
+    elseif ($vaultState -eq 'unknown') { Write-Host "Kept vault ${VaultName}: it could not be read." }
     elseif ($grantsLeft) {
         $failures.Add("vault $VaultName")
         Write-Host "Kept vault ${VaultName}: role assignments on its key secrets are still there."
     } else {
-        Invoke-RemovalStep "the operator's role on $VaultName" { az role assignment delete --scope $vaultId --role 'Key Vault Secrets Officer' --subscription $Subscription }
+        Invoke-RemovalStep "the operator's role on $VaultName" { az role assignment delete --scope $ctx.VaultId --role 'Key Vault Secrets Officer' --subscription $Subscription }
         Invoke-RemovalStep "vault $VaultName (soft-deleted for its retention period)" { az keyvault delete --name $VaultName --subscription $Subscription -o none }
         if ($PurgeVault) { Invoke-RemovalStep "vault $VaultName, purged" { az keyvault purge --name $VaultName --subscription $Subscription -o none } }
     }
@@ -115,6 +133,6 @@ if ($failures.Count -gt 0) {
     Write-Host "Left behind: $($failures -join '; ')."
     exit 1
 }
-# Explicit, so the exit code of the last az call (3 for a vault that is not there) is not the
+# Explicit, so the exit code of the last az call (3 for a resource that is not there) is not the
 # script's.
 exit 0

@@ -26,7 +26,7 @@ $vault = '<vault-name>'
 | Cognitive Services User for that identity on the Foundry account, the role these runs used | The Foundry account › **Access control (IAM)** › **Add** › **Add role assignment** › the role › **Next** › **Managed identity** › **+ Select members** › the instance › **Select** › **Review + assign** | [Assign Azure roles using the portal](https://learn.microsoft.com/azure/role-based-access-control/role-assignments-portal) |
 | A network path from the instance to Foundry | Outbound virtual network integration and a private endpoint on the Foundry account, as in [docs/PRIVATE-ENDPOINT.md](../../docs/PRIVATE-ENDPOINT.md) ([U23](../../docs/UNKNOWNS.md)) | [Integrate API Management in a private network](https://learn.microsoft.com/azure/api-management/integrate-vnet-outbound) |
 | A subnet for the vault's private endpoint | A subnet in that virtual network; `snet-pe` in the test environment ([`private-foundry-test.bicep`](../../infra/examples/private-foundry-test.bicep)) | [Integrate Key Vault with Private Link](https://learn.microsoft.com/azure/key-vault/general/private-link-service) |
-| The Foundry endpoints | The Foundry account › **Resource Management** › **Keys and Endpoint** shows the endpoint; its host name begins with the account's custom subdomain, `<account>` below. Claude: `https://<account>.services.ai.azure.com/anthropic`. OpenAI-compatible: `https://<account>.openai.azure.com/openai/v1` | [Create a Foundry resource](https://learn.microsoft.com/azure/ai-services/multi-service-resource); `claudeServiceUrl` and `openaiServiceUrl` in [`infra/poc.bicep`](infra/poc.bicep) |
+| The Foundry endpoints | The Foundry account › **Overview** shows the **Endpoint**; its host name begins with the account's custom subdomain, `<account>` below. Claude: `https://<account>.services.ai.azure.com/anthropic`. OpenAI-compatible: `https://<account>.openai.azure.com/openai/v1`. For the Claude route the template uses the account's published `AI Foundry API` endpoint followed by `anthropic` when the account lists one, and the form above otherwise | [Create a Foundry resource](https://learn.microsoft.com/azure/ai-services/multi-service-resource); `claudeServiceUrl` and `openaiServiceUrl` in [`infra/poc.bicep`](infra/poc.bicep) |
 
 ## Routes
 
@@ -96,16 +96,17 @@ minute.
    soft-delete retention 7 days and purge protection off, the template's settings, so the vault
    can be removed completely (Learn: retention is 7 to 90 days); the permission model **Azure
    role-based access control**; on **Networking**, **Disable public access** and **+ Create a
-   private endpoint** in the private endpoint subnet (`snet-pe` in the test environment), with
-   the private DNS zone `privatelink.vaultcore.azure.net` › **Review + create**
+   private endpoint** named `pe-<vault-name>` (the name `runner.bicep` uses, and the one
+   `Remove-Poc.ps1` removes) in the private endpoint subnet (`snet-pe` in the test environment),
+   with the private DNS zone `privatelink.vaultcore.azure.net` › **Review + create**
    ([quickstart](https://learn.microsoft.com/azure/key-vault/general/quick-create-portal),
    [soft-delete](https://learn.microsoft.com/azure/key-vault/general/soft-delete-overview),
    [Key Vault RBAC](https://learn.microsoft.com/azure/key-vault/general/rbac-guide),
    [network security](https://learn.microsoft.com/azure/key-vault/general/network-security),
    [Private Link](https://learn.microsoft.com/azure/key-vault/general/private-link-service)).
    For a vault that exists: **Networking** › **Private endpoint connections** › **+ Create**,
-   resource type `Microsoft.KeyVault/vaults`, target sub-resource `vault`, the virtual network
-   and subnet, the same zone › **Review + Create**.
+   the name `pe-<vault-name>`, resource type `Microsoft.KeyVault/vaults`, target sub-resource
+   `vault`, the virtual network and subnet, the same zone › **Review + Create**.
 2. **Close the trusted-services bypass.** The template sets the firewall's default action to Deny
    with no bypass. Learn: "Disabling public access doesn't suppress the trusted services bypass:
    trusted services continue to reach the vault and don't require a private endpoint." The vault
@@ -134,7 +135,12 @@ operations on the vault resource itself "are not affected by firewalls and virtu
 The steps below that open a secret (issuing, a role on one secret, rotating) therefore need a
 browser on the private network, for example on a VM inside it ([U32](../../docs/UNKNOWNS.md)). The
 script actions `New` and `Rotate` need a path to the vault as well; from outside the network they
-run on the runner: `./scripts/Invoke-PocRunner.ps1 @target -VaultName $vault -Step Key -KeyAction New -KeyName alice -KeyProduct poc-claude-pack`.
+run on the runner, once it is set up as in
+[SETUP.md](SETUP.md#vault-access-through-the-runner) (`Deploy`, `Setup`, `Push`):
+`./scripts/Invoke-PocRunner.ps1 @target -VaultName $vault -Step Key -KeyAction New -KeyName alice -KeyProduct poc-claude-pack`.
+The runner's `Deploy` step creates the vault's private endpoint `pe-<vault-name>` and its DNS zone
+itself ([`infra/runner.bicep`](infra/runner.bicep)), so a vault reached through the runner needs
+no private endpoint from step 1.
 The script actions `Grant`, `Revoke`, `SetExpiry`, `SuspendExpired`, `Suspend`, `Resume` and `List` need no path to the vault.
 
 ## Issue a key
@@ -162,7 +168,7 @@ Script: `./scripts/Invoke-PocKey.ps1 @target -VaultName $vault -Action New -Name
 The script keeps the key in memory. The portal steps pass it through the clipboard; Windows keeps
 copied text in its clipboard history when that is on, and syncs the history to other devices when
 **Sync across devices** is on
-([Clipboard in Windows](https://support.microsoft.com/windows/clipboard-in-windows-c436501e-985d-1c8d-97ea-fe46ddf338c6)).
+([Using the clipboard](https://support.microsoft.com/windows/clipboard-in-windows-c436501e-985d-1c8d-97ea-fe46ddf338c6)).
 
 ## Hand a key over
 
@@ -187,8 +193,10 @@ A copy of the other key is refused after the next rotation.
 
 ## Rotate a key
 
-1. **Find the slot clients hold.** The secret's current version has it in its `slot` tag
-   ([Update Secret](https://learn.microsoft.com/rest/api/keyvault/secrets/update-secret/update-secret)).
+1. **Find the slot clients hold.** The secret's current version has it in its `slot` tag; Get
+   Secret returns a version with its tags
+   ([Get Secret](https://learn.microsoft.com/rest/api/keyvault/secrets/get-secret/get-secret)), and
+   Learn does not document viewing them in the portal ([U31](../../docs/UNKNOWNS.md)).
 2. **Regenerate the other key.** In API Management, regenerate the subscription's other key, and
    copy it. Each subscription has two keys
    ([Subscriptions in API Management](https://learn.microsoft.com/azure/api-management/api-management-subscriptions));
@@ -248,17 +256,23 @@ which a vault created again under the same name would reuse.
    **Remove**
    ([Remove role assignments](https://learn.microsoft.com/azure/role-based-access-control/role-assignments-remove)).
    With a private vault this needs the private network ([U32](../../docs/UNKNOWNS.md)).
-3. **The vault's private endpoint.** The private endpoint, whose network interface goes with it,
-   and its record in the zone `privatelink.vaultcore.azure.net`; the zone itself when no other
-   record is left in it
-   ([Manage private endpoints](https://learn.microsoft.com/azure/private-link/manage-private-endpoint)).
+3. **The vault's private endpoint.** The private endpoint `pe-<vault-name>`; then, when no other
+   record is left in the zone `privatelink.vaultcore.azure.net`, the zone's virtual network link
+   and the zone
+   ([virtual network links](https://learn.microsoft.com/azure/dns/private-dns-virtual-network-links)).
+   The endpoint's network interface is "created for the lifecycle of the private endpoint"
+   ([What is a private endpoint?](https://learn.microsoft.com/azure/private-link/private-endpoint-overview)),
+   and "when you delete the private endpoint, all the DNS records within the DNS zone group are
+   deleted"
+   ([DNS integration](https://learn.microsoft.com/azure/private-link/private-endpoint-dns-integration)).
 4. **The vault.** The operator's role on it, then the vault. Learn documents deleting a vault as
    part of deleting its resource group, which here holds the instance as well. A deleted vault is
    purged from **Key vaults** › **Manage deleted vaults** › the subscription › the vault
    ([recovery management](https://learn.microsoft.com/azure/key-vault/general/key-vault-recovery)).
 
-`Remove-Poc.ps1 -Runner -PurgeVault` removes the same resources ([SETUP.md](SETUP.md#remove)):
-`-Runner` covers the private endpoint and the zone when it is empty, together with the runner. It
+`Remove-Poc.ps1 -Runner -PurgeVault` ([SETUP.md](SETUP.md#remove)) deletes these resources by the
+names `runner.bicep` gives them: the private endpoint `pe-<vault-name>`, and the zone's link
+`link-<vnet-name>` and the zone when no other record is left in it, together with the runner. It
 lists the roles on key secrets without a path to the vault, deletes the vault alone, and keeps it
 while a role on a key secret remains.
 
@@ -285,13 +299,16 @@ Microsoft Learn, read 2026-10-12; the dates are each page's last update.
 - [Key Vault virtual network service endpoints](https://learn.microsoft.com/azure/key-vault/general/overview-vnet-service-endpoints) (2026-10-09)
 - [Integrate Key Vault with Azure Private Link](https://learn.microsoft.com/azure/key-vault/general/private-link-service) (2026-06-12)
 - [az keyvault](https://learn.microsoft.com/cli/azure/keyvault) (2026-07-07)
+- [Key Vault REST API, Get Secret](https://learn.microsoft.com/rest/api/keyvault/secrets/get-secret/get-secret) (2025-10-14)
 - [Key Vault REST API, Set Secret](https://learn.microsoft.com/rest/api/keyvault/secrets/set-secret/set-secret) (2025-10-14)
 - [Key Vault REST API, Update Secret](https://learn.microsoft.com/rest/api/keyvault/secrets/update-secret/update-secret) (2025-10-14)
 - [Set and retrieve a secret using the Azure portal](https://learn.microsoft.com/azure/key-vault/secrets/quick-create-portal) (2026-06-12)
 - [Enable Key Vault logging](https://learn.microsoft.com/azure/key-vault/general/howto-logging) (2026-06-12)
 - [Monitor Azure Key Vault](https://learn.microsoft.com/azure/key-vault/general/monitor-key-vault) (2026-06-12)
-- [Manage Azure private endpoints](https://learn.microsoft.com/azure/private-link/manage-private-endpoint) (2026-04-02)
+- [What is a private endpoint?](https://learn.microsoft.com/azure/private-link/private-endpoint-overview) (2026-08-11)
+- [Azure Private Endpoint DNS integration](https://learn.microsoft.com/azure/private-link/private-endpoint-dns-integration) (2026-04-14)
+- [Virtual network links of Azure DNS private zones](https://learn.microsoft.com/azure/dns/private-dns-virtual-network-links) (2025-06-19)
 - [Key Vault recovery management](https://learn.microsoft.com/azure/key-vault/general/key-vault-recovery) (2026-06-12)
 - [llm-token-limit policy](https://learn.microsoft.com/azure/api-management/llm-token-limit-policy) (2026-06-26)
 - [Automate the rotation of a secret with two sets of credentials](https://learn.microsoft.com/azure/key-vault/secrets/tutorial-rotation-dual) (2026-07-08)
-- [Clipboard in Windows](https://support.microsoft.com/windows/clipboard-in-windows-c436501e-985d-1c8d-97ea-fe46ddf338c6) (Microsoft Support, 2026-09-28)
+- [Using the clipboard](https://support.microsoft.com/windows/clipboard-in-windows-c436501e-985d-1c8d-97ea-fe46ddf338c6) (Microsoft Support, 2026-09-28)

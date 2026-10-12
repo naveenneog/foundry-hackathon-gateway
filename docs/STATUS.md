@@ -5,14 +5,14 @@ of concept, on branch `poc/apim-products-keyvault` (not pushed; a push needs the
 approval). Acceptance criteria are in the roadmap (M7). Filed for this branch: P40, P41, P42.
 Open packets for `main`: P39 (recorded on this branch only), P36, P35, P30, P20.
 
-### P43 — portal steps and architecture — IN PROGRESS (council round 2)
+### P43 — portal steps and architecture — IN PROGRESS (round-2 notes addressed)
 
 `poc/products-keyvault/PORTAL.md` builds in the Azure portal what `infra/poc.bicep` builds and
 runs each key operation by hand; every numbered step and prerequisite cites Microsoft Learn.
 `poc/products-keyvault/ARCHITECTURE.md` describes the components, identities and roles, network
 paths, the request flow, each key flow and the design decisions. U31 (ASSUMED, the steps were not
 run in the portal), U32 and U33 (RESOLVED) were logged before writing and closed by research.
-`tests/poc-products-keyvault-docs.test.mjs` (19 tests) reads both documents' tables by column and
+`tests/poc-products-keyvault-docs.test.mjs` (26 tests) reads both documents' tables by column and
 compares them with the templates, policies and scripts.
 
 **Council — P43, round 1.** BLOCK at every seat; all five BLOCKs fixed with tests.
@@ -28,8 +28,33 @@ compares them with the templates, policies and scripts.
 | Tests: counts, both content types, the probe route from the template (C1–C3); policy file and service URL per route, template network and product values, header meanings, anchors, command parameters, per-step citations (Q1–Q6) | Each has a check |
 | Portal walkthrough: removal left the vault's private endpoint and claimed the script's order; the one-time copy did not name the current key; the runner path and `SuspendExpired` were missing; no Foundry endpoint location, subnet prerequisite or `$target`; API labels cited from the wrong page; P41 (U1–U9) | Corrected; the endpoint location, subnet, `$target` and the runner step are in the document |
 | Clipboard history keeps a copied key (S1) | Stated, with Microsoft Support's clipboard page |
+| The uncommitted CHANGELOG entry claimed per-step Learn citations and comparison with the templates, which Q6, B4 and B5 contradicted (L1) | Both claims hold after Q6, B4 and B5 |
 
 Mutations caught: 24 of 24, including every change the council made to defeat the first tests.
+
+**Council — P43, round 2.** No BLOCK; every seat PASS-WITH-NOTES. All round-1 findings resolved;
+the fixes introduced nine notes, each fixed below.
+
+| Finding | Fix |
+|---|---|
+| N1. Remove step 3 cited "Manage private endpoints", which does not cover deleting an endpoint | Cites "What is a private endpoint?" (the network interface's lifecycle) and "DNS integration" (the zone group's records are deleted with the endpoint); the step names the zone's virtual network link |
+| N2. Rotate step 1 cited Update Secret for reading the `slot` tag | Cites Get Secret, which returns a version's tags, and states that Learn does not document viewing them in the portal (U31) |
+| N3. The portal-made private endpoint had no name; `Remove-Poc.ps1` deletes only `pe-<vault-name>` | Both creation flows name it `pe-<vault-name>`; the removal paragraph says the script deletes the endpoint and the zone's link `link-<vnet-name>` by the names `runner.bicep` gives them. A test reads both names from `runner.bicep` and `Remove-Poc.ps1` |
+| N4. The custom-role list lacked read | Added; a test derives the list from the subscription calls in `PocKeys.ps1` and `Remove-Poc.ps1` |
+| Nit. The probe answers "for any key" | "for any valid key", in ARCHITECTURE.md and SETUP.md |
+| N5. The runner command works only after `Deploy`, `Setup` and `Push` | Names the three steps and links SETUP.md's runner section; states that `Deploy` creates `pe-<vault-name>` and its zone, so the runner path needs no endpoint from step 1. A test compares the steps with SETUP.md and checks that `Deploy` deploys `runner.bicep` |
+| N6. `-KeyAction` values were not checked | Checked against the runner's `ValidateSet` |
+| N7. The endpoint lookup used **Keys and Endpoint**, which also shows the account's keys | Uses the account's **Overview** ("On the Overview page, note the Endpoint value"); a test rejects "Keys and Endpoint" |
+| N8. The template's published `AI Foundry API` branch of the Claude URL was not compared | The prerequisite describes it; a test reads the branch from the template |
+| N9. Passed: a "never forwarded" claim, the runner's roles with swapped scopes, `approvalRequired: true` in the template, any Learn page as a step's citation | The claim check covers forward, send, go, travel and see, and "not … Foundry or backend"; runner roles are paired with their scopes from `runner.bicep`; the template may not require approval (the deployed packs read `approvalRequired` false, measured 2026-10-12); the steps behind N1, N2 and the vault's private endpoint cite their specific pages |
+
+Also new: each document's Sources list holds exactly the pages it cites, each with its date. It
+caught the virtual network links page missing from PORTAL.md and ARCHITECTURE.md's undated
+entries.
+
+Mutations caught: 24 of 24 on the round-2 checks. The round-1 sets still fail the tests that
+cover them (24 of 24, 3 of 3); the first set's expected test names predate the round-1 renames,
+and its mutants fail the renamed tests.
 
 ### P38 — setup and usage guide — DONE (branch only)
 

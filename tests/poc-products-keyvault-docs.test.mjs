@@ -12,12 +12,14 @@ import { poc, read, root } from "./poc-products-keyvault.harness.mjs";
  * anchor and ledger reference has to resolve, and every numbered portal step cites Microsoft Learn.
  */
 
-const doc = (name) => read(name).replace(/\r\n/g, "\n");
+// Working copies may have CRLF line endings (core.autocrlf); every file is read with LF.
+const lf = (...p) => read(...p).replace(/\r\n/g, "\n");
+const doc = (name) => lf(name);
 const flat = (text) => text.replace(/\s+/g, " ");
-const bicep = () => read("infra", "poc.bicep");
-const runnerBicep = () => read("infra", "runner.bicep");
-const keysPs = () => read("scripts", "PocKeys.ps1");
-const cliPs = () => read("scripts", "Invoke-PocKey.ps1");
+const bicep = () => lf("infra", "poc.bicep");
+const runnerBicep = () => lf("infra", "runner.bicep");
+const keysPs = () => lf("scripts", "PocKeys.ps1");
+const cliPs = () => lf("scripts", "Invoke-PocKey.ps1");
 const quoted = (list) => [...list.matchAll(/'([^']+)'/g)].map((m) => m[1]);
 
 // The template's facts.
@@ -47,7 +49,26 @@ const operatorRole = () => {
   return roleName((bicep().match(/var keyVaultSecretsOfficer = '([^']+)'/) || [])[1]);
 };
 const developerRole = () => roleName((keysPs().match(/\$script:PocSecretsUserRole = '([^']+)'/) || [])[1]);
-const runnerRoles = () => [...runnerBicep().matchAll(/^var \w+ = '([0-9a-f-]{36})'/gm)].map((m) => roleName(m[1]));
+// Each role assignment in runner.bicep: the role's name and the resource it is scoped to.
+const runnerAssignments = () => [...runnerBicep().matchAll(/^resource \w+ 'Microsoft\.Authorization\/roleAssignments@[^']+' = \{\n[^\n]*\n\s+scope: (\w+)\n[\s\S]*?roleDefinitions', (\w+)\)/gm)]
+  .map((m) => ({ scope: m[1], role: roleName((runnerBicep().match(new RegExp(`^var ${m[2]} = '([^']+)'`, "m")) || [])[1]) }));
+// The subscription actions a script calls on API Management, in the words the documents use.
+const subscriptionVerbs = (script) => {
+  const text = lf("scripts", script);
+  const calls = [...text.matchAll(/Invoke-PocApim -Context \$\w+ -Method (\w+) -Path ("[^"]*"|'[^']*'|\$[\w.]+)/g)].map((m) => ({ method: m[1], path: m[2] }))
+    .concat([...text.matchAll(/Remove-PocItem "(\/subscriptions\/[^"]*)"/g)].map((m) => ({ method: "DELETE", path: m[1] })));
+  const verbs = calls.filter((c) => /^["']?\/subscriptions\b|^\$page\.nextLink$/.test(c.path)).map(({ method, path }) => {
+    if (/\/listSecrets\b/.test(path)) return "list keys";
+    if (/regenerate/i.test(path)) return "regenerate";
+    return { GET: "read", PUT: "create", PATCH: "update", DELETE: "delete" }[method] || `${method} ${path}`;
+  });
+  return [...new Set(verbs)];
+};
+// A claim that a key does not get to Foundry: "never" with a verb of movement, or "not" with one
+// and Foundry or the backend in the same clause.
+const MOVES = String.raw`(?:leaves?|reach(?:es)?|pass(?:es|ed)?|forward(?:s|ed)?|sen[dt]s?|goes|go|travels?|sees?|seen)`;
+const NEVER_MOVES = new RegExp(String.raw`\bnever\b(?:\s+\w+){0,2}?\s+${MOVES}\b`, "i");
+const NOT_TO_FOUNDRY = new RegExp(String.raw`(?:\bnot\b|n['’]t\b)(?:\s+\w+){0,2}?\s+${MOVES}\b[^.;]*?\b(?:Foundry|backend)\b`, "i");
 
 // Tables, read by column from the header row; a table inside a list item is indented.
 const tables = (text) => {
@@ -130,7 +151,24 @@ const sharedChecks = (name) => {
     for (const m of text.matchAll(/https:\/\/([^/\s)`"']+)\.(azure-api\.net|vault\.azure\.net|services\.ai\.azure\.com|openai\.azure\.com)/g)) {
       assert.match(m[1], /^<[^>]+>$/, `${m[0]} is not a placeholder`);
     }
-    if (queryKeyReachesFoundry()) assert.doesNotMatch(flat(text), /never (leaves|reaches|passes)/i, "a key in the query parameter reaches Foundry (P42)");
+    if (queryKeyReachesFoundry()) {
+      assert.doesNotMatch(flat(text), NEVER_MOVES, "a key in the query parameter reaches Foundry (P42)");
+      assert.doesNotMatch(flat(text), NOT_TO_FOUNDRY, "a key in the query parameter reaches Foundry (P42)");
+    }
+  });
+
+  test(`${name}: the Sources list holds every page the document cites, and only those, each with its date`, () => {
+    const text = doc(name);
+    const at = text.indexOf("\n## Sources");
+    assert.ok(at > 0, "no Sources section");
+    const urls = (s) => new Set([...s.matchAll(/\]\((https:\/\/[^)#\s]+)(?:#[^)\s]*)?\)/g)].map((m) => m[1]));
+    const [cited, listed] = [urls(text.slice(0, at)), urls(text.slice(at))];
+    assert.ok(cited.size >= 4, `expected pages to be cited, found ${cited.size}`);
+    assert.deepEqual([...cited].filter((u) => !listed.has(u)), [], "cited, but not in Sources");
+    assert.deepEqual([...listed].filter((u) => !cited.has(u)), [], "in Sources, but not cited");
+    for (const line of text.slice(at).split("\n").filter((l) => /^- \[[^\]]+\]\(https:/.test(l))) {
+      assert.match(line, /\((?:[^()]+, )?(?:api-version )?\d{4}-\d{2}-\d{2}\)$/, `a source with no date: ${line}`);
+    }
   });
 
   test(`${name}: linked from the proof of concept's README and SETUP.md`, () => {
@@ -172,11 +210,13 @@ describe("P43 portal steps", () => {
       return [...block.matchAll(/\$(\w+)\b/g)].map((m) => m[1]);
     };
     const validSet = (script, p) => quoted(read("scripts", script).match(new RegExp(`ValidateSet\\(([^)]*)\\)\\]\\[string\\]\\$${p}\\b`))[1]);
-    for (const [script, setParam] of [["Invoke-PocKey.ps1", "Action"], ["Invoke-PocRunner.ps1", "Step"]]) {
+    for (const [script, setParams] of [["Invoke-PocKey.ps1", ["Action"]], ["Invoke-PocRunner.ps1", ["Step", "KeyAction"]]]) {
       const known = params(script);
       for (const line of doc("PORTAL.md").split("\n").filter((l) => l.includes(script))) {
         for (const [, p] of line.matchAll(/(?<![\w-])-(\w+)/g)) assert.ok(known.includes(p), `${script} has no parameter -${p}: ${line.trim()}`);
-        for (const [, v] of line.matchAll(new RegExp(`-${setParam} (\\w+)`, "g"))) assert.ok(validSet(script, setParam).includes(v), `${script} has no -${setParam} ${v}`);
+        for (const setParam of setParams) {
+          for (const [, v] of line.matchAll(new RegExp(`(?<![\\w-])-${setParam} (\\w+)`, "g"))) assert.ok(validSet(script, setParam).includes(v), `${script} has no -${setParam} ${v}`);
+        }
       }
     }
     assert.match(doc("PORTAL.md"), /^\$target = @\{ Subscription = /m, "PORTAL.md does not define $target");
@@ -249,7 +289,83 @@ describe("P43 portal steps", () => {
     assert.match(text, /\*\*State\*\* not published/);
     assert.match(b, /products@[^\n]+\n[\s\S]*?subscriptionRequired: true/);
     assert.match(text, /\*\*Requires subscription\*\* on/);
+    // The template leaves approvalRequired unset; the deployed packs read false (measured 2026-10-12).
+    assert.doesNotMatch(b, /approvalRequired:\s*true/, "the template requires approval, the steps turn it off");
     assert.match(text, /\*\*Requires approval\*\* off/);
+  });
+
+  test("the Foundry endpoints come from the account's Overview, as the template builds them", () => {
+    const text = doc("PORTAL.md");
+    assert.doesNotMatch(flat(text), /Keys and Endpoint/, "the endpoint is read on the page that also shows the account's keys");
+    const row = tableWith(text, "Item", "Portal steps", "Source").find((r) => /Foundry endpoints/.test(r.Item));
+    assert.ok(row, "no prerequisite for the Foundry endpoints");
+    assert.match(row["Portal steps"], /\*\*Overview\*\*/, "the endpoint is not read on the account's Overview");
+    assert.match(row.Source, /learn\.microsoft\.com\/azure\/ai-services\/multi-service-resource\b/);
+    for (const u of [serviceUrl("claudeServiceUrl"), serviceUrl("openaiServiceUrl")]) assert.ok(u && row["Portal steps"].includes(u), `${u || "a service URL"} is not given`);
+    assert.match(bicep(), /^var foundryEndpoints = foundry\.properties\.endpoints$/m);
+    const branch = bicep().match(/var claudeServiceUrl = contains\(foundryEndpoints, '([^']+)'\)\s*\?\s*'\$\{foundryEndpoints\['([^']+)'\]\}([^']*)'/);
+    if (branch) {
+      assert.equal(branch[1], branch[2]);
+      assert.ok(row["Portal steps"].includes(`${branch[1]} endpoint followed by ${branch[3]}`), `the template's ${branch[1]} branch is not described`);
+    } else assert.doesNotMatch(row["Portal steps"], /AI Foundry API/, "a published-endpoint branch the template does not have");
+  });
+
+  test("the vault's private endpoint and the zone's link have the names runner.bicep gives them and Remove-Poc.ps1 removes", () => {
+    const remover = lf("scripts", "Remove-Poc.ps1");
+    const rb = runnerBicep();
+    const fromBicep = (rb.match(/^resource \w+ 'Microsoft\.Network\/privateEndpoints@[^']+' = \{\n\s+name: '([^']+)'/m) || [])[1];
+    const fromRemove = (remover.match(/az network private-endpoint delete [^\n]*-n "([^"]+)"/) || [])[1];
+    assert.ok(fromBicep && fromRemove, "the private endpoint's name was not found");
+    const name = fromBicep.replace("${vaultName}", "<vault-name>");
+    assert.equal(fromRemove.replace("$VaultName", "<vault-name>"), name, "runner.bicep and Remove-Poc.ps1 name the endpoint differently");
+    const linkBicep = (rb.match(/virtualNetworkLinks@[^\n]+\n\s+parent: vaultZone\n\s+name: '([^']+)'/) || [])[1];
+    const linkRemove = (remover.match(/az network private-dns link vnet delete [^\n]*-n "([^"]+)"/) || [])[1];
+    assert.ok(linkBicep && linkRemove, "the zone link's name was not found");
+    const link = linkBicep.replace("${vnetName}", "<vnet-name>");
+    assert.equal(linkRemove.replace("$VnetName", "<vnet-name>"), link, "runner.bicep and Remove-Poc.ps1 name the zone's link differently");
+    const sec = sections(doc("PORTAL.md"));
+    const create = steps(sec["Key Vault"] || "").map(flat).find((x) => x.includes("+ Create a private endpoint")) || "";
+    const [whenNew, whenExisting] = create.split("For a vault that exists");
+    for (const [label, part] of [["a new vault", whenNew], ["a vault that exists", whenExisting]]) {
+      assert.ok((part || "").includes(`\`${name}\``), `the private endpoint for ${label} is not named ${name}`);
+    }
+    const remove = steps(sec.Remove || "").map(flat).find((x) => /private endpoint/.test(x)) || "";
+    assert.ok(remove.includes(`\`${name}\``), `Remove does not name ${name}`);
+    assert.match(remove, /virtual network link/, "Remove does not name the zone's link");
+    const script = (flat(sec.Remove || "").match(/`Remove-Poc\.ps1 -Runner[^`]*`[\s\S]*?(?=\. It |$)/) || [""])[0];
+    assert.match(script, /by the names `runner\.bicep` gives them/, "Remove-Poc.ps1's removal is not tied to runner.bicep's names");
+    for (const n of [name, link]) assert.ok(script.includes(`\`${n}\``), `Remove-Poc.ps1's removal does not name ${n}`);
+  });
+
+  test("the runner's key step comes after the runner's setup steps, and its Deploy step creates the vault's endpoint", () => {
+    const setup = sections(doc("SETUP.md"))["Vault access through the runner"] || "";
+    const first = [...setup.matchAll(/-Step (\w+)/g)].map((m) => m[1]);
+    assert.deepEqual(first, ["Deploy", "Setup", "Push"], "SETUP.md's runner steps changed");
+    const text = flat(doc("PORTAL.md"));
+    const named = (text.match(/set up as in \[SETUP\.md\]\(SETUP\.md#vault-access-through-the-runner\) \(([^)]*)\):\s*`[^`]*Invoke-PocRunner\.ps1[^`]*-Step Key\b/) || [])[1];
+    assert.ok(named, "the runner's key step does not point to the runner's setup");
+    assert.deepEqual([...named.matchAll(/`(\w+)`/g)].map((m) => m[1]), first);
+    const runner = lf("scripts", "Invoke-PocRunner.ps1");
+    assert.match(runner, /'Deploy' \{[\s\S]*?--template-file \(Join-Path \$poc 'infra' 'runner\.bicep'\)/, "the Deploy step does not deploy runner.bicep");
+    const rb = runnerBicep();
+    assert.match(rb, /privateDnsZones@[^\n]+\n\s+name: 'privatelink\.vaultcore\.azure\.net'/);
+    assert.match(rb, /privateEndpoints\/privateDnsZoneGroups@[^\n]+\n\s+parent: vaultEndpoint/);
+    assert.match(text, /The runner's `Deploy` step creates the vault's private endpoint `pe-<vault-name>` and its DNS zone/);
+  });
+
+  test("the steps whose claims rest on one Learn page cite that page", () => {
+    const sec = sections(doc("PORTAL.md"));
+    const step = (section, marker) => steps(sec[section] || "").map(flat).find((x) => x.includes(marker)) || "";
+    for (const [section, marker, pages] of [
+      ["Key Vault", "+ Create a private endpoint", ["/azure/key-vault/general/private-link-service"]],
+      ["Rotate a key", "Find the slot clients hold", ["/rest/api/keyvault/secrets/get-secret/get-secret"]],
+      ["Remove", "The vault's private endpoint", ["/azure/private-link/private-endpoint-overview", "/azure/private-link/private-endpoint-dns-integration"]],
+    ]) {
+      const s = step(section, marker);
+      assert.ok(s, `${section}: no step with "${marker}"`);
+      for (const p of pages) assert.ok(s.includes(`(https://learn.microsoft.com${p})`), `${section}, "${marker}": does not cite ${p}`);
+    }
+    assert.match(flat(step("Rotate a key", "Find the slot clients hold")), /\[U31\]/, "the portal view of a version's tags is not tied to U31");
   });
 
   test("issuing and rotating write every tag and the content type the scripts write", () => {
@@ -348,9 +464,26 @@ describe("P43 architecture", () => {
     assert.match(developer.Scope, /^One secret\b/);
     const runner = rows.find((r) => /Runner/.test(r.Identity));
     assert.ok(runner, "no runner row");
-    for (const role of runnerRoles()) assert.ok(runner.Role.includes(role), `the runner's ${role} is not given`);
-    assert.match(runner.Scope, /Vault/i);
-    assert.match(runner.Scope, /instance/i);
+    const assignments = runnerAssignments();
+    assert.equal(assignments.length, 2, "the runner's role assignments were not found");
+    const [roles, scopes] = [runner.Role, runner.Scope].map((c) => c.split(";").map((x) => x.trim()));
+    assert.equal(roles.length, scopes.length, "the runner's roles and scopes do not pair up");
+    assert.equal(roles.length, assignments.length, "a runner role the template does not assign");
+    const SCOPE = { vault: /^Vault$/i, apim: /^instance$/i };
+    for (const a of assignments) {
+      const i = roles.indexOf(a.role);
+      assert.ok(i >= 0, `the runner's ${a.role} is not given`);
+      assert.match(scopes[i], SCOPE[a.scope] || /^$/, `the runner's ${a.role} is on ${a.scope}, the document says ${scopes[i]}`);
+    }
+  });
+
+  test("the operator's custom role lists the subscription actions the scripts call", () => {
+    const row = tableWith(doc("ARCHITECTURE.md"), "Identity", "Role", "Scope").find((r) => /custom role/.test(r.Role));
+    assert.ok(row, "no operator row with a custom role");
+    const listed = ((row.Role.match(/custom role with the subscription actions the scripts call \(([^)]*)\)/) || [])[1] || "").split(/,\s*/).filter(Boolean);
+    const called = [...new Set([...subscriptionVerbs("PocKeys.ps1"), ...subscriptionVerbs("Remove-Poc.ps1")])];
+    assert.deepEqual(called.filter((v) => !/^(read|create|update|delete|list keys|regenerate)$/.test(v)), [], "a call with no verb");
+    assert.deepEqual([...listed].sort(), [...called].sort(), "the custom role's actions are not the scripts'");
   });
 
   test("the network statements are the template's", () => {

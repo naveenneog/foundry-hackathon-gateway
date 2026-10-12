@@ -281,8 +281,8 @@ PSReadLine leaves a command line out of its history file only when it contains `
 updated 2026-06-16), so `$env:POC_KEY = '…'` typed with the key is saved there. `read -s`
 does not echo the input ([Bash builtins](https://www.gnu.org/software/bash/manual/html_node/Bash-Builtins.html)).
 
-The probe answers for any key without calling a model. For a key issued as `alice` on the Claude
-pack:
+The probe answers for any valid key without calling a model. For a key issued as `alice` on the
+Claude pack:
 
 ```bash
 curl -sS --fail-with-body -H "x-api-key: $POC_KEY" "$POC_GATEWAY/poc/probe/whoami"

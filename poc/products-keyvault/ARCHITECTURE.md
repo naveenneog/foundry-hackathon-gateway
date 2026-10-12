@@ -11,7 +11,7 @@ together and how a request and a key move through it. Setup steps are in [SETUP.
 | Component | What it is | Role in the design | Defined in |
 |---|---|---|---|
 | API Management instance | An existing instance on a v2 tier, with a system-assigned managed identity | Accepts client requests, checks keys, applies budgets, calls Foundry | Existing; [`infra/poc.bicep`](infra/poc.bicep) references it |
-| Routes (APIs) | `poc-claude`, `poc-openai`, `poc-probe` | One base URL per client protocol. The Claude and OpenAI-compatible routes refuse keys without a pack and call Foundry with the managed identity; the probe answers in its own policy, for any key | `routes` in [`infra/poc.bicep`](infra/poc.bicep); [`api-claude-policy.xml`](infra/api-claude-policy.xml), [`api-openai-policy.xml`](infra/api-openai-policy.xml), [`api-probe-policy.xml`](infra/api-probe-policy.xml) |
+| Routes (APIs) | `poc-claude`, `poc-openai`, `poc-probe` | One base URL per client protocol. The Claude and OpenAI-compatible routes refuse keys without a pack and call Foundry with the managed identity; the probe answers in its own policy, for any valid key | `routes` in [`infra/poc.bicep`](infra/poc.bicep); [`api-claude-policy.xml`](infra/api-claude-policy.xml), [`api-openai-policy.xml`](infra/api-openai-policy.xml), [`api-probe-policy.xml`](infra/api-probe-policy.xml) |
 | Packs (products) | `poc-claude-pack`, `poc-deepseek-pack`, `poc-tiny-pack` | Each holds a list of models, a monthly budget per key, a monthly pool and a per-minute limit per key | `products` in [`infra/poc.bicep`](infra/poc.bicep); [`product-policy.xml`](infra/product-policy.xml) |
 | Keys (subscriptions) | `poc-<name>`, each scoped to one pack, with a primary and a secondary key | A user's credential. Its state (active or suspended) and stored expiry date live here | Created by [`scripts/PocKeys.ps1`](scripts/PocKeys.ps1) |
 | Foundry account | An existing account with the model deployments | Serves the models, reached through a private endpoint ([U23](../../docs/UNKNOWNS.md)) | Existing |
@@ -37,7 +37,7 @@ Each route also accepts the key in a `subscription-key` query parameter (roadmap
 |---|---|---|---|
 | The instance's system-assigned managed identity | Cognitive Services User | Foundry account | Calling the models; token audience `https://ai.azure.com` |
 | Operator | Key Vault Secrets Officer | Vault (the template assigns it) | Writing each key into its secret, reading the slot tag |
-| Operator | API Management Service Contributor, or a custom role with the subscription actions the scripts call (create, list keys, regenerate, update, delete) | Instance | Creating keys, reading and regenerating them ([finding 6](README.md#what-the-runs-showed)) |
+| Operator | API Management Service Contributor, or a custom role with the subscription actions the scripts call (read, create, list keys, regenerate, update, delete) | Instance | Creating keys, reading and regenerating them, changing their state and expiry, and deleting them on removal ([finding 6](README.md#what-the-runs-showed)) |
 | Operator | Owner, User Access Administrator or Role Based Access Control Administrator | Resource group | Assigning and removing the per-secret read role (`Grant`, `Revoke`, removal) |
 | Runner VM's managed identity | Key Vault Secrets Officer; API Management Service Contributor | Vault; instance | The key scripts on the runner |
 | Developer | Key Vault Secrets User | One secret, `poc-key-<name>` | Claude Code's `apiKeyHelper` reading the current key ([U30](../../docs/UNKNOWNS.md)) |
@@ -238,9 +238,11 @@ an assignment names the secret's path, which a vault created again under the sam
 
 ## Sources
 
-- [Subscriptions in API Management](https://learn.microsoft.com/azure/api-management/api-management-subscriptions)
-- [llm-token-limit policy](https://learn.microsoft.com/azure/api-management/llm-token-limit-policy)
-- [Azure RBAC for Key Vault](https://learn.microsoft.com/azure/key-vault/general/rbac-guide)
-- [Automate the rotation of a secret with two sets of credentials](https://learn.microsoft.com/azure/key-vault/secrets/tutorial-rotation-dual)
-- [Claude Code settings reference](https://code.claude.com/docs/en/settings-reference)
+Read 2026-10-12; the dates are each page's last update.
+
+- [Subscriptions in API Management](https://learn.microsoft.com/azure/api-management/api-management-subscriptions) (2026-06-25)
+- [llm-token-limit policy](https://learn.microsoft.com/azure/api-management/llm-token-limit-policy) (2026-06-26)
+- [Azure RBAC for Key Vault](https://learn.microsoft.com/azure/key-vault/general/rbac-guide) (2026-08-21)
+- [Automate the rotation of a secret with two sets of credentials](https://learn.microsoft.com/azure/key-vault/secrets/tutorial-rotation-dual) (2026-07-08)
+- [Claude Code settings reference](https://code.claude.com/docs/en/settings-reference) (Anthropic, 2026-10-11)
 - Measurements: [README results](README.md#results); [UNKNOWNS](../../docs/UNKNOWNS.md) U23–U30

@@ -85,7 +85,7 @@ The probe answers for any key without calling a model. For a key issued as `alic
 pack:
 
 ```bash
-curl -sS -H "x-api-key: $POC_KEY" "$POC_GATEWAY/poc/probe/whoami"
+curl -sS --fail-with-body -H "x-api-key: $POC_KEY" "$POC_GATEWAY/poc/probe/whoami"
 ```
 
 ```json
@@ -259,7 +259,7 @@ export POC_KEY='<key>'
 
 [`scripts/Test-PocClients.ps1`](scripts/Test-PocClients.ps1) runs every example below against the
 gateway, and a test checks that each file shown here matches the file it runs. Last run:
-2026-10-12, 10 of 10.
+2026-10-12, 11 of 11.
 
 ### Claude Code
 
@@ -286,31 +286,40 @@ tenant, read access to the secret and a network path to the vault; for a vault i
 tenant, [`claude-code/Get-PocKey.ps1`](claude-code/Get-PocKey.ps1) takes `-Subscription`. Claude
 Code caches the helper's output for five minutes and runs it again after a 401 or 403
 ([settings reference](https://code.claude.com/docs/en/settings-reference), read 2026-10-12).
-`ANTHROPIC_AUTH_TOKEN` and `ANTHROPIC_API_KEY` take precedence over `apiKeyHelper`, so with
-either one set the helper is not used
-([authentication precedence](https://code.claude.com/docs/en/authentication)).
-`Test-PocClients.ps1` runs this file with the helper replaced by one that prints `POC_KEY`, and
-a control with a wrong key that has to be refused. The `az` command itself returned the key in
-0.8 s on the runner.
+Claude Code uses the first credential it finds in this order: a cloud provider
+(`CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_VERTEX` or `CLAUDE_CODE_USE_FOUNDRY` set),
+`ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_API_KEY`, then `apiKeyHelper`
+([authentication precedence](https://code.claude.com/docs/en/authentication)). With any of the
+first four set, the helper is not used. `Test-PocClients.ps1` runs this file with the helper
+replaced by one that prints `POC_KEY`, and a control with a wrong key that has to be refused.
+The `az` command itself returned the key in 0.8 s on the runner.
 
-A fixed key, from environment variables:
+A fixed key, from environment variables, in PowerShell:
 
+<!-- file: examples/claude-code-env.ps1 -->
 ```powershell
+# Claude Code through the gateway's Claude route, with the key in an environment variable, for
+# PowerShell. Reads POC_GATEWAY and POC_KEY; claude is started afterwards in the same session.
+# Run by scripts/Test-PocClients.ps1; see SETUP.md.
 $env:ANTHROPIC_BASE_URL = "$env:POC_GATEWAY/poc/claude"
 $env:ANTHROPIC_API_KEY = $env:POC_KEY
 $env:ANTHROPIC_MODEL = 'claude-haiku-4-5'
 $env:ANTHROPIC_DEFAULT_HAIKU_MODEL = 'claude-haiku-4-5'
 $env:CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS = '1'
-claude
 ```
 
-Without `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1`, Claude Code 2.1.272 sent the pre-release
-`anthropic-beta` value `advisor-tool-2026-03-01` on this path and Foundry answered 400
-([U17](../../docs/UNKNOWNS.md)). Claude Code documents the variable for gateways that reject
-such values ([environment variables](https://code.claude.com/docs/en/env-vars)). In an
-interactive session Claude Code asks once whether to use `ANTHROPIC_API_KEY`
+Then `claude` in the same session. Without `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1`, Claude
+Code 2.1.272 sent the pre-release `anthropic-beta` value `advisor-tool-2026-03-01` on this path
+and Foundry answered 400 ([U17](../../docs/UNKNOWNS.md)). Claude Code documents the variable for
+gateways that reject such values
+([environment variables](https://code.claude.com/docs/en/env-vars)). In an interactive session
+Claude Code asks once whether to use `ANTHROPIC_API_KEY`
 ([authentication](https://code.claude.com/docs/en/authentication)). Both model variables name
 models in the key's pack.
+
+`Test-PocClients.ps1` runs both Claude Code examples with the variables above cleared first and
+with a new, empty `CLAUDE_CONFIG_DIR`, because settings in an existing configuration folder can
+override them.
 
 ### Anthropic SDK
 
@@ -474,7 +483,7 @@ answered it at 50,000. It did not count `max_tokens`, which Azure OpenAI deploym
 ```
 
 ```bash
-curl -sS --fail-with-body "$POC_GATEWAY/poc/claude/v1/messages" -H "x-api-key: $POC_KEY" -H 'anthropic-version: 2023-06-01' -H 'content-type: application/json' -d @claude-request.json
+curl -sS --fail-with-body "$POC_GATEWAY/poc/claude/v1/messages" -H "x-api-key: $POC_KEY" -H 'anthropic-version: 2023-06-01' -H 'content-type: application/json' -d @examples/claude-request.json
 ```
 
 <!-- file: examples/openai-request.json -->
@@ -492,11 +501,14 @@ curl -sS --fail-with-body "$POC_GATEWAY/poc/claude/v1/messages" -H "x-api-key: $
 ```
 
 ```bash
-curl -sS --fail-with-body "$POC_GATEWAY/poc/v1/chat/completions" -H "api-key: $POC_KEY" -H 'content-type: application/json' -d @openai-request.json
+curl -sS --fail-with-body "$POC_GATEWAY/poc/v1/chat/completions" -H "api-key: $POC_KEY" -H 'content-type: application/json' -d @examples/openai-request.json
 ```
 
-In PowerShell on Windows the program is `curl.exe` and the variables are `$env:POC_GATEWAY` and
-`$env:POC_KEY`.
+The commands run from `poc/products-keyvault/`. In PowerShell on Windows the program is
+`curl.exe`, the variables are `$env:POC_GATEWAY` and `$env:POC_KEY`, and arguments starting
+with `@` are quoted (`'@examples/claude-request.json'`), because PowerShell reads an unquoted
+`@name` as splatting. The key is part of curl's command line, which other users of the same
+machine can list.
 
 ## Errors
 

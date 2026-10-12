@@ -449,19 +449,97 @@ describe("P38 operator actions", { skip: !pwsh && "PowerShell 7 not found" }, ()
 describe("P38 client examples", () => {
   const dir = join(poc, "examples");
   const files = () => readdirSync(dir).filter((f) => !f.startsWith("."));
+  const needsPwsh = { skip: !pwsh && "PowerShell 7 not found" };
+  // -Plan prints every check from the loop that runs them, and stops before any Azure call or
+  // installation; the tests run under a signed-out Azure CLI profile, so a call would fail.
+  const plan = () => {
+    const r = spawnSync(pwsh, ["-NoProfile", "-NonInteractive", "-File", join(poc, "scripts", "Test-PocClients.ps1"),
+      "-Subscription", "s", "-ResourceGroup", "rg-x", "-ApimName", "apim-x", "-Plan"], { encoding: "utf8" });
+    assert.equal(r.status, 0, `${r.stdout}${r.stderr}`);
+    const checks = [...r.stdout.matchAll(/^PLAN (\{.*\})\s*$/gm)].map((m) => JSON.parse(m[1]));
+    return { checks, workDir: (r.stdout.match(/^WORKDIR (.+?)\s*$/m) || [])[1] };
+  };
+  const decide = (rows) => {
+    const script = `. ${q(join(poc, "scripts", "PocMeasure.ps1"))}\n` + rows.map((x) =>
+      `Test-PocClientResult -ExitCode ${x.exit} -Output ${q(x.output)} -Expect ${q(x.expect)}${x.refusal ? ` -Refusal ${q(x.refusal)}` : ""}`).join("\n");
+    const r = spawnSync(pwsh, ["-NoProfile", "-NonInteractive", "-Command", script], { encoding: "utf8" });
+    assert.equal(r.status, 0, r.stderr);
+    return r.stdout.trim().split(/\r?\n/).map((l) => l.trim() === "True");
+  };
+  const refused401 = "Failed to authenticate. API Error: 401 Access denied due to invalid subscription key. Make sure to provide a valid key for an active subscription.";
 
-  test("every example is run by Test-PocClients.ps1, so none is documented without being tried", () => {
-    const runner = read("scripts", "Test-PocClients.ps1");
-    const names = files();
-    assert.ok(names.length >= 6, `expected the client examples, found ${names.length}`);
-    assert.deepEqual(names.filter((f) => !runner.includes(f)), []);
+  test("every example, and the Claude Code settings example, is a check Test-PocClients.ps1 runs", needsPwsh, () => {
+    const { checks } = plan();
+    const expected = [...files().map((f) => `examples/${f}`), "claude-code/settings.example.json"].sort();
+    assert.ok(expected.length >= 8, `expected the client examples, found ${expected.length}`);
+    assert.deepEqual([...new Set(checks.map((c) => c.example).filter(Boolean))].sort(), expected);
+    assert.ok(checks.some((c) => c.pack === "wrong" && c.refusal), "no control with a wrong key");
+  });
+
+  test("a check passes only on an answer, and a control only on the gateway's refusal of its key", needsPwsh, () => {
+    const { checks } = plan();
+    for (const c of checks.filter((x) => !x.refusal)) {
+      assert.deepEqual(decide([
+        { exit: 0, output: "None", expect: c.expect },
+        { exit: 0, output: "null", expect: c.expect },
+        { exit: 0, output: "", expect: c.expect },
+      ]), [false, false, false], `${c.name}: an empty answer passes`);
+    }
+    const control = checks.find((x) => x.refusal);
+    assert.deepEqual(decide([
+      { exit: 1, output: refused401, expect: control.expect, refusal: control.refusal },
+      { exit: 1, output: "API Error: 429 Too many requests", expect: control.expect, refusal: control.refusal },
+      { exit: 1, output: "getaddrinfo ENOTFOUND apim-x.azure-api.net", expect: control.expect, refusal: control.refusal },
+      { exit: 0, output: "OK", expect: control.expect, refusal: control.refusal },
+    ]), [true, false, false, false]);
+    assert.deepEqual(decide([
+      { exit: 0, output: "OK", expect: "\\bOK\\b" },
+      { exit: 1, output: "OK", expect: "\\bOK\\b" },
+    ]), [true, false]);
+  });
+
+  test("the work folder is the user's own by default, not a shared temporary folder", needsPwsh, () => {
+    const { workDir } = plan();
+    const base = spawnSync(pwsh, ["-NoProfile", "-Command", "[Environment]::GetFolderPath('LocalApplicationData')"], { encoding: "utf8" }).stdout.trim();
+    assert.ok(base, "no per-user data folder on this machine");
+    assert.equal(workDir, join(base, "poc-clients"));
+  });
+
+  test("every environment variable a check sets or clears is saved first and restored at the end", () => {
+    const code = (text) => text.replace(/<#[\s\S]*?#>/g, "").split(/\r?\n/).filter((l) => !/^\s*#/.test(l)).join("\n");
+    const harness = code(read("scripts", "Test-PocClients.ps1"));
+    const dotSourced = files().filter((f) => f.endsWith(".ps1")).map((f) => code(readFileSync(join(dir, f), "utf8")));
+    const touched = (harness.match(/^\$touched = (.+)$/m) || [])[1];
+    assert.ok(touched, "no $touched list");
+    const listed = [...touched.matchAll(/'([A-Z_]+)'/g)].map((m) => m[1]);
+    const used = new Set([harness, ...dotSourced].flatMap((t) => [...t.matchAll(/\benv:([A-Z_]+)\b/g)].map((m) => m[1])));
+    assert.deepEqual([...used].filter((v) => !listed.includes(v)), [], "set or cleared without being saved");
+    assert.match(harness, /foreach \(\$v in \$touched\) \{ \$saved\[\$v\] = \[Environment\]::GetEnvironmentVariable\(\$v\) \}\s*\ntry \{/);
+    assert.match(harness, /\} finally \{[\s\S]*foreach \(\$v in \$touched\) \{ \[Environment\]::SetEnvironmentVariable\(\$v, \$saved\[\$v\]\) \}/);
+    for (const v of ["CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY", "ANTHROPIC_AUTH_TOKEN"]) {
+      assert.ok(listed.includes(v), `${v} outranks the key under test and is not cleared`);
+    }
+  });
+
+  test("the guide's curl lines send what the harness sends, from the same folder", () => {
+    const parts = (line) => ({
+      path: (line.match(/\/poc\/[^"'\s]+/) || [])[0],
+      headers: [...line.matchAll(/-H\s+["']([^:"']+):/g)].map((m) => m[1].toLowerCase()).sort(),
+      data: (line.match(/-d\s+["']?@([^"'\s]+)/) || [])[1],
+    });
+    const shown = read("SETUP.md").split(/\r?\n/).filter((l) => /^curl /.test(l)).map(parts);
+    const run = read("scripts", "Test-PocClients.ps1").split(/\r?\n/).filter((l) => /& \$curl /.test(l)).map(parts);
+    assert.ok(shown.length >= 3, `expected the probe and one curl line per route in the guide, found ${shown.length}`);
+    assert.deepEqual(shown.sort((a, b) => a.path.localeCompare(b.path)), run.sort((a, b) => a.path.localeCompare(b.path)));
+    for (const s of shown.filter((x) => x.data)) assert.ok(existsSync(join(poc, s.data)), `${s.data} does not exist relative to poc/products-keyvault/`);
+    assert.match(read("scripts", "Test-PocClients.ps1"), /Push-Location \$poc\s*\r?\n\s*try \{\s*\r?\n\s*foreach \(\$c in \$checks\) \{/, "the checks do not run from poc/products-keyvault/");
   });
 
   test("no example holds a key: each reads it from POC_KEY", () => {
     for (const f of files()) {
       const text = readFileSync(join(dir, f), "utf8");
       assert.doesNotMatch(text, /\b[0-9a-f]{32}\b/, `${f} holds something shaped like a subscription key`);
-      if (/\.(py|mjs)$/.test(f)) assert.match(text, /POC_KEY/, `${f} does not read POC_KEY`);
+      if (/\.(py|mjs|ps1)$/.test(f)) assert.match(text, /POC_KEY/, `${f} does not read POC_KEY`);
     }
   });
 
@@ -476,22 +554,11 @@ describe("P38 client examples", () => {
     assert.match(claude.options.baseURL, /\/poc\/claude\/v1$/);
   });
 
-  test("Claude Code runs with pre-release anthropic-beta values stripped, and the variable is restored afterwards", () => {
+  test("both Claude Code examples strip pre-release anthropic-beta values", () => {
     // Foundry refuses some of them with a 400 (UNKNOWNS U17, update of 2026-10-12).
     const settings = JSON.parse(read("claude-code", "settings.example.json"));
     assert.equal(settings.env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS, "1");
-    const runner = read("scripts", "Test-PocClients.ps1");
-    assert.match(runner, /\$env:CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS = '1'/);
-    const saved = runner.match(/foreach \(\$v in ([^)]*)\)/);
-    assert.ok(saved && saved[1].includes("'CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS'"), "the variable is not saved and restored");
-  });
-
-  test("the Claude Code settings example is run through its apiKeyHelper, with a wrong key as a control", () => {
-    // The control fails if anything other than the helper's key reaches the gateway, such as
-    // ANTHROPIC_API_KEY, which outranks apiKeyHelper.
-    const runner = read("scripts", "Test-PocClients.ps1");
-    assert.match(runner, /'settings\.example\.json'/);
-    assert.match(runner, /Invoke-Example\b[^\n]*-Refused\b/);
+    assert.match(read("examples", "claude-code-env.ps1"), /^\$env:CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS = '1'$/m);
   });
 });
 

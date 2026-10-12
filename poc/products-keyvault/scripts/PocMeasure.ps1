@@ -59,3 +59,17 @@ function Test-PocSessionRefresh {
     if (-not $refresh) { return & $result $false "no read of the new key after the old one was refused ($($reads.Count) reads)" }
     return & $result $true "first read the old key at $($reads[0].At.ToString('HH:mm:ss')); read the new key at $($refresh.At.ToString('HH:mm:ss')), after the old one was refused"
 }
+
+# Whether one client check in Test-PocClients.ps1 passed. A check passes when the client exits 0
+# and prints the expected answer. A control passes only when the gateway refused its key: a
+# non-zero exit and output matching $Refusal. A network error or a 429 is not a refusal.
+function Test-PocClientResult {
+    param(
+        [int]$ExitCode,
+        [AllowEmptyString()][string]$Output,
+        [Parameter(Mandatory)][string]$Expect,
+        [string]$Refusal = ''
+    )
+    if ($Refusal) { return $ExitCode -ne 0 -and $Output -match $Refusal }
+    return $ExitCode -eq 0 -and $Output -match $Expect
+}

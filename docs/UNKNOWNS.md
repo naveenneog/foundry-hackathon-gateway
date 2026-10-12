@@ -91,15 +91,16 @@ places issuing, per-secret roles and rotation on the private network, and names 
 ### U31 — Which Azure portal pages and labels create what `poc.bicep` creates, and run the key operations? — ASSUMED
 
 Researched on 2026-10-12 from Microsoft Learn; every page and its date is in `PORTAL.md`'s
-sources, and fifteen of the quotes were checked against the live pages. Learn names the labels for
-the managed identity, role assignments, a blank HTTP API, operations, the policy editors, a
-product's fields, a subscription's fields, vault creation (permission model, **Disable public
-access**, **+ Create a private endpoint**), secret creation, a role on one secret, diagnostic
-settings and purging. It does not name: the subscription key header and query parameter fields
-(only that they are on the API's **Settings** tab), a product id field, the entries that show,
-regenerate or suspend a subscription's keys, a secret's content type and tag fields, or creating a
-secret version. `PORTAL.md` describes those actions without quoting labels and names the script
-action for each.
+sources, and the quotes were checked against the live pages. Learn names the labels for the
+managed identity, role assignments, a blank HTTP API (the fields are described on "Import and
+publish your first API"), operations, the policy editors, a product's fields, a subscription's
+fields, vault creation (permission model, **Disable public access**, **+ Create a private
+endpoint**), the firewall's **Allow trusted Microsoft services to bypass this firewall**, secret
+creation, a role on one secret, diagnostic settings and purging. It does not name: the
+subscription key header and query parameter fields (only that they are on the API's
+**Settings** tab), a product id field, the entries that show, regenerate or suspend a
+subscription's keys, a secret's content type and tag fields, or creating a secret version.
+`PORTAL.md` describes those actions without quoting labels and names the script action for each.
 
 **Assumption:** the documented portal steps create the same configuration as `poc.bicep`; they
 were not run in the portal in this project.

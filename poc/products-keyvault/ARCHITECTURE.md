@@ -11,13 +11,13 @@ together and how a request and a key move through it. Setup steps are in [SETUP.
 | Component | What it is | Role in the design | Defined in |
 |---|---|---|---|
 | API Management instance | An existing instance on a v2 tier, with a system-assigned managed identity | Accepts client requests, checks keys, applies budgets, calls Foundry | Existing; [`infra/poc.bicep`](infra/poc.bicep) references it |
-| Routes (APIs) | `poc-claude`, `poc-openai`, `poc-probe` | One base URL per client protocol; each refuses keys without a product and calls Foundry with the managed identity | `routes` in [`infra/poc.bicep`](infra/poc.bicep); [`api-claude-policy.xml`](infra/api-claude-policy.xml), [`api-openai-policy.xml`](infra/api-openai-policy.xml), [`api-probe-policy.xml`](infra/api-probe-policy.xml) |
+| Routes (APIs) | `poc-claude`, `poc-openai`, `poc-probe` | One base URL per client protocol. The Claude and OpenAI-compatible routes refuse keys without a pack and call Foundry with the managed identity; the probe answers in its own policy, for any key | `routes` in [`infra/poc.bicep`](infra/poc.bicep); [`api-claude-policy.xml`](infra/api-claude-policy.xml), [`api-openai-policy.xml`](infra/api-openai-policy.xml), [`api-probe-policy.xml`](infra/api-probe-policy.xml) |
 | Packs (products) | `poc-claude-pack`, `poc-deepseek-pack`, `poc-tiny-pack` | Each holds a list of models, a monthly budget per key, a monthly pool and a per-minute limit per key | `products` in [`infra/poc.bicep`](infra/poc.bicep); [`product-policy.xml`](infra/product-policy.xml) |
 | Keys (subscriptions) | `poc-<name>`, each scoped to one pack, with a primary and a secondary key | A user's credential. Its state (active or suspended) and stored expiry date live here | Created by [`scripts/PocKeys.ps1`](scripts/PocKeys.ps1) |
 | Foundry account | An existing account with the model deployments | Serves the models, reached through a private endpoint ([U23](../../docs/UNKNOWNS.md)) | Existing |
-| Key Vault | `kv-poc-<hash>`, Azure RBAC, public network access `Disabled` | One secret per key, `poc-key-<name>`; each version is the key clients get after a rotation | [`infra/poc.bicep`](infra/poc.bicep) |
-| Vault private endpoint | Private endpoint in subnet `snet-pe`, zone `privatelink.vaultcore.azure.net` | The only network path to the vault | [`infra/runner.bicep`](infra/runner.bicep) |
-| Runner VM (optional) | Ubuntu VM in subnet `snet-poc-runner`, outbound through a NAT gateway, no public IP | Runs the key scripts inside the network, driven through Run Command | [`infra/runner.bicep`](infra/runner.bicep), [`scripts/Invoke-PocRunner.ps1`](scripts/Invoke-PocRunner.ps1) |
+| Key Vault | `kv-poc-<hash>`, Azure RBAC, public network access `Disabled`, firewall default Deny with the trusted-services bypass off (`bypass: 'None'`) | One secret per key, `poc-key-<name>`; each version is the key clients get after a rotation | [`infra/poc.bicep`](infra/poc.bicep) |
+| Vault private endpoint | Private endpoint in subnet `snet-pe`, zone `privatelink.vaultcore.azure.net`, created with the runner (`Invoke-PocRunner.ps1 -Step Deploy`) and removed by `Remove-Poc.ps1 -Runner` | With public access disabled and the trusted-services bypass off, the only network path to the vault | [`infra/runner.bicep`](infra/runner.bicep) |
+| Runner VM | Ubuntu VM in subnet `snet-poc-runner`, outbound through a NAT gateway, no public IP; deployed with the private endpoint and removed with it | Runs the key scripts inside the network, driven through Run Command | [`infra/runner.bicep`](infra/runner.bicep), [`scripts/Invoke-PocRunner.ps1`](scripts/Invoke-PocRunner.ps1) |
 | Log Analytics workspace (optional) | An existing workspace | Receives the vault's audit log: who read or wrote which key | `vaultAudit` in [`infra/poc.bicep`](infra/poc.bicep) |
 | Operator scripts | PowerShell 7 with the Azure CLI's tokens | Issue, hand over, rotate, expire, suspend, list and remove keys over the two REST APIs | [`scripts/`](scripts/) |
 
@@ -37,13 +37,14 @@ Each route also accepts the key in a `subscription-key` query parameter (roadmap
 |---|---|---|---|
 | The instance's system-assigned managed identity | Cognitive Services User | Foundry account | Calling the models; token audience `https://ai.azure.com` |
 | Operator | Key Vault Secrets Officer | Vault (the template assigns it) | Writing each key into its secret, reading the slot tag |
-| Operator | API Management Service Contributor, or a role with `subscriptions/listSecrets/action` | Instance | Creating keys, reading and regenerating them ([finding 6](README.md#what-the-runs-showed)) |
+| Operator | API Management Service Contributor, or a custom role with the subscription actions the scripts call (create, list keys, regenerate, update, delete) | Instance | Creating keys, reading and regenerating them ([finding 6](README.md#what-the-runs-showed)) |
 | Operator | Owner, User Access Administrator or Role Based Access Control Administrator | Resource group | Assigning and removing the per-secret read role (`Grant`, `Revoke`, removal) |
 | Runner VM's managed identity | Key Vault Secrets Officer; API Management Service Contributor | Vault; instance | The key scripts on the runner |
 | Developer | Key Vault Secrets User | One secret, `poc-key-<name>` | Claude Code's `apiKeyHelper` reading the current key ([U30](../../docs/UNKNOWNS.md)) |
 
 No Foundry key exists in the design: the gateway authenticates to Foundry with its managed
-identity, and the client's key never leaves the gateway.
+identity. Both key headers are removed before the call; a key sent in the `subscription-key`
+query parameter is passed on to Foundry (roadmap P42).
 
 ## Network paths
 

@@ -5,10 +5,31 @@ of concept, on branch `poc/apim-products-keyvault` (not pushed; a push needs the
 approval). Acceptance criteria are in the roadmap (M7). Filed for this branch: P40, P41, P42.
 Open packets for `main`: P39 (recorded on this branch only), P36, P35, P30, P20.
 
-### P43 — portal steps and architecture — IN PROGRESS
+### P43 — portal steps and architecture — IN PROGRESS (council round 2)
 
-Unknowns U31–U33 are logged before writing: the portal's labels and flows, what the portal can
-do with a private vault, and whether it exposes a key's expiry and state.
+`poc/products-keyvault/PORTAL.md` builds in the Azure portal what `infra/poc.bicep` builds and
+runs each key operation by hand; every numbered step and prerequisite cites Microsoft Learn.
+`poc/products-keyvault/ARCHITECTURE.md` describes the components, identities and roles, network
+paths, the request flow, each key flow and the design decisions. U31 (ASSUMED, the steps were not
+run in the portal), U32 and U33 (RESOLVED) were logged before writing and closed by research.
+`tests/poc-products-keyvault-docs.test.mjs` (19 tests) reads both documents' tables by column and
+compares them with the templates, policies and scripts.
+
+**Council — P43, round 1.** BLOCK at every seat; all five BLOCKs fixed with tests.
+
+| Finding | Fix |
+|---|---|
+| **BLOCK B1.** A vault built from PORTAL.md kept the trusted-services bypass the template turns off; Learn: "Disabling public access doesn't suppress the trusted services bypass" | A step clears **Allow trusted Microsoft services to bypass this firewall**, with `az keyvault update --bypass None --default-action Deny`; a test ties it to the template's `bypass: 'None'` |
+| **BLOCK B2.** "The client's key never leaves the gateway" was false: a key in the `subscription-key` query parameter reaches Foundry | Stated with P42; a test rejects the claim while no route policy removes the query parameter |
+| **BLOCK B3.** The portal tag steps wrote a version without `subscription`, which the next scripted `Rotate` refuses | Issue and Rotate give the content type and all three tags for the version they write; a test reads that step |
+| **BLOCK B4.** The table tests ignored columns: swapped budgets passed | Tables are read by column from the header row; the council's swaps now fail |
+| **BLOCK B5.** Roles and scopes were compared with nothing in the code | Role ids in `poc.bicep`, `runner.bicep` and `PocKeys.ps1` are mapped to names, and each identity's role and scope is checked in both documents |
+| Architecture: the probe described as refusing keys and calling Foundry; the custom-role wording; the private endpoint's origin and the bypass behind "only path" (A1–A3) | Corrected, with tests for the bypass and the endpoint's removal |
+| Tests: counts, both content types, the probe route from the template (C1–C3); policy file and service URL per route, template network and product values, header meanings, anchors, command parameters, per-step citations (Q1–Q6) | Each has a check |
+| Portal walkthrough: removal left the vault's private endpoint and claimed the script's order; the one-time copy did not name the current key; the runner path and `SuspendExpired` were missing; no Foundry endpoint location, subnet prerequisite or `$target`; API labels cited from the wrong page; P41 (U1–U9) | Corrected; the endpoint location, subnet, `$target` and the runner step are in the document |
+| Clipboard history keeps a copied key (S1) | Stated, with Microsoft Support's clipboard page |
+
+Mutations caught: 24 of 24, including every change the council made to defeat the first tests.
 
 ### P38 — setup and usage guide — DONE (branch only)
 

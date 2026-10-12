@@ -6,6 +6,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · [Semantic Ve
 ## [Unreleased]
 
 ### Added
+- **Proof of concept, branch `poc/apim-products-keyvault` only: Azure portal steps and an
+  architecture document.** `poc/products-keyvault/PORTAL.md` builds in the Azure portal what the
+  template builds and runs each key operation by hand, citing Microsoft Learn for every step;
+  where Learn names no portal label, or the portal cannot reach a private vault, it names the
+  script action. `poc/products-keyvault/ARCHITECTURE.md` describes the components, identities and
+  roles, network paths, the request flow, each key flow and the design decisions. Tests compare
+  both documents with the templates. (P43)
 - **Proof of concept, branch `poc/apim-products-keyvault` only: a setup and usage guide.**
   `poc/products-keyvault/SETUP.md` covers requirements, deployment, issuing, handing over,
   rotating, expiring, suspending and listing keys, monitoring, and connecting Claude Code, the

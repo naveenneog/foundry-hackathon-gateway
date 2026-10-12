@@ -51,6 +51,18 @@ describe("P38 operator actions", { skip: !pwsh && "PowerShell 7 not found" }, ()
     assert.equal(bad.calls.length, 0);
   });
 
+  test("an expiry is stored on the key's subscription as a UTC date, with no vault call", () => {
+    const cli = q(join(poc, "scripts", "Invoke-PocKey.ps1"));
+    const r = runKeys({
+      responses: [{ method: "PATCH", match: "/subscriptions/poc-alice\\?", body: {} }],
+      call: `& ${cli} -Action SetExpiry -Name alice -ExpiresUtc 2027-01-31 -Subscription s -ResourceGroup rg-x -ApimName apim-x`,
+    });
+    assert.equal(r.failed, "", r.failed);
+    assert.deepEqual(r.calls.map((c) => [c.method, c.ifMatch]), [["PATCH", "*"]]);
+    assert.match(r.calls[0].body.properties.expirationDate, /^2027-01-31T00:00:00(\.0+)?Z$/);
+    assert.match(r.own, /expires on 2027-01-31/);
+  });
+
   test("listing, suspending and resuming need no vault; issuing and rotating say they do, before any call", () => {
     const cli = q(join(poc, "scripts", "Invoke-PocKey.ps1"));
     const target = "-Subscription s -ResourceGroup rg-x -ApimName apim-x";
@@ -181,6 +193,26 @@ describe("P38 removal", { skip: !pwsh && "PowerShell 7 not found" }, () => {
     assert.ok(empty.az.some((a) => a.startsWith("network private-dns link vnet delete -g rg-x -z privatelink.vaultcore.azure.net")));
     assert.ok(empty.az.some((a) => a.startsWith("network private-dns zone delete -g rg-x -n privatelink.vaultcore.azure.net")));
   });
+
+  test("the read access Grant gave on this vault's key secrets is removed before the vault, and other roles stay", () => {
+    const ra = (name, scope) => ({ id: `${scope}/providers/Microsoft.Authorization/roleAssignments/${name}`, scope, principalId: `p-${name}` });
+    const listed = JSON.stringify([
+      ra("g1", `${vaultId}/secrets/poc-key-alice`),
+      ra("g2", `${vaultId}/secrets/poc-key-bob`),
+      ra("other-vault", vaultId.replace("kv-x", "kv-other") + "/secrets/poc-key-alice"),
+      ra("other-secret", `${vaultId}/secrets/not-a-key`),
+      ra("vault-officer", vaultId),
+    ]);
+    const r = run({ az: [{ match: "^role assignment list --all", out: listed, exit: 0 }] });
+    assert.equal(r.exit, 0, r.own);
+    const deleted = r.az.filter((a) => a.startsWith("role assignment delete --ids ")).map((a) => a.split(" ")[4].split("/").pop());
+    assert.deepEqual(deleted.sort(), ["g1", "g2"]);
+    const vaultGone = r.az.findIndex((a) => a.startsWith("keyvault delete"));
+    assert.ok(r.az.findIndex((a) => a.startsWith("role assignment delete --ids ")) < vaultGone, "the vault was deleted before the access to its secrets");
+    const unlisted = run({ az: [{ match: "^role assignment list --all", out: "ERROR: AuthorizationFailed", exit: 1 }] });
+    assert.equal(unlisted.exit, 1, unlisted.own);
+    assert.match(unlisted.own, /Left behind: [^\n]*read access/);
+  });
 });
 
 describe("P38 handover", { skip: !pwsh && "PowerShell 7 not found" }, () => {
@@ -235,6 +267,57 @@ describe("P38 handover", { skip: !pwsh && "PowerShell 7 not found" }, () => {
     assert.equal(ok.failed, "", ok.failed);
     assert.equal(ok.calls.length, 1);
     const none = runKeys({ responses: [], call: `& ${cli} -Action Grant -Name alice -ObjectId ${OID} ${target}` });
+    assert.match(none.failed, /VaultName/);
+    assert.equal(none.calls.length, 0);
+  });
+
+  // Role assignments that apply to the secret: the grant to remove, and three that stay.
+  const secretPath = "/subscriptions/sub-123/resourceGroups/rg-x/providers/Microsoft.KeyVault/vaults/kv-x/secrets/poc-key-alice";
+  const role = (id) => `/subscriptions/sub-123/providers/Microsoft.Authorization/roleDefinitions/${id}`;
+  const assignment = (name, scope, principalId, roleId) => ({
+    id: `${scope}/providers/Microsoft.Authorization/roleAssignments/${name}`,
+    properties: { scope, principalId, roleDefinitionId: role(roleId) },
+  });
+  const applying = {
+    method: "GET", match: `^${SECRET_SCOPE.slice(0, -1)}\\?api-version=2022-04-01$`,
+    body: { value: [
+      assignment("grant-a", secretPath, OID, "4633458b-17de-408a-b874-0445c86b69e6"),
+      assignment("other-b", secretPath, "99999999-2222-3333-4444-555555555555", "4633458b-17de-408a-b874-0445c86b69e6"),
+      assignment("above-c", "/subscriptions/sub-123", OID, "acdd72a7-3385-48ef-bd42-f606fba81ae7"),
+      assignment("officer-d", secretPath, OID, "b86a8fe4-44ce-4948-aee5-eccb2c155cd7"),
+      // The same identity and role on the whole vault: not Grant's, so it stays.
+      assignment("vault-e", secretPath.replace(/\/secrets\/.*$/, ""), OID, "4633458b-17de-408a-b874-0445c86b69e6"),
+    ] },
+  };
+
+  test("a revoke removes that identity's Key Vault Secrets User role on that secret, and nothing else", () => {
+    const r = runKeys({ responses: [applying, { method: "DELETE", match: "/roleAssignments/grant-a\\?api-version=2022-04-01$", body: {} }],
+      call: `Revoke-PocKeyAccess -Context $ctx -Name 'alice' -ObjectId '${OID}'` });
+    assert.equal(r.failed, "", r.failed);
+    assert.deepEqual(r.calls.map((c) => c.method), ["GET", "DELETE"]);
+    assert.match(r.calls[1].uri, new RegExp(`^https://management\\.azure\\.com${secretPath.replace(/\./g, "\\.")}/providers/Microsoft\\.Authorization/roleAssignments/grant-a\\?`));
+    assert.match(r.own, /key itself is unchanged/);
+  });
+
+  test("revoking an identity that has no such role changes nothing and is not an error; bad input is refused first", () => {
+    const r = runKeys({ responses: [applying], call: "Revoke-PocKeyAccess -Context $ctx -Name 'alice' -ObjectId '99999999-0000-0000-0000-000000000000'" });
+    assert.equal(r.failed, "", r.failed);
+    assert.deepEqual(r.calls.map((c) => c.method), ["GET"]);
+    assert.match(r.own, /had no read access/);
+    for (const call of [`Revoke-PocKeyAccess -Context $ctx -Name 'alice' -ObjectId ''`, `Revoke-PocKeyAccess -Context $ctx -Name '../x' -ObjectId '${OID}'`]) {
+      const bad = runKeys({ responses: [applying], call });
+      assert.notEqual(bad.failed, "", `accepted: ${call}`);
+      assert.equal(bad.calls.length, 0, `called Azure for: ${call}`);
+    }
+  });
+
+  test("the command line revokes with -ObjectId, and needs -VaultName before any call", () => {
+    const cli = q(join(poc, "scripts", "Invoke-PocKey.ps1"));
+    const target = "-Subscription s -ResourceGroup rg-x -ApimName apim-x";
+    const ok = runKeys({ responses: [applying, { method: "DELETE", match: "/roleAssignments/grant-a\\?", body: {} }], call: `& ${cli} -Action Revoke -Name alice -ObjectId ${OID} ${target} -VaultName kv-x` });
+    assert.equal(ok.failed, "", ok.failed);
+    assert.deepEqual(ok.calls.map((c) => c.method), ["GET", "DELETE"]);
+    const none = runKeys({ responses: [], call: `& ${cli} -Action Revoke -Name alice -ObjectId ${OID} ${target}` });
     assert.match(none.failed, /VaultName/);
     assert.equal(none.calls.length, 0);
   });

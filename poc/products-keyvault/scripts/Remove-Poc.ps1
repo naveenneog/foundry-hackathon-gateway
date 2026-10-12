@@ -85,6 +85,18 @@ while ($page) {
 if ($VaultName) {
     $vaultId = "$(az keyvault show --name $VaultName --subscription $Subscription --query id -o tsv 2>$null)".Trim()
     if ($vaultId) {
+        # Read access given by Grant: Key Vault Secrets User on single key secrets of this vault.
+        # Removed before the vault, so none outlives it.
+        $listed = az role assignment list --all --subscription $Subscription -o json 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            $failures.Add("the read access Grant gave on $VaultName's secrets")
+            Write-Host "Could not list the role assignments on $VaultName's secrets."
+        } else {
+            $all = if ($listed) { @(($listed | Out-String) | ConvertFrom-Json) } else { @() }
+            foreach ($g in @($all | Where-Object { $_.id -and "$($_.scope)" -like "$vaultId/secrets/poc-key-*" })) {
+                Invoke-RemovalStep "read access to $("$($g.scope)".Split('/')[-1]) for $($g.principalId)" { az role assignment delete --ids $g.id --subscription $Subscription }
+            }
+        }
         Invoke-RemovalStep "the operator's role on $VaultName" { az role assignment delete --scope $vaultId --role 'Key Vault Secrets Officer' --subscription $Subscription }
         Invoke-RemovalStep "vault $VaultName (soft-deleted for its retention period)" { az keyvault delete --name $VaultName --subscription $Subscription -o none }
         if ($PurgeVault) { Invoke-RemovalStep "vault $VaultName, purged" { az keyvault purge --name $VaultName --subscription $Subscription -o none } }

@@ -174,9 +174,12 @@ Key Vault. Nothing here changes the gateway on `main`.
       opencode and curl. Every client example is a file that `Test-PocClients.ps1` runs against
       the live gateway; operator actions the guide names exist as script actions with tests.
       *Why:* asked 2026-10-12.
-      *Amended 2026-10-12 (council finding Q2):* the one-time copies of a key are shown as `az`
-      commands, not script actions, because the scripts print no key (P37 design). Every other
-      operator action in the guide is a script action with tests.
+      *Amended 2026-10-12 (council findings Q2 and R2-A2):* the one-time copies of a key are
+      shown as `az` commands, not script actions, because the scripts print no key (P37 design).
+      The key actions (`New`, `Rotate`, `Grant`, `Revoke`, `SetExpiry`, `SuspendExpired`,
+      `Suspend`, `Resume`, `List`), the runner's key step and removal have offline tests.
+      Deployment (`Deploy-Poc.ps1`) and the runner's `Deploy`, `Setup` and `Push` steps were
+      tested live in P37 (run `10111658`) and have no offline tests.
 
 - [ ] **P40** The per-key per-minute header does not overwrite Foundry's
       *Acceptance:* the product policy reports its per-key per-minute count under a header

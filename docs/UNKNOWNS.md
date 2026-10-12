@@ -71,7 +71,10 @@ Azure Resource Manager call. Signed in as that identity on the VM:
 | List the vault's secrets | `Forbidden` |
 
 A second grant of the same identity reported that it already had access (`RoleAssignmentExists`).
-The role assignment and the identity were then removed, and the VM deallocated again. Microsoft
+The role assignment and the identity were then removed, and the VM deallocated again. `Revoke`
+was checked the same day with another role-less identity: `az role assignment list --all`
+returned the grant on the secret (the query `Remove-Poc.ps1` uses), `Revoke` deleted it, and a
+second `Revoke` reported none. Microsoft
 documents role assignments on individual secrets and recommends vault-scope roles except where
 "individual secrets require individual user access"
 ([Key Vault RBAC](https://learn.microsoft.com/azure/key-vault/general/rbac-guide), updated

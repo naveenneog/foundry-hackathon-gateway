@@ -78,8 +78,10 @@ describe("P38 client examples", () => {
     const listed = [...touched.matchAll(/'([A-Z_]+)'/g)].map((m) => m[1]);
     const used = new Set([harness, ...dotSourced].flatMap((t) => [...t.matchAll(/\benv:([A-Z_]+)\b/g)].map((m) => m[1])));
     assert.deepEqual([...used].filter((v) => !listed.includes(v)), [], "set or cleared without being saved");
-    assert.match(harness, /foreach \(\$v in \$touched\) \{ \$saved\[\$v\] = \[Environment\]::GetEnvironmentVariable\(\$v\) \}\s*\ntry \{/);
-    assert.match(harness, /\} finally \{[\s\S]*foreach \(\$v in \$touched\) \{ \[Environment\]::SetEnvironmentVariable\(\$v, \$saved\[\$v\]\) \}/);
+    assert.match(harness, /^foreach \(\$v in \$touched\) \{ \$saved\[\$v\] = \[Environment\]::GetEnvironmentVariable\(\$v\) \}\s*\ntry \{/m);
+    // The script's own try ... finally starts at column 0; Invoke-PocClaudeCode has an indented one.
+    const outerFinally = (harness.match(/^\} finally \{\r?\n([\s\S]*?)^\}\s*$/m) || [])[1] || "";
+    assert.match(outerFinally, /^\s+foreach \(\$v in \$touched\) \{ \[Environment\]::SetEnvironmentVariable\(\$v, \$saved\[\$v\]\) \}\s*$/m, "the restore loop is not in the script's own finally");
     for (const v of ["CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY", "ANTHROPIC_AUTH_TOKEN"]) {
       assert.ok(listed.includes(v), `${v} outranks the key under test and is not cleared`);
     }

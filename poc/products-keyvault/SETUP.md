@@ -84,7 +84,9 @@ while deployed: [README](README.md#cost-while-deployed).
 
 `./scripts/Test-PocClients.ps1 @target` runs every client command and example in this guide
 against the gateway, with two temporary keys it deletes afterwards
-([Connect a client](#connect-a-client)). `-Plan` lists its checks without calling Azure.
+([Connect a client](#connect-a-client)). It needs curl, Node.js with npm, Python 3, opencode and
+Claude Code; a check whose tool is missing counts as not proven, and the run exits 1. `-Plan`
+lists its checks without calling Azure.
 
 ## Issue a key
 
@@ -125,7 +127,9 @@ Read access to one secret:
 ./scripts/Invoke-PocKey.ps1 @target -VaultName $vault -Action Grant -Name alice -ObjectId <object-id>
 ```
 
-`-PrincipalType` is `User` (the default), `Group` or `ServicePrincipal`. `Grant` assigns the role
+`-PrincipalType` is `User` (the default), `Group` or `ServicePrincipal`. A developer's object id is
+printed by `az ad signed-in-user show --query id -o tsv`, run by the developer, which reads only
+their own profile. `Grant` assigns the role
 through Azure Resource Manager, so it needs no network path to the vault, and it names the
 identity by object id, so it makes no Microsoft Graph lookup. Granting the same identity again
 reports that it already has access. Measured on 2026-10-12 with a managed identity that held only
@@ -134,6 +138,16 @@ and the list of secrets ([U30](../../docs/UNKNOWNS.md)). Microsoft recommends ro
 with an exception where "individual secrets require individual user access"
 ([Key Vault RBAC](https://learn.microsoft.com/azure/key-vault/general/rbac-guide), updated
 2026-08-21).
+
+Removing that read access:
+
+```powershell
+./scripts/Invoke-PocKey.ps1 @target -VaultName $vault -Action Revoke -Name alice -ObjectId <object-id>
+```
+
+`Revoke` deletes that identity's Key Vault Secrets User role on the secret and leaves every other
+role. The key itself keeps working; `Suspend` stops it. A grant is on the secret, not on one
+version, so it also covers a key that a later `New` with the same name stores there.
 
 A one-time copy from the vault, where the vault is reachable. It prints the key:
 
@@ -320,7 +334,7 @@ Claude Code uses the first credential it finds in this order: a cloud provider
 (`CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_VERTEX` or `CLAUDE_CODE_USE_FOUNDRY` set),
 `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_API_KEY`, then `apiKeyHelper`
 ([authentication precedence](https://code.claude.com/docs/en/authentication)). With any of the
-first four set, the helper is not used. `Test-PocClients.ps1` runs this file with the helper
+first three set, the helper is not used. `Test-PocClients.ps1` runs this file with the helper
 replaced by one that prints `POC_KEY`, and a control with a wrong key that has to be refused.
 The `az` command itself returned the key in 0.8 s on the runner.
 
@@ -535,10 +549,8 @@ curl -sS --fail-with-body "$POC_GATEWAY/poc/v1/chat/completions" -H "api-key: $P
 ```
 
 The commands run from `poc/products-keyvault/`. In PowerShell on Windows the program is
-`curl.exe`, the variables are `$env:POC_GATEWAY` and `$env:POC_KEY`, and arguments starting
-with `@` are quoted (`'@examples/claude-request.json'`), because PowerShell reads an unquoted
-`@name` as splatting. The key is part of curl's command line, which other users of the same
-machine can list.
+`curl.exe`, and the variables are `$env:POC_GATEWAY` and `$env:POC_KEY`. The key is part of
+curl's command line, which other users of the same machine can list.
 
 ## Errors
 
@@ -563,7 +575,8 @@ machine can list.
 
 [`Remove-Poc.ps1`](scripts/Remove-Poc.ps1) deletes the products `poc-claude-pack`,
 `poc-deepseek-pack` and `poc-tiny-pack` with their keys, the three routes, any other `poc-` key,
-the operator's vault role and the vault. `-PurgeVault` also purges the deleted vault, which
+the read access `Grant` gave on the vault's key secrets, the operator's vault role and the vault.
+`-PurgeVault` also purges the deleted vault, which
 otherwise stays soft-deleted for its retention period. `-Runner` removes the runner's roles, VM,
 subnet, NAT gateway, public IP, NSG and private endpoint, and the `privatelink.vaultcore.azure.net`
 zone when no other record is left in it. A pack with another id stays (roadmap P41). Each step's

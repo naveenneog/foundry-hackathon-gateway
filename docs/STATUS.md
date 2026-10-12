@@ -4,11 +4,61 @@
 `poc/apim-products-keyvault` (not pushed; a push needs the owner's approval). Acceptance criteria
 are in the roadmap (M7). Open packets on `main`: P36, P35, P30, P20.
 
-### P38 — setup and usage guide — IN PROGRESS
+### P38 — setup and usage guide — IN PROGRESS (council round 2)
 
-The guide's client examples are files run by `Test-PocClients.ps1` against the live gateway, so
-the guide cannot drift from what works. Operator actions it needs that did not exist yet (list
-keys, suspend and resume one key, key actions on the runner) are added test-first.
+`poc/products-keyvault/SETUP.md` covers requirements, deployment, the runner, issuing, handing
+over, rotating, expiring, suspending and listing keys, monitoring, six clients and removal. Its
+client snippets are files in `examples/`, and `Test-PocClients.ps1` runs each one, plus the
+probe and a wrong-key control, against the live gateway: 11 of 11 on 2026-10-12. Tests check
+that the guide's copies equal the files, that its curl lines send what the harness sends, and
+that every key action and runner step it names exists.
+
+New operator actions, test-first: `List`, `Suspend`, `Resume` (no vault needed), `Grant` and
+`Revoke` (Key Vault Secrets User on one secret, by object id, through Azure Resource Manager),
+and `-Step Key` on the runner. The one-time copies of a key stay `az` commands, because the
+scripts print no key (acceptance amended in the roadmap).
+
+Measured on 2026-10-12: U29 (the DeepSeek deployment's per-minute limit did not count
+`max_tokens`; one opencode prompt is 64.5 KB; a capacity change took 8.5 minutes), U30 (an
+identity with the role on one secret read it 48 s after the grant and got `Forbidden` for
+another secret and for the list), and the U17 update (Claude Code 2.1.272 with
+`ANTHROPIC_API_KEY` needs `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1`). The runner VM was found
+deallocated; it was started for the U30 and runner checks and deallocated again.
+
+**Council — P38, round 1.** Architect and Coder: PASS-WITH-NOTES. QA, UX and Security: BLOCK.
+
+| Finding | Fix |
+|---|---|
+| **BLOCK Q1.** The test that every example is run matched names anywhere in the harness; its header comment alone passed it | Checks are one table run by one loop; `-Plan` prints that loop's checks without calling Azure, and the test compares them with `examples/` (`a53a911`) |
+| **BLOCK Q2.** Handover and removal, both named in the guide, had no script action or test | `Grant` with tests (`f0bd139`); `Remove-Poc.ps1` tested offline with Azure stubbed (`fd3e933`); the one-time copies recorded as `az` commands by design |
+| **BLOCK U1.** With the vault private, the guide had no way to hand a key over | `Grant` needs no path to the vault; a one-time copy from API Management `listSecrets`, run live (`f0bd139`) |
+| **BLOCK S1.** The work folder defaulted to `/tmp/poc-clients` on Linux, where another user could plant code that runs with a key | Per-user `LocalApplicationData` folder, with a test (`a53a911`) |
+| A control passed on any failure; OpenAI checks accepted any output; `CLAUDE_CODE_USE_*` not cleared; skipped checks not counted (Q4) | 401 required (unit-tested); `OK` required; cleared and restored; a skip fails the run |
+| `-Step Key` exited 0 when the action failed on the VM (C2) | Exit status printed last and checked; live: a failing action exits 1 (`fd3e933`) |
+| Restore loop untested (Q3); `-KeyExpiresOn` untested (Q5); vault-free Suspend and Resume untested (Q6) | Tests for each |
+| Guide: curl paths (U3), probe before a key exists (U4), Graph lookup (U5), `displayName` (U6), credential precedence and config folder (U7), key in shell history (S2), query-parameter key (U2) | Corrected; P42 filed for the query parameter (S3) |
+| P39 and the U17 update concern `main` but live on this branch (A1) | Kept here; carried to `main` when the branch is merged or abandoned (owner's decision) |
+| WIP over budget (A3) | Committed in five focused commits |
+| venv errors and the Store `python3` alias on Windows (C1) | venv exit code checked, `py -3` on Windows, imports verified (`a53a911`) |
+| A role on one secret was unmeasured and unlogged (A2) | Measured as U30 (`f0bd139`) |
+
+Mutations caught: 13 of 13 on the harness tests (including the council's own), 8 of 8 on `Grant`,
+13 of 13 on removal, runner and key-step tests.
+
+**Council — P38, round 2.** Coder: PASS. Architect, QA, UX and Security: PASS-WITH-NOTES. All
+round-1 BLOCKs confirmed fixed; no new BLOCK.
+
+| Finding | Fix |
+|---|---|
+| The POC test file was 858 lines against the 800-line budget (R2-A1) | Split by responsibility into three suites and a helper module, no test changed (`8093970`) |
+| The roadmap amendment overstated test coverage; `SetExpiry` had no offline test (R2-A2) | `SetExpiry` test added; amendment names what is tested offline and what only live |
+| STATUS table lacked C1 and A2 (R2-A3) | Rows added above |
+| The restore test also matched the `finally` inside `Invoke-PocClaudeCode` (R2-Q1) | Anchored to the script's own `try`/`finally` at column 0; the council's move-the-loop mutation now fails it |
+| "First four" in the credential order; a wrong splatting reason; the harness's tools not listed; no source for `<object-id>` (R2-U1 to U4) | Corrected; the splatting claim was checked on PowerShell 7 |
+| `Grant`'s role assignments outlived removal, and there was no way to undo one (R2-S1) | `Revoke` action with tests; `Remove-Poc.ps1` deletes the grants on the vault's key secrets before the vault. Live: `az role assignment list --all` found a grant, `Revoke` deleted it, a second `Revoke` reported none |
+
+Mutations caught: 12 of 12 on the round-2 tests (one survivor at first, closed by adding a
+vault-scope assignment to the test data).
 
 ### P37 — products and Key Vault on Standard v2 — DONE (branch only)
 

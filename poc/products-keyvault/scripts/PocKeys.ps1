@@ -204,9 +204,7 @@ function Grant-PocKeyAccess {
         [ValidateSet('User', 'Group', 'ServicePrincipal')][string]$PrincipalType = 'User'
     )
     Assert-PocName $Name
-    if ($ObjectId -notmatch '^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$') {
-        throw "'$ObjectId' is not an object id: use the identity's object id, a GUID."
-    }
+    Assert-PocObjectId $ObjectId
     $secret = "poc-key-$Name"
     $scope = "$($Context.VaultId)/secrets/$secret"
     $uri = "https://management.azure.com$scope/providers/Microsoft.Authorization/roleAssignments/$([guid]::NewGuid())?api-version=$script:PocRoleApiVersion"
@@ -222,6 +220,44 @@ function Grant-PocKeyAccess {
         throw
     }
     Write-Host "Granted $ObjectId Key Vault Secrets User on $secret only. Role assignments can take a few minutes to apply."
+}
+
+# The object id becomes part of a role assignment, so only a GUID is accepted.
+function Assert-PocObjectId {
+    param([AllowEmptyString()][string]$ObjectId)
+    if ($ObjectId -notmatch '^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$') {
+        throw "'$ObjectId' is not an object id: use the identity's object id, a GUID."
+    }
+}
+
+# Removes the read access Grant gave: one identity's Key Vault Secrets User role on one key's
+# secret. Other roles, other identities and roles on other scopes are left alone. The key itself
+# keeps working; Suspend stops it.
+function Revoke-PocKeyAccess {
+    param(
+        [Parameter(Mandatory)]$Context,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Name,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$ObjectId
+    )
+    Assert-PocName $Name
+    Assert-PocObjectId $ObjectId
+    $secret = "poc-key-$Name"
+    $scope = "$($Context.VaultId)/secrets/$secret"
+    $arm = 'https://management.azure.com/'
+    # Without a filter, the list holds every role assignment that applies to the secret.
+    $page = Invoke-PocRest -Context $Context -Method GET -Uri "https://management.azure.com$scope/providers/Microsoft.Authorization/roleAssignments?api-version=$script:PocRoleApiVersion" -Resource $arm
+    $found = [System.Collections.Generic.List[object]]::new()
+    while ($page) {
+        foreach ($a in @($page.value)) {
+            if ($a.properties.scope -eq $scope -and $a.properties.principalId -eq $ObjectId -and "$($a.properties.roleDefinitionId)".Split('/')[-1] -eq $script:PocSecretsUserRole) { $found.Add($a) }
+        }
+        $page = if ($page.nextLink) { Invoke-PocRest -Context $Context -Method GET -Uri $page.nextLink -Resource $arm } else { $null }
+    }
+    if ($found.Count -eq 0) { Write-Host "$ObjectId had no read access to $secret through Grant."; return }
+    foreach ($a in $found) {
+        $null = Invoke-PocRest -Context $Context -Method DELETE -Uri "https://management.azure.com$($a.id)?api-version=$script:PocRoleApiVersion" -Resource $arm
+    }
+    Write-Host "Removed $ObjectId's read access to $secret. The key itself is unchanged."
 }
 
 # Every key on a proof-of-concept product: name, product, state and stored expiry date (API

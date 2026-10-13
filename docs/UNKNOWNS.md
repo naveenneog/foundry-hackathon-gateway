@@ -45,13 +45,14 @@ assumption is only closed if it names its blast radius and the detector that wou
 | U32 | What can the Azure portal do with a vault whose public network access is Disabled? | RESOLVED |
 | U33 | Does the Azure portal set a subscription's expiry, and suspend and reactivate it? | RESOLVED |
 | U34 | Can the runner's `Deploy` run on a vault given a private endpoint in the portal? | MEASURED |
+| U35 | Can the POC portal blades be captured with authenticated browser access, without exposing secrets or changing Azure? | RESOLVED |
 
 ---
 
 
 ## Open
 
-_None._
+None.
 
 ---
 
@@ -59,7 +60,20 @@ U24–U34 belong to the proof of concept on branch `poc/apim-products-keyvault`
 (`poc/products-keyvault/`). U24–U28 (P37) were measured on 2026-10-11 on the Standard v2 test
 instance of U23, from a VM inside its virtual network; the final run (`10111658`) passed 22 of
 22 checks. Run details are in `poc/products-keyvault/README.md`. U29 and U30 (P38) were measured
-on 2026-10-12. U31–U33 (P43) were researched, and U34 measured, on 2026-10-12.
+on 2026-10-12. U31–U33 (P43) were researched, and U34 measured, on 2026-10-12. U35 (P45) was
+resolved on 2026-10-13.
+
+### U35 — Can the POC portal blades be captured with authenticated browser access, without exposing secrets or changing Azure? — RESOLVED
+
+**Yes, read-only.** On 2026-10-13 a signed-in Edge profile was driven over the DevTools protocol;
+the capture navigated blades and opened creation forms without submitting them, and replaced
+identifying values (resource, subscription, tenant and account names, GUIDs) in the page's text,
+inputs and attributes, in every frame, before each screenshot, with the account area of the
+header masked. Raw captures stayed in the session workspace; the 20 published ones were each
+reviewed by eye. Keys were never revealed (the portal masks them; **Show/hide keys** was not
+used). The vault's **Access control (IAM)** view was not published: it lists other principals by
+name. **Secrets** refused the browser, which is outside the private network, as U32 expects. No
+Azure resource changed.
 
 ### U34 — Can the runner's `Deploy` run on a vault given a private endpoint in the portal? — MEASURED
 
@@ -117,6 +131,11 @@ subscription key header and query parameter fields (only that they are on the AP
 **Settings** tab), a product id field, the entries that show, regenerate or suspend a
 subscription's keys, a secret's content type and tag fields, or creating a secret version.
 `PORTAL.md` describes those actions without quoting labels and names the script action for each.
+Seen in the portal on 2026-10-13 (U35): the API's **Settings** tab holds **Subscription
+required** and the header name; the **Add product** form has an **Id** field; a subscription's
+**...** menu on **Subscriptions** holds **Show/hide keys**, **Suspend subscription**, **Activate
+subscription**, **Regenerate primary key** and **Regenerate secondary key**. These are observed,
+not documented, labels.
 
 **Assumption:** the documented portal steps create the same configuration as `poc.bicep`; they
 were not run in the portal in this project.

@@ -6,6 +6,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · [Semantic Ve
 ## [Unreleased]
 
 ### Added
+- **Proof of concept, branch only: Azure portal screenshots in the UI guide.**
+  `poc/products-keyvault/PORTAL.md` now shows 20 redacted screenshots of the deployed POC and of
+  unsubmitted creation forms: APIM routes, product packs and their policy, subscriptions and
+  their menu, and the private Key Vault's creation, firewall, private endpoint and RBAC model. A
+  Screenshots section states how they were taken. (P45)
 - **Proof of concept, branch only: editable draw.io architecture.**
   `poc/products-keyvault/ARCHITECTURE.drawio` has request/network and key-lifecycle pages,
   distinguishing APIM inference from private Key Vault access and management operations.

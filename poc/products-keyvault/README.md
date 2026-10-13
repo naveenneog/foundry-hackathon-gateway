@@ -8,7 +8,7 @@ for months, with a token budget per key, rotated through Key Vault without break
 that hold them? Measured on Standard v2 on 2026-10-11. The final run passed 22 of 22 checks.
 
 Setup, key operations and client configuration: [SETUP.md](SETUP.md). The same setup in the
-Azure portal: [PORTAL.md](PORTAL.md). Components, flows and design decisions:
+Azure portal, with screenshots: [PORTAL.md](PORTAL.md). Components, flows and design decisions:
 [ARCHITECTURE.md](ARCHITECTURE.md).
 
 [Editable draw.io diagram](ARCHITECTURE.drawio): two pages covering request/network paths and

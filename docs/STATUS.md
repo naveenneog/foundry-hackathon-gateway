@@ -1,6 +1,37 @@
 # Status
 
-**Active packet:** none. P44 is done locally on `poc/apim-products-keyvault`; not pushed or merged.
+**Active packet:** none. P45 — illustrated Azure portal guide — DONE (branch only, local commit).
+
+### P45 — Azure portal screenshots in PORTAL.md — DONE (branch only)
+
+`poc/products-keyvault/PORTAL.md` now carries 20 real Azure portal screenshots in
+`poc/products-keyvault/portal-screenshots/`, placed in the steps they illustrate: the instance's
+managed identity and network; the Create an HTTP API form, an API's Settings and Design; the
+packs, the Add product form, a pack's overview, APIs, policy and subscriptions; the Create key
+vault form (access configuration, networking), the vault's firewall, private endpoint
+connection and access configuration, and its Secrets refusing a browser outside the private
+network; the New subscription pane, the subscription menu and the Subscriptions list. A new
+**Screenshots** section states provenance: captured 2026-10-13 from the deployed POC; identifying
+values replaced in the page (DOM) before capture, nothing changed in Azure; creation forms
+opened, not submitted; keys masked by the portal and never revealed. The vault's role
+assignments are not pictured (the blade lists other principals by name). Portal labels seen for
+regenerate, suspend and activate are recorded as "seen in the portal" (narrows U31/U33). U35
+resolved. No Azure resources changed.
+
+**Council — P45, direct review.**
+
+| Seat | Verdict | Evidence |
+|---|---|---|
+| Architect | PASS | Screenshots placed beside the steps they illustrate; deployed state distinguished from unsubmitted forms and from data-plane views that need the private network |
+| Coder | PASS | Images embedded as indented lines inside steps so the step parser keeps them; numbered lower-case names; no runtime change |
+| QA | PASS | Four screenshot tests failed for the missing images and note, then passed; the 28 document tests still pass |
+| UX | PASS-WITH-NOTES | Each image has descriptive alt text and a lead-in; 1600 px portal captures are legible; the subscription menu is shown once and referenced from Suspend |
+| Security | PASS | Every published image visually reviewed for keys, names, emails, tenant, GUIDs and resource names; IAM view dropped for listing other principals; header account area masked |
+
+Verified: `node --test tests/poc-products-keyvault-portal-screenshots.test.mjs
+tests/poc-products-keyvault-docs.test.mjs` (32 of 32) and `node .ironclad/gate.mjs --stage packet`.
+
+P44 was pushed to `origin/poc/apim-products-keyvault` at `abdfd18`; CI run 38440393875 passed.
 
 ### P44 — editable draw.io architecture — DONE (branch only)
 

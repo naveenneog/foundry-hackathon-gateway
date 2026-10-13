@@ -240,6 +240,17 @@ Key Vault. Nothing here changes the gateway on `main`.
 
 ## Milestone M6 — Only if this outlives one event
 
+- [x] **P45** Illustrated Azure portal setup guide (POC branch only)
+      *Acceptance:* PORTAL.md illustrates the APIM routes, product packs and their policy, the
+      private Key Vault (creation, firewall, private endpoint, RBAC model) and subscription key
+      operations with genuine Azure screenshots, with documented provenance and redaction.
+      Screenshots must not expose keys, account details or resource identifiers. Distinguish
+      deployed state from unsubmitted forms and private-network-only steps. No cloud writes or push.
+      *Why:* requested 2026-10-13, real Azure screenshots in the existing UI guide.
+      *Verified 2026-10-13:* 20 screenshots, each visually reviewed; four screenshot tests (every
+      image referenced once, PNG, alt text and names free of identifiers, provenance note) and
+      the 28 document tests pass.
+
 - [ ] **P36** An unreadable key list is not written over
       *Acceptance:* with `issued-keys.json` present but unreadable (truncated, malformed or
       empty), issuing a key and revoking a key stop with a message, and the file is left

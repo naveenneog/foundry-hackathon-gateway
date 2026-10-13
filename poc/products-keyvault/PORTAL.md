@@ -5,8 +5,9 @@ the key operations of [SETUP.md](SETUP.md) by hand. The design is in
 [ARCHITECTURE.md](ARCHITECTURE.md).
 
 The steps follow Microsoft Learn, read on 2026-10-12 (pages and their dates are under
-[Sources](#sources)). They were not run in the portal in this proof of concept; the scripts were
-([U31](../../docs/UNKNOWNS.md)). Where Learn describes an action without naming its portal label,
+[Sources](#sources)). The proof of concept's resources were created by the scripts, not by these
+steps ([U31](../../docs/UNKNOWNS.md)); the [screenshots](#screenshots) show those resources in the
+portal, and the creation forms opened but not submitted. Where Learn describes an action without naming its portal label,
 the step describes the action and names the script action that does the same thing. Names,
 paths, headers and numbers are the template's, and tests compare them with `infra/poc.bicep`.
 
@@ -16,6 +17,23 @@ The script commands below run from `poc/products-keyvault/` with these two value
 $target = @{ Subscription = '<subscription>'; ResourceGroup = '<resource-group>'; ApimName = '<apim-name>' }
 $vault = '<vault-name>'
 ```
+
+## Screenshots
+
+The screenshots in this guide were captured on 2026-10-13 from the deployed proof of concept (API
+Management on the Standard v2 tier, a vault with public access disabled), in the Azure portal.
+Before each capture, identifying values on the page (subscription, resource group, instance,
+account, vault and network names, identifiers, the signed-in account and directory) were replaced
+in the browser with the placeholders this guide uses, such as `<apim-name>` and `<vault-name>`;
+nothing in Azure was changed. The creation forms (**Create an HTTP API**, **Add product**,
+**New subscription**, **Create a key vault**) were opened to show their fields; they were not submitted.
+Subscription keys are not shown: the portal masks them, and **Show/hide keys** was not
+used. The vault's data-plane views (**Secrets**) refuse a browser outside the private network, as
+Learn states
+([network security](https://learn.microsoft.com/azure/key-vault/general/network-security)) and
+the last screenshot under [Key Vault](#key-vault) shows. Labels the portal showed that Learn does
+not quote are marked "seen in the portal": they narrow [U31](../../docs/UNKNOWNS.md) and
+[U33](../../docs/UNKNOWNS.md), and the portal can change them.
 
 ## Prerequisites
 
@@ -27,6 +45,15 @@ $vault = '<vault-name>'
 | A network path from the instance to Foundry | Outbound virtual network integration and a private endpoint on the Foundry account, as in [docs/PRIVATE-ENDPOINT.md](../../docs/PRIVATE-ENDPOINT.md) ([U23](../../docs/UNKNOWNS.md)) | [Integrate API Management in a private network](https://learn.microsoft.com/azure/api-management/integrate-vnet-outbound) |
 | A subnet for the vault's private endpoint | A subnet in that virtual network; `snet-pe` in the test environment ([`private-foundry-test.bicep`](../../infra/examples/private-foundry-test.bicep)) | [Integrate Key Vault with Private Link](https://learn.microsoft.com/azure/key-vault/general/private-link-service) |
 | The Foundry endpoints | The Foundry account › **Overview** shows the **Endpoint**; its host name begins with the account's custom subdomain, `<account>` below. Claude: `https://<account>.services.ai.azure.com/anthropic`. OpenAI-compatible: `https://<account>.openai.azure.com/openai/v1`. For the Claude route the template uses the account's published `AI Foundry API` endpoint followed by `anthropic` when the account lists one, and the form above otherwise | [Create a Foundry resource](https://learn.microsoft.com/azure/ai-services/multi-service-resource); `claudeServiceUrl` and `openaiServiceUrl` in [`infra/poc.bicep`](infra/poc.bicep) |
+
+The instance's system-assigned identity, on:
+
+![API Management Managed identities blade, System assigned tab, Status On, with its object ID](portal-screenshots/01-apim-managed-identity.png)
+
+The instance's **Network** blade: inbound public access, outbound virtual network integration
+enabled, the path to Foundry's private endpoint:
+
+![API Management Network blade: inbound public network access Enabled, outbound virtual network integration Enabled](portal-screenshots/02-apim-network.png)
 
 ## Routes
 
@@ -44,11 +71,15 @@ Three APIs, one per route:
    ([Add an API manually](https://learn.microsoft.com/azure/api-management/add-api-manually); the
    fields are described in
    [Import and publish your first API](https://learn.microsoft.com/azure/api-management/import-and-publish)).
+
+   ![The Create an HTTP API form, not submitted: Display name, Name, Web service URL, API URL suffix](portal-screenshots/03-apim-create-http-api.png)
 2. **The key header.** On the API's **Settings** tab: subscription required on, the subscription
    key header name from the table, and the query parameter name `subscription-key`. Learn states
    the defaults (`Ocp-Apim-Subscription-Key`, `subscription-key`) and that "in the portal, update
    these names on the Settings tab of an API"; it does not quote the field labels
    ([Subscriptions in API Management](https://learn.microsoft.com/azure/api-management/api-management-subscriptions)).
+
+   ![The poc-claude API Settings tab: web service URL ending in /anthropic, suffix poc/claude, the two products, Subscription required, header name x-api-key](portal-screenshots/04-api-settings.png)
 3. **Operations.** **Design** tab › **+ Add operation**: the method and URL, and the operation's
    name as **Display name** › **Save**
    ([Add an API manually](https://learn.microsoft.com/azure/api-management/add-api-manually)):
@@ -63,6 +94,8 @@ Three APIs, one per route:
 4. **Policy.** **Design** › **All operations** › **Inbound processing** › **</>** (the code
    editor): replace the whole document with the policy file's content › **Save**
    ([Set or edit policies](https://learn.microsoft.com/azure/api-management/set-edit-policies)).
+
+   ![The poc-claude API Design tab: operations messages and count-tokens, and the inbound policy](portal-screenshots/05-api-design.png)
 
 ## Packs
 
@@ -86,9 +119,23 @@ minute.
    Learn's field list has no id field. `-Action New` and `-Action List` need ids starting `poc-`,
    and `Remove-Poc.ps1` deletes these three ids by name (roadmap P41), so the product's id has to
    be the table's ([U31](../../docs/UNKNOWNS.md)).
+
+   ![The Add product form, not submitted: Display name, Id, Description, Published, Requires subscription, Requires approval, APIs](portal-screenshots/07-add-product.png)
+
+   The three packs, not published:
+
+   ![The Products blade listing the three POC packs, visible to Administrators, Not published](portal-screenshots/06-products.png)
+
+   A pack's **Overview** and its **APIs**:
+
+   ![The Claude pack Overview: Requires subscription, its subscriptions and two APIs](portal-screenshots/08-product-overview.png)
+
+   ![The Claude pack APIs list: the Claude route and the probe route](portal-screenshots/09-product-apis.png)
 2. **Policy.** The product › **Policies** › **</>**: replace the document with
    `product-policy.xml`'s content, placeholders replaced › **Save**
    ([Set or edit policies](https://learn.microsoft.com/azure/api-management/set-edit-policies)).
+
+   ![The Claude pack Policies: inbound set-variable, choose and llm-token-limit](portal-screenshots/10-product-policies.png)
 
 ## Key Vault
 
@@ -111,6 +158,14 @@ minute.
    connections** › **+ Create**, the name `pe-<vault-name>`, resource type
    `Microsoft.KeyVault/vaults`, target sub-resource `vault`, the virtual network and subnet, the
    same zone › **Review + Create**.
+
+   ![Create a key vault, Access configuration tab, not submitted: permission model Azure role-based access control](portal-screenshots/16-kv-create-access.png)
+
+   ![Create a key vault, Networking tab, not submitted: Enable public access cleared, Create a private endpoint](portal-screenshots/15-kv-create-networking.png)
+
+   The deployed vault's private endpoint connection, approved, in the private endpoint subnet:
+
+   ![Key vault Networking, Private endpoint connections: pe-vault-name, sub-resource vault, subnet snet-pe, Approved](portal-screenshots/18-kv-private-endpoint.png)
    A vault whose key scripts run on the runner gets this endpoint, the zone and the zone's link
    from the runner's `Deploy` step instead. `Deploy` fails on an endpoint made here with a
    connection not named `vault`, and on a zone already linked to the virtual network under
@@ -125,9 +180,15 @@ minute.
    The same with the Azure CLI:
    `az keyvault update --name <vault-name> --resource-group <resource-group> --bypass None --default-action Deny`
    ([az keyvault update](https://learn.microsoft.com/cli/azure/keyvault#az-keyvault-update)).
+
+   ![Key vault Networking, Firewalls and virtual networks: Disable public access, and Allow trusted Microsoft services to bypass this firewall cleared](portal-screenshots/17-kv-networking.png)
 3. **The operator's role.** The vault › **Access control (IAM)** › **Add** › **Add role
    assignment** › Key Vault Secrets Officer › the operator › **Review + assign**
    ([Assign Azure roles using the portal](https://learn.microsoft.com/azure/role-based-access-control/role-assignments-portal)).
+   The vault's **Access configuration** shows the permission model the role needs. The vault's
+   role assignments are not pictured: the portal lists them with the assignees' names.
+
+   ![Key vault Access configuration: permission model Azure role-based access control](portal-screenshots/19-kv-access-configuration.png)
 4. **Audit log (optional).** The vault › **Diagnostic settings** › **Add diagnostic setting** ›
    category group **audit** › **Send to Log Analytics workspace** › **Save**
    ([Key Vault logging](https://learn.microsoft.com/azure/key-vault/general/howto-logging)).
@@ -149,6 +210,10 @@ run on the runner, once it is set up as in
 `./scripts/Invoke-PocRunner.ps1 @target -VaultName $vault -Step Key -KeyAction New -KeyName alice -KeyProduct poc-claude-pack`.
 The script actions `Grant`, `Revoke`, `SetExpiry`, `SuspendExpired`, `Suspend`, `Resume` and `List` need no path to the vault.
 
+The vault's **Secrets** from a browser outside the private network:
+
+![Key vault Secrets from outside the private network: public network access is disabled and the request is not via an approved private link; unauthorized to view these contents](portal-screenshots/20-kv-secrets-blocked.png)
+
 **The runner and step 1.** The runner's `Deploy` step creates the vault's private endpoint
 `pe-<vault-name>` with the connection `vault`, the zone, and the zone's link `link-<vnet-name>`
 ([`infra/runner.bicep`](infra/runner.bicep)). Azure refuses another connection on an existing
@@ -167,6 +232,8 @@ DNS zone from your virtual network, you must link the virtual network with the z
    **Display name**, **Scope** the pack's product, no user › **Create**. Each subscription has a
    primary and a secondary key
    ([Create subscriptions](https://learn.microsoft.com/azure/api-management/api-management-howto-create-subscriptions)).
+
+   ![The New subscription pane, not submitted: Name, Display name, Allow tracing, Scope Product, the product, User](portal-screenshots/13-add-subscription.png)
 2. **The secret.** Copy the subscription's primary key from its keys view. The vault ›
    **Objects** › **Secrets** › **+ Generate/Import**: **Upload options** Manual, **Name**
    `poc-key-<name>`, the primary key as the value › **Create**
@@ -218,7 +285,11 @@ A copy of the other key is refused after the next rotation.
 2. **Regenerate the other key.** In API Management, regenerate the subscription's other key, and
    copy it. Each subscription has two keys
    ([Subscriptions in API Management](https://learn.microsoft.com/azure/api-management/api-management-subscriptions));
-   Learn does not name the portal entry that regenerates one.
+   Learn does not name the portal entry that regenerates one. Seen in the portal: the
+   subscription's **...** menu on **Subscriptions** holds **Regenerate primary key** and
+   **Regenerate secondary key**.
+
+   ![A subscription's ... menu: Show/hide keys, Activate, Submit, Suspend, Reject, Cancel and Delete subscription, Regenerate primary key, Regenerate secondary key](portal-screenshots/14-subscription-menu.png)
 3. **Store it as the next version.** A new version of the secret holding the new key, with the
    content type `API Management subscription key` and all three tags: `slot` (the slot just
    regenerated), `subscription` (`poc-<name>`) and `product` (the pack).
@@ -250,9 +321,14 @@ and `-Action SuspendExpired` on a schedule, which suspends keys from 00:00 UTC o
 Learn states that "you can suspend, cancel, or delete any subscription (including the built-in
 all-access subscription) to prevent API access"
 ([Subscriptions in API Management](https://learn.microsoft.com/azure/api-management/api-management-subscriptions)),
-without naming the portal entries ([U33](../../docs/UNKNOWNS.md)). Script:
+without naming the portal entries ([U33](../../docs/UNKNOWNS.md)). Seen in the portal: the
+subscription's **...** menu (pictured under [Rotate a key](#rotate-a-key)) holds **Suspend
+subscription** and **Activate subscription**, and the pack's **Subscriptions** shows each key's
+state. Script:
 `./scripts/Invoke-PocKey.ps1 @target -Action Suspend -Name alice` and `-Action Resume`. Measured:
 refused 1.4 s after suspending, accepted again 9.8 s after resuming ([U25](../../docs/UNKNOWNS.md)).
+
+![The Claude pack Subscriptions: keys masked, one key Suspended](portal-screenshots/11-product-subscriptions.png)
 
 ## List keys
 
@@ -260,6 +336,8 @@ refused 1.4 s after suspending, accepted again 9.8 s after resuming ([U25](../..
 ([Create subscriptions](https://learn.microsoft.com/azure/api-management/api-management-howto-create-subscriptions)).
 Script: `./scripts/Invoke-PocKey.ps1 @target -Action List`, which shows each key on a `poc-` pack
 with its pack, state and stored expiry date.
+
+![The Subscriptions blade: each key with its scope and state](portal-screenshots/12-all-subscriptions.png)
 
 ## Remove
 

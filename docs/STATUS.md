@@ -27,6 +27,9 @@ tests/poc-products-keyvault-docs.test.mjs` (31 of 31), XML parsed with PowerShel
 all 34 vertices inside their page bounds. `node .ironclad/gate.mjs --stage packet` passed
 (exit 0, full suite; the existing `src/diagnose.mjs` credential-shape warning is unchanged).
 Commit: `3b10fbb` (diagram, links, tests and ledger); local only.
+PNG exports `architecture-request-network.png` and `architecture-key-lifecycle.png` (draw.io
+desktop, scale 1.5) are embedded in the POC README; a test checks the embeds and the PNG
+signature. The page-1 band heading was moved so it no longer overlaps an arrow label.
 
 P43 is done on branch `poc/apim-products-keyvault`, pushed to `origin`
 on 2026-10-13 at `d79c4f3` (CI run 38367703480 passed: the suite on Windows, macOS and Ubuntu,

@@ -12,7 +12,12 @@ Azure portal: [PORTAL.md](PORTAL.md). Components, flows and design decisions:
 [ARCHITECTURE.md](ARCHITECTURE.md).
 
 [Editable draw.io diagram](ARCHITECTURE.drawio): two pages covering request/network paths and
-the key lifecycle. Open in draw.io with **File > Open From > Device**.
+the key lifecycle. Open in draw.io with **File > Open From > Device**. The images below are PNG
+exports of the two pages.
+
+![Request and network: client to API Management to Foundry, with private Key Vault access](architecture-request-network.png)
+
+![Key lifecycle: issue, rotate, expiry, suspend and revoke](architecture-key-lifecycle.png)
 
 ## Design
 

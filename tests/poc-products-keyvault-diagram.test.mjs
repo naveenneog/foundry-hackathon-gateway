@@ -54,3 +54,12 @@ test("P44 lifecycle shows explicit orchestration, expiry and revocation limits",
     assert.ok(readFileSync(join(poc, file), "utf8").includes("[Editable draw.io diagram](ARCHITECTURE.drawio)"));
   }
 });
+
+test("P44 README embeds a PNG export of each diagram page", () => {
+  const readme = readFileSync(join(poc, "README.md"), "utf8");
+  for (const png of ["architecture-request-network.png", "architecture-key-lifecycle.png"]) {
+    assert.match(readme, new RegExp(`!\\[[^\\]]+\\]\\(${png.replace(".", "\\.")}\\)`), `README does not embed ${png}`);
+    const bytes = readFileSync(join(poc, png));
+    assert.equal(bytes.subarray(0, 8).toString("hex"), "89504e470d0a1a0a", `${png} is not a PNG`);
+  }
+});

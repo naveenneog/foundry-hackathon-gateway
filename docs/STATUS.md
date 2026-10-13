@@ -1,7 +1,9 @@
 # Status
 
-**Active packet:** none. P43 is done on branch `poc/apim-products-keyvault` (not pushed; a push
-needs the owner's approval). Filed for this branch: P40, P41, P42. Open packets for `main`: P39
+**Active packet:** none. P43 is done on branch `poc/apim-products-keyvault`, pushed to `origin`
+on 2026-10-13 at `d79c4f3` (CI run 38367703480 passed: the suite on Windows, macOS and Ubuntu,
+and the packet gate) and not merged to `main`; merging is the owner's decision. Filed for this
+branch: P40, P41, P42. Open packets for `main`: P39
 (recorded on this branch only), P36, P35, P30, P20.
 
 ### P43 — portal steps and architecture — DONE (branch only)

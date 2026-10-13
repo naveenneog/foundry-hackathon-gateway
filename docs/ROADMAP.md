@@ -228,6 +228,16 @@ Key Vault. Nothing here changes the gateway on `main`.
       step. Four council rounds, the last with no BLOCK; every mutation set was caught. U34 was
       measured on the test instance. The steps were not run in the Azure portal (U31, ASSUMED).
 
+- [x] **P44** Editable draw.io architecture for the products and Key Vault POC (branch only)
+      *Acceptance:* a native `.drawio` file has request/network and key-lifecycle pages;
+      labelled arrows separate inference, private secret access and management traffic.
+      No gateway-to-vault request dependency is drawn. Rotation retains the subscription
+      budget; expiry needs `SuspendExpired`; budget overshoot and query-key forwarding remain
+      explicit. README and ARCHITECTURE link the file. No deployment changes.
+      *Why:* requested 2026-10-13, using draw.io.
+      *Verified 2026-10-13:* three diagram contract tests and 28 existing document tests pass;
+      XML parses, references resolve and all vertices fit their pages. No interactive render.
+
 ## Milestone M6 — Only if this outlives one event
 
 - [ ] **P36** An unreadable key list is not written over

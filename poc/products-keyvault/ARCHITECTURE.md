@@ -6,6 +6,11 @@ together and how a request and a key move through it. Setup steps are in [SETUP.
 [README.md](README.md). The gateway on `main` uses signed JWT keys instead
 ([ADR-0002](../../docs/adr/0002-credential-transport.md)).
 
+[Editable draw.io diagram](ARCHITECTURE.drawio): **Request and network** shows inference,
+management and private secret access; **Key lifecycle** shows issuance, handover, rotation and
+expiry. Open the file in draw.io with **File > Open From > Device**. It describes this branch's
+POC, not the signed-key gateway on `main`; the limits below also appear on the diagram.
+
 ## Components
 
 | Component | What it is | Role in the design | Defined in |

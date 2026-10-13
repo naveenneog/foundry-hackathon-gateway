@@ -1,6 +1,33 @@
 # Status
 
-**Active packet:** none. P43 is done on branch `poc/apim-products-keyvault`, pushed to `origin`
+**Active packet:** none. P44 is done locally on `poc/apim-products-keyvault`; not pushed or merged.
+
+### P44 — editable draw.io architecture — DONE (branch only)
+
+`poc/products-keyvault/ARCHITECTURE.drawio` has two editable pages: **Request and network**
+and **Key lifecycle**. Inference, private secret access and management traffic are distinct;
+the gateway has no per-request Key Vault dependency. The diagram covers issuance, handover,
+two-slot rotation, scheduled `SuspendExpired`, suspension and per-secret read revocation, with
+the budget overshoot and query-key forwarding limits. README and ARCHITECTURE link the file.
+No new service behaviour or architecture decision; the existing P43 sources and measurements
+apply. No Azure changes, push or merge.
+
+**Council — P44, direct review against P43 architecture and its code-derived checks.**
+
+| Seat | Verdict | Evidence |
+|---|---|---|
+| Architect | PASS | Inference and key distribution are separate; private endpoint paths match the POC network; no gateway-to-vault request arrow |
+| Coder | PASS | Native uncompressed draw.io XML; two pages, unique ids and connected edges; no runtime changes |
+| QA | PASS | Three contract tests failed for the missing file, then passed; existing 28 doc tests still pass; XML parsing and page bounds checked |
+| UX | PASS-WITH-NOTES | Descriptive pages, labelled arrows, consistent service colours, readable text sizes; no interactive draw.io render was performed |
+| Security | PASS | No credential values or resource identifiers; query forwarding, broad APIM key access via the management API, and copied-key revocation limits stated |
+
+Verified: `node --test tests/poc-products-keyvault-diagram.test.mjs
+tests/poc-products-keyvault-docs.test.mjs` (31 of 31), XML parsed with PowerShell's XML reader,
+all 34 vertices inside their page bounds. `node .ironclad/gate.mjs --stage packet` passed
+(exit 0, full suite; the existing `src/diagnose.mjs` credential-shape warning is unchanged).
+
+P43 is done on branch `poc/apim-products-keyvault`, pushed to `origin`
 on 2026-10-13 at `d79c4f3` (CI run 38367703480 passed: the suite on Windows, macOS and Ubuntu,
 and the packet gate) and not merged to `main`; merging is the owner's decision. Filed for this
 branch: P40, P41, P42. Open packets for `main`: P39

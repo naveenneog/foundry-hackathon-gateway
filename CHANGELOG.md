@@ -6,6 +6,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · [Semantic Ve
 ## [Unreleased]
 
 ### Added
+- **Proof of concept, branch only: editable draw.io architecture.**
+  `poc/products-keyvault/ARCHITECTURE.drawio` has request/network and key-lifecycle pages,
+  distinguishing APIM inference from private Key Vault access and management operations.
+  Rotation, scheduled expiry enforcement and measured limits are explicit. (P44)
 - **Proof of concept, branch `poc/apim-products-keyvault` only: Azure portal steps and an
   architecture document.** `poc/products-keyvault/PORTAL.md` builds in the Azure portal what the
   template builds and runs each key operation by hand, citing Microsoft Learn for every step;

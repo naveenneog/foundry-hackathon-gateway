@@ -11,6 +11,9 @@ Setup, key operations and client configuration: [SETUP.md](SETUP.md). The same s
 Azure portal: [PORTAL.md](PORTAL.md). Components, flows and design decisions:
 [ARCHITECTURE.md](ARCHITECTURE.md).
 
+[Editable draw.io diagram](ARCHITECTURE.drawio): two pages covering request/network paths and
+the key lifecycle. Open in draw.io with **File > Open From > Device**.
+
 ## Design
 
 | Part | What it does | File |

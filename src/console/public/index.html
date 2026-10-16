@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Foundry Gateway Key Console</title>
+  <link rel="stylesheet" href="/app.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <header class="bar">
+    <h1>Foundry Gateway <span>Key Console</span></h1>
+    <div class="who"><span id="who-name">…</span> <span id="who-role" class="badge"></span>
+      <a href="/.auth/logout" class="link">Sign out</a></div>
+  </header>
+
+  <nav class="tabs" id="tabs">
+    <button data-tab="keys" class="active">Keys</button>
+    <button data-tab="issue" data-admin>Issue signed key</button>
+    <button data-tab="product" data-admin>Issue product key</button>
+    <button data-tab="export" data-admin>Export bundle</button>
+    <button data-tab="signing" data-admin>Signing secret</button>
+  </nav>
+
+  <main>
+    <p id="flash" class="flash" role="status" hidden></p>
+
+    <section id="tab-keys" class="panel">
+      <div class="row between">
+        <h2>Keys</h2>
+        <div class="row">
+          <button id="refresh" class="secondary">Refresh</button>
+          <button id="sweep" class="secondary" data-admin>Run rotation automation now</button>
+        </div>
+      </div>
+      <p class="hint" id="keys-hint"></p>
+      <table class="keys">
+        <thead><tr><th data-admin>Export</th><th>Name</th><th>Type</th><th>Owner</th><th>Grant</th><th>Valid / rotated</th><th>Status</th><th>Actions</th></tr></thead>
+        <tbody id="keys-body"></tbody>
+      </table>
+    </section>
+
+    <section id="tab-issue" class="panel" hidden>
+      <h2>Issue a signed key</h2>
+      <p class="hint">Minted with the signing secret held in Key Vault; the gateway checks expiry, models and the token budget.</p>
+      <form id="issue-form" class="grid">
+        <label>Owner (sign-in name)<input name="owner" type="email" required></label>
+        <label>Subject (team or participant)<input name="subject" required pattern="[A-Za-z0-9._\-]{1,64}"></label>
+        <fieldset><legend>Models</legend><div id="model-boxes" class="checks"></div></fieldset>
+        <label>Token budget<input name="budget" type="number" min="1" step="1" value="100000" required></label>
+        <label>Valid for (hours)<input name="hours" type="number" min="1" max="2160" value="48" required></label>
+        <label>Label (optional)<input name="label" maxlength="80"></label>
+        <button type="submit">Issue key</button>
+      </form>
+      <div id="issue-result"></div>
+    </section>
+
+    <section id="tab-product" class="panel" hidden>
+      <h2>Issue a product key</h2>
+      <p class="hint">Creates an API Management subscription on the product and stores its key in Key Vault. Rotation regenerates the slot not in use.</p>
+      <form id="product-form" class="grid">
+        <label>Owner (sign-in name)<input name="owner" type="email" required></label>
+        <label>Key name<input name="name" required pattern="[a-z0-9][a-z0-9\-]{0,38}[a-z0-9]"></label>
+        <label>Product<select name="product" id="product-select" required></select></label>
+        <label>Rotate automatically every (days, optional)<input name="rotateDays" type="number" min="1" max="90"></label>
+        <button type="submit">Issue product key</button>
+      </form>
+    </section>
+
+    <section id="tab-export" class="panel" hidden>
+      <h2>Export a secure bundle</h2>
+      <p class="hint">Select keys on the Keys tab. The file is encrypted (AES-256-GCM, scrypt) and signed with the console's Key Vault key. Send the passphrase by a different channel than the file.</p>
+      <p>Selected: <strong id="export-count">0</strong> <span id="export-names" class="mono"></span></p>
+      <form id="export-form" class="grid">
+        <label>Recipient<input name="recipient" required maxlength="120"></label>
+        <label>Passphrase (blank = generate one)<input name="passphrase" type="password" minlength="16" autocomplete="new-password"></label>
+        <button type="submit">Create bundle</button>
+      </form>
+      <div id="export-result"></div>
+      <details><summary>Bundle verification key (public)</summary><pre id="bundle-key" class="mono"></pre>
+        <p class="hint">Recipients open bundles with <code>node scripts/open-bundle.mjs &lt;file&gt; --key bundle-key.json</code>.</p></details>
+    </section>
+
+    <section id="tab-signing" class="panel" hidden>
+      <h2>Signing secret</h2>
+      <p class="hint">Key Vault holds the secret. API Management receives a copy as an encrypted named value, because a Key Vault reference would need the vault firewall opened to trusted services.</p>
+      <dl id="signing-status" class="status"></dl>
+      <div class="row">
+        <button id="sig-migrate">Migrate from API Management</button>
+        <button id="sig-push" class="warn">Push vault value to API Management</button>
+        <button id="sig-rotate" class="danger">Rotate signing secret</button>
+      </div>
+      <p class="hint">Rotating the signing secret makes every signed key issued before it stop working.</p>
+    </section>
+  </main>
+
+  <dialog id="reveal">
+    <h3 id="reveal-title"></h3>
+    <p class="hint">Treat this like a password. It is shown because you asked for it, and the request is logged.</p>
+    <label>Key<textarea id="reveal-value" class="mono" readonly rows="3"></textarea></label>
+    <button id="reveal-copy" class="secondary">Copy key</button>
+    <h4>Client setup</h4>
+    <pre id="reveal-handout" class="mono"></pre>
+    <form method="dialog"><button>Close</button></form>
+  </dialog>
+</body>
+</html>

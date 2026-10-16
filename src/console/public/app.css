@@ -27,6 +27,7 @@ button.warn { background: var(--warn); }
 button.danger { background: var(--danger); }
 button.small { padding: 2px 8px; font-size: 12px; }
 button:disabled { opacity: .5; cursor: default; }
+.table-scroll { overflow-x: auto; }
 table.keys { width: 100%; border-collapse: collapse; }
 .keys th, .keys td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
 .keys th { font-size: 12px; color: var(--muted); font-weight: 600; }

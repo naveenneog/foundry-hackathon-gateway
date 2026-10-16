@@ -251,8 +251,24 @@ Key Vault. Nothing here changes the gateway on `main`.
       image referenced once, PNG, alt text and names free of identifiers, provenance note) and
       the 28 document tests pass.
 
-- [ ] **P46** Admin console: signed keys and product keys behind Entra roles (branch only)
-      *Acceptance:* a web app, deployed in the POC network, where a signed-in `Console.Admin`
+- [ ] **P48** Key Console: give owners to keys issued before the console
+      *Acceptance:* an admin can set the owner of an existing product key (for example, the POC's
+      `poc-key-alice-*` keys, which show owner "—"), and the owner then sees it as a
+      `Console.User`; the change is audited.
+      *Why:* found in the P46 live run. Keys from the POC runner carry no owner tag, so no user
+      can see them.
+
+- [ ] **P47** Key Console: sign-in consent for users other than the deployer
+      *Acceptance:* in a tenant that blocks user consent, a `-Users` person can sign in after
+      `Deploy-Console.ps1`, or the script prints the single admin-consent step needed; measured
+      with a second account.
+      *Why:* P46 measured the per-user `oauth2PermissionGrant` only for the deployer's own
+      account; creating one for someone else may need a directory role.
+
+- [x] **P46** Admin console: signed keys and product keys behind Entra roles (branch only)
+      *Done 2026-10-17 on `feature/admin-console`, not merged.* Hosted on Container Apps
+      (ADR-0014) because the App Service quota was 0. Live evidence in STATUS and
+      `docs/CONSOLE.md`.      *Acceptance:* a web app, deployed in the POC network, where a signed-in `Console.Admin`
       issues and revokes signed (HS256) keys minted from a signing secret held in Key Vault,
       issues, suspends, resumes and rotates product keys, and switches per-key rotation
       automation on or off; a `Console.User` sees and reveals only their own keys and cannot

@@ -1,7 +1,64 @@
 # Status
 
-**Active packet:** P46 — admin console: signed keys and product keys behind Entra roles (branch
-`feature/admin-console`, not merged). Acceptance in ROADMAP; decisions in ADR-0013; U37–U39 open.
+**Active packet:** none. P46 is done on branch `feature/admin-console` (not pushed, not
+merged). Filed from it: P47, P48.
+
+### P46 — Key Console — DONE (branch `feature/admin-console`)
+
+A web app (`src/console/`) on Azure Container Apps, in the POC VNet, behind Entra sign-in. Its
+roles are `Console.Admin` and `Console.User`. It covers:
+- signed (HS256) keys, minted from `gw-signing-secret` in the private vault;
+- product keys stored in Key Vault, with two-slot rotation and opt-in automation (a sweep every
+  60 min);
+- admin-only export as an ES256-signed, scrypt and AES-256-GCM bundle, opened by
+  `scripts/open-bundle.mjs`.
+
+Deploy: `scripts/Deploy-Console.ps1`. Guide: `docs/CONSOLE.md`. Decisions: ADR-0013, ADR-0014.
+App Service quota was 0 in eastus2, so hosting is Container Apps. U37, U38 and U39 are
+resolved.
+
+**Live evidence (2026-10-16/17):**
+- **Signed key:** `/v1` (flash) returned 200 and `/claude` (haiku-4-5) returned 200. After
+  revoke, both returned 403.
+- **Product key:**
+  - the primary key was accepted;
+  - after rotation, the new key was accepted within 16 s and the old one kept working through
+    the overlap; after a second rotation, the original returned 401;
+  - suspend returned 401 and resume returned 200, each within 16 s.
+- **Automation sweep:** it rotated the one due key, and rotated nothing on a second run.
+- **Bundle:**
+  - a genuine bundle opened;
+  - a bundle with an edited header was refused;
+  - a bundle with a flipped ciphertext was refused.
+- **User role:** only own keys were visible; another person's key returned 404; every admin
+  action returned 403.
+- **Without sign-in:** `/healthz` returned 200; `/api/me` returned 401, including with a spoofed
+  principal header; plain HTTP was redirected with 301.
+
+**Findings:**
+- **Easy Auth on Container Apps returns a bodyless 403 to cookie-authenticated browser POSTs
+  without a same-origin `Referer`.** The fix, written test-first, is `Referrer-Policy:
+  same-origin`. Changing CORS or the proxy convention did not help.
+- **The tenant blocks user consent.** Admin consent returned 403, so the script grants per-user
+  consent instead; for other users this is still open (P47).
+- **Keys from the POC runner have no owner, so no user can see them (P48).**
+- **UX:** a narrow window spilled the key table out of its card; it now scrolls inside it.
+
+**Test-first slip:** `src/console/azure.mjs` was written before its tests. Mitigation: the tests
+in `tests/console-azure.test.mjs` were added before the commit, and each was checked by mutating
+the code under test and seeing it fail. The other P46 code was written red first.
+
+**Council — P46, direct review plus the live run.**
+
+| Seat | Verdict | Evidence |
+|---|---|---|
+| Architect | PASS-WITH-NOTES | Role check in one function (`auth.can`); Azure behind adapters; no per-request vault dependency at the gateway. Hosting changed by ADR-0014, not silently. Notes: single replica, so the sweep cannot double-run; P47 and P48 filed |
+| Coder | PASS-WITH-NOTES | Modules small and pure where possible; inputs validated at the boundary (`validate.mjs`). Note: the `azure.mjs` test-first slip above |
+| QA | PASS | `npm test` and the console suites green; live end-to-end for both key types, both roles, bundle tamper cases and the sweep; the Referer bug fixed with a test |
+| UX | PASS-WITH-NOTES | Role-shaped UI (user sees one tab, no export); secrets shown once with a different-channel hint; table overflow fixed. Note: no user-role screenshot published, because it would show a real identity |
+| Security | PASS | Entra sign-in with assignment required; spoofed principal refused; managed identities only, no client secret or registry password; vault private; bundle signed in the vault and tamper-checked; CSP and frame denial; no secret values logged; screenshots redacted |
+
+Verified: `npm test` and `node .ironclad/gate.mjs --stage packet`.
 
 P45 — illustrated Azure portal guide — DONE (pushed at `5d6b71a`).
 

@@ -21,7 +21,7 @@ export class ServiceError extends Error {
   }
 }
 
-export const SIGNING_SECRET = "gw-signing-secret";
+export const SIGNING_SECRET_NAME = "gw-signing-secret";
 export const BUNDLE_KEY = "bundle-signing";
 export const PRODUCT_CONTENT_TYPE = "API Management subscription key";
 const NV = { signing: "hackgw-signing-key", models: "hackgw-model-map", claude: "hackgw-claude-model-map", revoked: "hackgw-revoked-keys" };
@@ -73,16 +73,16 @@ export function createService({ vault, arm, clock = Date.now, log = () => {}, ga
 
   async function signingStatus(actor) {
     requireAdmin(actor);
-    const [v, a] = await Promise.all([vault.getSecret(SIGNING_SECRET), arm.listNamedValue(NV.signing)]);
+    const [v, a] = await Promise.all([vault.getSecret(SIGNING_SECRET_NAME), arm.listNamedValue(NV.signing)]);
     return { vault: Boolean(v), apim: Boolean(a), inSync: Boolean(v && a && v.value === a) };
   }
 
   async function migrateSigningSecret(actor) {
     requireAdmin(actor);
-    const [v, a] = await Promise.all([vault.getSecret(SIGNING_SECRET), arm.listNamedValue(NV.signing)]);
+    const [v, a] = await Promise.all([vault.getSecret(SIGNING_SECRET_NAME), arm.listNamedValue(NV.signing)]);
     if (!a) throw new ServiceError(409, `APIM has no ${NV.signing} named value to migrate.`);
     if (v && v.value !== a) throw new ServiceError(409, "The vault already holds a different signing secret; push or rotate explicitly.");
-    if (!v) await vault.setSecret(SIGNING_SECRET, a, { contentType: "HS256 signing secret (Base64)", tags: { kind: "signing", source: "apim-migration" } });
+    if (!v) await vault.setSecret(SIGNING_SECRET_NAME, a, { contentType: "HS256 signing secret (Base64)", tags: { kind: "signing", source: "apim-migration" } });
     audit(actor, "migrate-signing-secret", { changed: !v });
     return { migrated: !v };
   }
@@ -94,7 +94,7 @@ export function createService({ vault, arm, clock = Date.now, log = () => {}, ga
   async function pushSigningSecret(actor, body) {
     requireAdmin(actor);
     confirmOrFail(body, "PUSH");
-    const v = await vault.getSecret(SIGNING_SECRET);
+    const v = await vault.getSecret(SIGNING_SECRET_NAME);
     if (!v) throw new ServiceError(409, "The vault holds no signing secret; migrate first.");
     await arm.setNamedValue(NV.signing, v.value, { secret: true });
     audit(actor, "push-signing-secret", { version: v.version });
@@ -104,7 +104,7 @@ export function createService({ vault, arm, clock = Date.now, log = () => {}, ga
   async function rotateSigningSecret(actor, body) {
     requireAdmin(actor);
     confirmOrFail(body, "ROTATE");
-    const v = await vault.setSecret(SIGNING_SECRET, generateSecret(), { contentType: "HS256 signing secret (Base64)", tags: { kind: "signing", source: "console-rotation" } });
+    const v = await vault.setSecret(SIGNING_SECRET_NAME, generateSecret(), { contentType: "HS256 signing secret (Base64)", tags: { kind: "signing", source: "console-rotation" } });
     await arm.setNamedValue(NV.signing, v.value, { secret: true });
     audit(actor, "rotate-signing-secret", { version: v.version });
     return { rotated: true };
@@ -114,7 +114,7 @@ export function createService({ vault, arm, clock = Date.now, log = () => {}, ga
     requireAdmin(actor);
     const cfg = await config();
     const req = await guard(async () => validateJwtRequest(body, { allowedModels: [...cfg.models.openai, ...cfg.models.claude] }));
-    const secret = await vault.getSecret(SIGNING_SECRET);
+    const secret = await vault.getSecret(SIGNING_SECRET_NAME);
     if (!secret) throw new ServiceError(409, "The vault holds no signing secret yet; migrate it from APIM first.");
     const notBefore = clock();
     const expiresAt = notBefore + Math.round(req.hours * 3_600_000);

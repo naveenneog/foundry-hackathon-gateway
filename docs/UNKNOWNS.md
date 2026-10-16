@@ -47,16 +47,16 @@ assumption is only closed if it names its blast radius and the detector that wou
 | U34 | Can the runner's `Deploy` run on a vault given a private endpoint in the portal? | MEASURED |
 | U35 | Can the POC portal blades be captured with authenticated browser access, without exposing secrets or changing Azure? | RESOLVED |
 | U36 | Can APIM read the signing secret from the POC's private vault as a Key Vault named value? | RESOLVED |
-| U37 | In App Service authentication, which claim type carries Entra app roles in `X-MS-CLIENT-PRINCIPAL`? | OPEN |
-| U38 | Does Key Vault's ES256 `sign` return a signature Node verifies as IEEE P1363 against the key's JWK? | OPEN |
-| U39 | Can a VNet-integrated App Service reach the POC's private vault through the existing private DNS zone link? | OPEN |
+| U37 | In App Service authentication, which claim type carries Entra app roles in `X-MS-CLIENT-PRINCIPAL`? | RESOLVED |
+| U38 | Does Key Vault's ES256 `sign` return a signature Node verifies as IEEE P1363 against the key's JWK? | RESOLVED |
+| U39 | Can a VNet-integrated App Service reach the POC's private vault through the existing private DNS zone link? | RESOLVED |
 
 ---
 
 
 ## Open
 
-**U37, U38, U39 (P46):** measured on the deployment; see their sections when closed.
+None.
 
 ---
 
@@ -67,6 +67,28 @@ instance of U23, from a VM inside its virtual network; the final run (`10111658`
 on 2026-10-12. U31–U33 (P43) were researched, and U34 measured, on 2026-10-12. U35 (P45) was
 resolved on 2026-10-13.
 
+### U39 — Can the console reach the POC's private vault through the existing private DNS zone link? — RESOLVED
+
+**Yes, from Container Apps.** Hosting moved from App Service, where the quota was 0 for every SKU
+probed in eastus2 on 2026-10-16, to a Container Apps environment injected into the new subnet
+`snet-console` of the POC VNet (ADR-0014). The VNet already links the vault's private DNS zone.
+On 2026-10-16 the console's `/api/signing` read the vault: `vault:false` before migration and
+`inSync:true` after. Secret and key operations then worked through every live test, while the
+vault's public network access stayed Disabled.
+
+### U38 — Does Key Vault's ES256 `sign` return a signature Node verifies as IEEE P1363 against the key's JWK? — RESOLVED
+
+**Yes.** On 2026-10-17 a bundle signed by the vault key `bundle-signing` (ES256 over the SHA-256
+digest) verified with Node's `crypto.verify` using `dsaEncoding: "ieee-p1363"` against the JWK
+the console publishes. A changed header was refused ("Bad signature"), and a flipped ciphertext
+byte was refused ("Ciphertext hash mismatch").
+
+### U37 — In App Service authentication, which claim type carries Entra app roles in `X-MS-CLIENT-PRINCIPAL`? — RESOLVED
+
+**`roles`, one claim per role.** Measured on 2026-10-16 on Container Apps authentication, which
+uses the same principal header. With `Console.Admin` assigned, `/api/me` reported `admin`. With
+the assignment swapped to `Console.User` and a fresh session, it reported `user`. A request
+without sign-in, or with a hand-made principal header, got 401.
 ### U36 — Can APIM read the signing secret from the POC's private vault as a Key Vault named value? — RESOLVED
 
 **Not without reopening the vault.** Learn: with the Key Vault firewall enabled, "In Key Vault

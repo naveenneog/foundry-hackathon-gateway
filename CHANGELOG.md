@@ -6,6 +6,19 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · [Semantic Ve
 ## [Unreleased]
 
 ### Added
+- **Branch `feature/admin-console` only: Key Console, a web app for issuing and managing
+  keys.** It runs on Azure Container Apps inside the proof of concept's network, behind Entra
+  sign-in, with two roles:
+  - `Console.Admin` issues and revokes signed keys, minted from a signing secret now held in
+    Key Vault.
+  - `Console.Admin` also issues, rotates (two-slot), suspends and resumes product keys, and
+    switches rotation automation per key; a background sweep applies it.
+  - `Console.User` sees and reveals only their own keys.
+  - Only admins export: an export is an AES-256-GCM bundle, signed by a Key Vault key, which
+    the recipient verifies and opens with `scripts/open-bundle.mjs`.
+
+  Deploy with `scripts/Deploy-Console.ps1`. The guide with screenshots is `docs/CONSOLE.md`.
+  Verified live end to end, including Claude calls with console-issued keys. (P46)
 - **Proof of concept, branch only: Azure portal screenshots in the UI guide.**
   `poc/products-keyvault/PORTAL.md` now shows 20 redacted screenshots of the deployed POC and of
   unsubmitted creation forms: APIM routes, product packs and their policy, subscriptions and

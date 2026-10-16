@@ -200,6 +200,24 @@ success first and traffic used the private path again about 1–1½ minutes late
 Step-by-step portal and CLI instructions, verification and teardown:
 [docs/PRIVATE-ENDPOINT.md](docs/PRIVATE-ENDPOINT.md).
 
+### Key Console: a web app for admins and participants
+
+`admin.ps1` is for the operator at a terminal. The Key Console is a web app on Azure Container
+Apps, behind Entra sign-in with two app roles:
+
+- `Console.Admin` issues signed keys and product keys, revokes, rotates, suspends and resumes
+  them, and switches rotation automation per key. The signing secret is held in Key Vault.
+- `Console.User` sees and reveals only their own keys.
+- Only admins export. An export is an encrypted bundle signed by a Key Vault key, which the
+  recipient opens with `scripts/open-bundle.mjs`.
+
+```powershell
+pwsh scripts/Deploy-Console.ps1 -Subscription <subscription> -ResourceGroup <rg> -Users alice@contoso.com
+```
+
+Guide with screenshots: [docs/CONSOLE.md](docs/CONSOLE.md). This is branch
+`feature/admin-console` only and needs the proof of concept's vault and network.
+
 ---
 
 ## The controls
@@ -409,8 +427,11 @@ src/
   apim.mjs                   which API Management instance can host this, and the deployment plan
   foundry.mjs                the models in the subscription, and the route that serves each
   anthropic.mjs              the Anthropic error envelope and body rewrites
+  console/                   Key Console web app: roles, service, Azure adapters, bundles, UI
 infra/
   main.bicep                 gateway, observability, both APIs, policy, RBAC
+  console.bicep              Key Console on Container Apps, in the POC VNet, with Entra sign-in
+  console.Dockerfile         Key Console image (built by ACR Tasks)
   policy.xml                 the governance policy, OpenAI route
   policy-claude.xml          the governance policy, Claude route
   examples/
@@ -423,12 +444,15 @@ scripts/
   Models.ps1                 model discovery and pinning
   Keys.ps1                   key issuance and handouts
   Test-Governance.ps1        proves each control fires, per route
+  Deploy-Console.ps1         deploys the Key Console: app registration, roles, image, Bicep
+  open-bundle.mjs            verifies and decrypts a Key Console export bundle
 examples/
   claude-agent.ipynb         a tool-calling Claude agent, with a real recorded run
 tests/                       391 tests, including tamper and alg:none attacks
 docs/adr/                    architecture decisions and their reasoning
 docs/UNKNOWNS.md             what we did not know, and how each was closed
 docs/PRIVATE-ENDPOINT.md     Foundry behind a private endpoint: requirements, steps, evidence
+docs/CONSOLE.md              Key Console: deploy, roles, usage, bundles, measurements
 ```
 
 `src/*.mjs` is the canonical statement of the rules; the policies and the PowerShell are

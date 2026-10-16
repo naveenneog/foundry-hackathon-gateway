@@ -46,13 +46,17 @@ assumption is only closed if it names its blast radius and the detector that wou
 | U33 | Does the Azure portal set a subscription's expiry, and suspend and reactivate it? | RESOLVED |
 | U34 | Can the runner's `Deploy` run on a vault given a private endpoint in the portal? | MEASURED |
 | U35 | Can the POC portal blades be captured with authenticated browser access, without exposing secrets or changing Azure? | RESOLVED |
+| U36 | Can APIM read the signing secret from the POC's private vault as a Key Vault named value? | RESOLVED |
+| U37 | In App Service authentication, which claim type carries Entra app roles in `X-MS-CLIENT-PRINCIPAL`? | OPEN |
+| U38 | Does Key Vault's ES256 `sign` return a signature Node verifies as IEEE P1363 against the key's JWK? | OPEN |
+| U39 | Can a VNet-integrated App Service reach the POC's private vault through the existing private DNS zone link? | OPEN |
 
 ---
 
 
 ## Open
 
-None.
+**U37, U38, U39 (P46):** measured on the deployment; see their sections when closed.
 
 ---
 
@@ -62,6 +66,14 @@ instance of U23, from a VM inside its virtual network; the final run (`10111658`
 22 checks. Run details are in `poc/products-keyvault/README.md`. U29 and U30 (P38) were measured
 on 2026-10-12. U31–U33 (P43) were researched, and U34 measured, on 2026-10-12. U35 (P45) was
 resolved on 2026-10-13.
+
+### U36 — Can APIM read the signing secret from the POC's private vault as a Key Vault named value? — RESOLVED
+
+**Not without reopening the vault.** Learn: with the Key Vault firewall enabled, "In Key Vault
+firewall, enable the **Allow Trusted Microsoft Services to bypass this firewall** option"
+([named values](https://learn.microsoft.com/azure/api-management/api-management-howto-properties),
+updated 2026-06-25, read 2026-10-16). The POC sets bypass None (P43). ADR-0013 keeps the vault
+as the source and has the console write APIM's encrypted named value instead.
 
 ### U35 — Can the POC portal blades be captured with authenticated browser access, without exposing secrets or changing Azure? — RESOLVED
 

@@ -251,6 +251,16 @@ Key Vault. Nothing here changes the gateway on `main`.
       image referenced once, PNG, alt text and names free of identifiers, provenance note) and
       the 28 document tests pass.
 
+- [ ] **P46** Admin console: signed keys and product keys behind Entra roles (branch only)
+      *Acceptance:* a web app, deployed in the POC network, where a signed-in `Console.Admin`
+      issues and revokes signed (HS256) keys minted from a signing secret held in Key Vault,
+      issues, suspends, resumes and rotates product keys, and switches per-key rotation
+      automation on or off; a `Console.User` sees and reveals only their own keys and cannot
+      export; only admins export, as a passphrase-encrypted bundle signed by a Key Vault key and
+      verified by `scripts/open-bundle.mjs`. Live: a console-issued signed key and product key
+      call the gateway; revoking or rotating behaves as the gateway enforces. ADR-0013.
+      *Why:* requested 2026-10-16.
+
 - [ ] **P36** An unreadable key list is not written over
       *Acceptance:* with `issued-keys.json` present but unreadable (truncated, malformed or
       empty), issuing a key and revoking a key stop with a message, and the file is left

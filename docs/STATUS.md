@@ -1,6 +1,9 @@
 # Status
 
-**Active packet:** none. P45 — illustrated Azure portal guide — DONE (branch only, local commit).
+**Active packet:** P46 — admin console: signed keys and product keys behind Entra roles (branch
+`feature/admin-console`, not merged). Acceptance in ROADMAP; decisions in ADR-0013; U37–U39 open.
+
+P45 — illustrated Azure portal guide — DONE (pushed at `5d6b71a`).
 
 ### P45 — Azure portal screenshots in PORTAL.md — DONE (branch only)
 

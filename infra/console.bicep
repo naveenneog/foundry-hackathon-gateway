@@ -1,18 +1,19 @@
-// Key Console (P46, ADR-0013): a Linux App Service in the POC network that holds no secrets of
-// its own. Operators sign in through App Service authentication (Entra ID, app roles); the app's
-// system-assigned identity reaches the private Key Vault through VNet integration and manages
-// API Management through Azure Resource Manager.
+// Key Console (P46, ADR-0013, hosting per ADR-0014): a container app in the POC network that holds
+// no secrets of its own. Operators sign in through Container Apps authentication (Entra ID, app
+// roles); the app's system-assigned identity reaches the private Key Vault through the VNet and
+// manages API Management through Azure Resource Manager. A separate user-assigned identity can only
+// pull the image.
 
 @description('Region; defaults to the resource group\'s.')
 param location string = resourceGroup().location
 
-@description('Web app name; its default host name must match the Entra app\'s redirect URI.')
+@description('Container app name.')
 param appName string
 
 @description('Existing virtual network that already links the vault\'s private DNS zone.')
 param vnetName string
 
-@description('Address prefix for the new App Service integration subnet.')
+@description('Address prefix for the new Container Apps infrastructure subnet (/27 or larger).')
 param subnetPrefix string = '10.61.5.0/27'
 
 @description('Existing private Key Vault (RBAC permission model).')
@@ -20,6 +21,12 @@ param vaultName string
 
 @description('Existing API Management instance whose keys the console manages.')
 param apimName string
+
+@description('Existing container registry holding the console image.')
+param registryName string
+
+@description('Image reference in that registry, e.g. <registry>.azurecr.io/key-console:<tag>.')
+param image string
 
 @description('Entra application (client) id used for operator sign-in. Not a secret.')
 param clientId string
@@ -36,6 +43,7 @@ var roles = {
   keyVaultSecretsOfficer: 'b86a8fe4-44ce-4948-aee5-eccb2c155cd7'
   keyVaultCryptoOfficer: '14b46e9e-c2b7-41b4-b07b-48a6ebf60603'
   apiManagementServiceContributor: '312a565d-c81f-4fd8-895a-4e21e48d571c'
+  acrPull: '7f951dda-4ed3-4680-a7ca-43fe172d538d'
 }
 
 resource vnet 'Microsoft.Network/virtualNetworks@2024-05-01' existing = {
@@ -49,8 +57,8 @@ resource subnet 'Microsoft.Network/virtualNetworks/subnets@2024-05-01' = {
     addressPrefix: subnetPrefix
     delegations: [
       {
-        name: 'web'
-        properties: { serviceName: 'Microsoft.Web/serverFarms' }
+        name: 'containerapps'
+        properties: { serviceName: 'Microsoft.App/environments' }
       }
     ]
   }
@@ -64,64 +72,111 @@ resource apim 'Microsoft.ApiManagement/service@2024-05-01' existing = {
   name: apimName
 }
 
-resource plan 'Microsoft.Web/serverfarms@2024-04-01' = {
-  name: 'plan-${appName}'
-  location: location
-  kind: 'linux'
-  sku: { name: 'B1' }
-  properties: { reserved: true }
+resource registry 'Microsoft.ContainerRegistry/registries@2023-07-01' existing = {
+  name: registryName
 }
 
-resource site 'Microsoft.Web/sites@2024-04-01' = {
-  name: appName
+resource pullIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
+  name: 'id-${appName}-pull'
   location: location
-  kind: 'app,linux'
-  identity: { type: 'SystemAssigned' }
+}
+
+resource acrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  scope: registry
+  name: guid(registry.id, pullIdentity.id, roles.acrPull)
   properties: {
-    serverFarmId: plan.id
-    httpsOnly: true
-    virtualNetworkSubnetId: subnet.id
-    clientAffinityEnabled: false
-    siteConfig: {
-      linuxFxVersion: 'NODE|22-lts'
-      appCommandLine: 'node src/console/main.mjs'
-      alwaysOn: true
-      healthCheckPath: '/healthz'
-      ftpsState: 'Disabled'
-      minTlsVersion: '1.2'
-      scmMinTlsVersion: '1.2'
-      http20Enabled: true
-      vnetRouteAllEnabled: true
-      appSettings: [
-        { name: 'KEY_VAULT_URL', value: 'https://${vaultName}${environment().suffixes.keyvaultDns}' }
-        { name: 'APIM_RESOURCE_ID', value: apim.id }
-        { name: 'GATEWAY_URL', value: gatewayUrl }
-        { name: 'ROTATION_SWEEP_MINUTES', value: string(rotationSweepMinutes) }
-        { name: 'SCM_DO_BUILD_DURING_DEPLOYMENT', value: 'false' }
-      ]
+    principalId: pullIdentity.properties.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', roles.acrPull)
+  }
+}
+
+resource logs 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
+  name: 'log-${appName}'
+  location: location
+  properties: {
+    sku: { name: 'PerGB2018' }
+    retentionInDays: 30
+  }
+}
+
+resource env 'Microsoft.App/managedEnvironments@2024-03-01' = {
+  name: 'cae-${appName}'
+  location: location
+  properties: {
+    vnetConfiguration: {
+      infrastructureSubnetId: subnet.id
+      internal: false
+    }
+    workloadProfiles: [
+      { name: 'Consumption', workloadProfileType: 'Consumption' }
+    ]
+    appLogsConfiguration: {
+      destination: 'log-analytics'
+      logAnalyticsConfiguration: {
+        customerId: logs.properties.customerId
+        sharedKey: logs.listKeys().primarySharedKey
+      }
     }
   }
 }
 
-resource ftpCredentials 'Microsoft.Web/sites/basicPublishingCredentialsPolicies@2024-04-01' = {
-  parent: site
-  name: 'ftp'
-  properties: { allow: false }
+resource app 'Microsoft.App/containerApps@2024-03-01' = {
+  name: appName
+  location: location
+  identity: {
+    type: 'SystemAssigned,UserAssigned'
+    userAssignedIdentities: { '${pullIdentity.id}': {} }
+  }
+  dependsOn: [ acrPull ]
+  properties: {
+    environmentId: env.id
+    workloadProfileName: 'Consumption'
+    configuration: {
+      activeRevisionsMode: 'Single'
+      ingress: {
+        external: true
+        targetPort: 8080
+        transport: 'auto'
+        allowInsecure: false
+      }
+      registries: [
+        { server: registry.properties.loginServer, identity: pullIdentity.id }
+      ]
+    }
+    template: {
+      containers: [
+        {
+          name: 'console'
+          image: image
+          resources: { cpu: json('0.5'), memory: '1Gi' }
+          env: [
+            { name: 'KEY_VAULT_URL', value: 'https://${vaultName}${environment().suffixes.keyvaultDns}' }
+            { name: 'APIM_RESOURCE_ID', value: apim.id }
+            { name: 'GATEWAY_URL', value: gatewayUrl }
+            { name: 'ROTATION_SWEEP_MINUTES', value: string(rotationSweepMinutes) }
+            // Asserts that platform sign-in (authConfigs below) fronts every request, so the
+            // console may trust X-MS-CLIENT-PRINCIPAL. Without it the console fails closed (401).
+            { name: 'WEBSITE_AUTH_ENABLED', value: 'True' }
+          ]
+          probes: [
+            { type: 'Liveness', httpGet: { path: '/healthz', port: 8080 }, periodSeconds: 30 }
+            { type: 'Readiness', httpGet: { path: '/healthz', port: 8080 }, periodSeconds: 10 }
+          ]
+        }
+      ]
+      // Exactly one replica: the rotation sweep runs in-process and must not run twice.
+      scale: { minReplicas: 1, maxReplicas: 1 }
+    }
+  }
 }
 
-resource scmCredentials 'Microsoft.Web/sites/basicPublishingCredentialsPolicies@2024-04-01' = {
-  parent: site
-  name: 'scm'
-  properties: { allow: false }
-}
-
-resource auth 'Microsoft.Web/sites/config@2024-04-01' = {
-  parent: site
-  name: 'authsettingsV2'
+resource auth 'Microsoft.App/containerApps/authConfigs@2024-03-01' = {
+  parent: app
+  name: 'current'
   properties: {
     platform: { enabled: true }
     globalValidation: {
-      requireAuthentication: true
       unauthenticatedClientAction: 'RedirectToLoginPage'
       redirectToProvider: 'azureactivedirectory'
       excludedPaths: [ '/healthz' ]
@@ -130,8 +185,8 @@ resource auth 'Microsoft.Web/sites/config@2024-04-01' = {
       azureActiveDirectory: {
         enabled: true
         registration: {
-          // No client secret: sign-in uses the ID token (implicit) flow, so the console has no
-          // credential of its own to leak. The app registration must allow ID token issuance.
+          // No client secret: sign-in uses the ID token flow, so the console has no credential
+          // of its own to leak. The app registration must allow ID token issuance.
           openIdIssuer: '${environment().authentication.loginEndpoint}${tenant().tenantId}/v2.0'
           clientId: clientId
         }
@@ -141,7 +196,6 @@ resource auth 'Microsoft.Web/sites/config@2024-04-01' = {
       }
     }
     login: {
-      tokenStore: { enabled: false }
       preserveUrlFragmentsForLogins: false
     }
     httpSettings: {
@@ -153,9 +207,9 @@ resource auth 'Microsoft.Web/sites/config@2024-04-01' = {
 
 resource secretsOfficer 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   scope: vault
-  name: guid(vault.id, site.id, roles.keyVaultSecretsOfficer)
+  name: guid(vault.id, app.id, roles.keyVaultSecretsOfficer)
   properties: {
-    principalId: site.identity.principalId
+    principalId: app.identity.principalId
     principalType: 'ServicePrincipal'
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', roles.keyVaultSecretsOfficer)
   }
@@ -163,9 +217,9 @@ resource secretsOfficer 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
 
 resource cryptoOfficer 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   scope: vault
-  name: guid(vault.id, site.id, roles.keyVaultCryptoOfficer)
+  name: guid(vault.id, app.id, roles.keyVaultCryptoOfficer)
   properties: {
-    principalId: site.identity.principalId
+    principalId: app.identity.principalId
     principalType: 'ServicePrincipal'
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', roles.keyVaultCryptoOfficer)
   }
@@ -173,13 +227,13 @@ resource cryptoOfficer 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
 
 resource apimContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   scope: apim
-  name: guid(apim.id, site.id, roles.apiManagementServiceContributor)
+  name: guid(apim.id, app.id, roles.apiManagementServiceContributor)
   properties: {
-    principalId: site.identity.principalId
+    principalId: app.identity.principalId
     principalType: 'ServicePrincipal'
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', roles.apiManagementServiceContributor)
   }
 }
 
-output appUrl string = 'https://${site.properties.defaultHostName}'
-output principalId string = site.identity.principalId
+output appUrl string = 'https://${app.properties.configuration.ingress.fqdn}'
+output principalId string = app.identity.principalId

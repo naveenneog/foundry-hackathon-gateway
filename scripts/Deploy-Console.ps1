@@ -7,8 +7,10 @@
   1. Ensures an Entra app registration "hackgw-key-console" with app roles Console.Admin and
      Console.User, ID-token sign-in, and "assignment required" so only assigned people can sign in.
   2. Assigns the signed-in operator Console.Admin, and any -Users Console.User.
-  3. Deploys infra/console.bicep (subnet, plan, web app, sign-in, role assignments).
-  4. Packages src/keys.mjs + src/console and zip-deploys it, then waits for /healthz.
+  3. Ensures a container registry (admin user disabled) and builds the console image there with
+     ACR Tasks from a minimal context: src/keys.mjs, src/console/**, a package.json, the Dockerfile.
+  4. Deploys infra/console.bicep (subnet, environment, container app, sign-in, role assignments),
+     points the app registration's redirect URI at the app, and waits for /healthz.
 
   Prints names and URLs only; no ids, keys or tokens.
 
@@ -21,8 +23,7 @@ param(
     [Parameter(Mandatory)][string]$ResourceGroup,
     [string]$AppRegistrationName = 'hackgw-key-console',
     [string[]]$Users = @(),
-    [string]$SubnetPrefix = '10.61.5.0/27',
-    [switch]$SkipCode
+    [string]$SubnetPrefix = '10.61.5.0/27'
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
@@ -37,14 +38,15 @@ function Invoke-Az {
 Write-Host "Discovering the gateway in $ResourceGroup..."
 $apim = @(Invoke-Az apim list --subscription $Subscription -g $ResourceGroup --query '[].{name:name,url:gatewayUrl}' -o json)[0]
 if (-not $apim) { throw "No API Management instance in $ResourceGroup." }
-$vault = @(Invoke-Az keyvault list --subscription $Subscription -g $ResourceGroup --query "[?starts_with(name,'kv-poc-')].name" -o json)[0]
+# Filter in PowerShell: az.cmd on Windows mangles quoted JMESPath filters.
+$vault = @(Invoke-Az keyvault list --subscription $Subscription -g $ResourceGroup --query '[].name' -o json) |
+    Where-Object { $_ -like 'kv-poc-*' } | Select-Object -First 1
 if (-not $vault) { throw "No POC vault (kv-poc-*) in $ResourceGroup; deploy poc/products-keyvault first." }
 $vnet = @(Invoke-Az network vnet list --subscription $Subscription -g $ResourceGroup --query '[].name' -o json)[0]
 $suffix = ($apim.name -split '-')[-1]
-$appName = "app-hackgw-console-$suffix"
-$hostName = "$appName.azurewebsites.net"
-$redirect = "https://$hostName/.auth/login/aad/callback"
-Write-Host "  APIM $($apim.name), vault $vault, network $vnet -> web app $appName"
+$appName = "ca-console-$suffix"
+$registry = "crconsole$suffix"
+Write-Host "  APIM $($apim.name), vault $vault, network $vnet -> container app $appName"
 
 Write-Host "Ensuring app registration $AppRegistrationName..."
 $app = @(Invoke-Az ad app list --display-name $AppRegistrationName --query '[0]' -o json)[0]
@@ -58,13 +60,10 @@ if (-not $app) {
     ) | ConvertTo-Json -Depth 4 | Set-Content $rolesFile -Encoding utf8
     try {
         $app = Invoke-Az ad app create --display-name $AppRegistrationName --sign-in-audience AzureADMyOrg `
-            --web-redirect-uris $redirect --enable-id-token-issuance true --app-roles "@$rolesFile" -o json
+            --enable-id-token-issuance true --app-roles "@$rolesFile" -o json
     } finally { Remove-Item $rolesFile -Force }
-} else {
-    $null = Invoke-Az ad app update --id $app.appId --web-redirect-uris $redirect --enable-id-token-issuance true
-    $app = Invoke-Az ad app show --id $app.appId -o json
 }
-$sp = Invoke-Az ad sp list --filter "appId eq '$($app.appId)'" --query '[0]' -o json
+$sp = @(Invoke-Az ad sp list --spn $app.appId -o json)[0]
 if (-not $sp) { $sp = Invoke-Az ad sp create --id $app.appId -o json }
 $null = Invoke-Az ad sp update --id $app.appId --set appRoleAssignmentRequired=true
 
@@ -86,36 +85,35 @@ $me = Invoke-Az ad signed-in-user show --query '{id:id,upn:userPrincipalName}' -
 Grant-ConsoleRole $me.id 'Console.Admin' $me.upn
 foreach ($u in $Users) { Grant-ConsoleRole (Invoke-Az ad user show --id $u --query id -o json) 'Console.User' $u }
 
+Write-Host "Ensuring registry $registry and building the image..."
+$exists = & az acr show --subscription $Subscription -g $ResourceGroup -n $registry --query name -o tsv 2>$null
+if (-not $exists) {
+    $null = Invoke-Az acr create --subscription $Subscription -g $ResourceGroup -n $registry --sku Basic --admin-enabled false -o json
+}
+$ctx = Join-Path ([IO.Path]::GetTempPath()) "console-build-$suffix"
+Remove-Item $ctx -Recurse -Force -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Path (Join-Path $ctx 'src') | Out-Null
+Copy-Item (Join-Path $root 'src/keys.mjs') (Join-Path $ctx 'src')
+Copy-Item (Join-Path $root 'src/console') (Join-Path $ctx 'src') -Recurse
+Copy-Item (Join-Path $root 'infra/console.Dockerfile') (Join-Path $ctx 'Dockerfile')
+@{ name = 'hackgw-key-console'; private = $true; type = 'module'; engines = @{ node = '>=20' } } |
+    ConvertTo-Json | Set-Content (Join-Path $ctx 'package.json') -Encoding utf8
+$tag = "$(git -C $root rev-parse --short HEAD)-$(Get-Date -Format yyyyMMddHHmmss)"
+try {
+    $run = Invoke-Az acr build --subscription $Subscription -r $registry -t "key-console:$tag" -f (Join-Path $ctx 'Dockerfile') $ctx --no-logs -o json
+} finally { Remove-Item $ctx -Recurse -Force }
+if ($run.status -ne 'Succeeded') { throw "Image build ended $($run.status); see 'az acr task logs -r $registry'." }
+$image = "$registry.azurecr.io/key-console:$tag"
+Write-Host "  built $image"
+
 Write-Host "Deploying infra/console.bicep..."
 $deploy = Invoke-Az deployment group create --subscription $Subscription -g $ResourceGroup -n "console-$suffix" `
     --template-file (Join-Path $root 'infra/console.bicep') `
     --parameters appName=$appName vnetName=$vnet subnetPrefix=$SubnetPrefix vaultName=$vault apimName=$($apim.name) `
-                 clientId=$($app.appId) gatewayUrl=$($apim.url) `
+                 registryName=$registry image=$image clientId=$($app.appId) gatewayUrl=$($apim.url) `
     --query 'properties.outputs' -o json
 $url = $deploy.appUrl.value
-
-if (-not $SkipCode) {
-    Write-Host "Packaging and deploying the console code..."
-    $zip = Join-Path ([IO.Path]::GetTempPath()) "console-$suffix.zip"
-    Remove-Item $zip -ErrorAction SilentlyContinue
-    Add-Type -AssemblyName System.IO.Compression.FileSystem
-    $archive = [IO.Compression.ZipFile]::Open($zip, 'Create')
-    try {
-        $files = @(Get-Item (Join-Path $root 'src/keys.mjs')) + @(Get-ChildItem (Join-Path $root 'src/console') -Recurse -File)
-        foreach ($f in $files) {
-            # Forward slashes: the archive is unpacked on Linux.
-            $entry = [IO.Path]::GetRelativePath($root, $f.FullName).Replace('\', '/')
-            $null = [IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive, $f.FullName, $entry)
-        }
-        $pkg = $archive.CreateEntry('package.json')
-        $w = New-Object IO.StreamWriter($pkg.Open())
-        $w.Write((@{ name = 'hackgw-key-console'; private = $true; type = 'module'; engines = @{ node = '>=20' }
-                    scripts = @{ start = 'node src/console/main.mjs' } } | ConvertTo-Json))
-        $w.Dispose()
-    } finally { $archive.Dispose() }
-    $null = Invoke-Az webapp deploy --subscription $Subscription -g $ResourceGroup -n $appName --src-path $zip --type zip --restart true
-    Remove-Item $zip -Force
-}
+$null = Invoke-Az ad app update --id $app.appId --web-redirect-uris "$url/.auth/login/aad/callback" --enable-id-token-issuance true
 
 Write-Host "Waiting for $url/healthz..."
 for ($i = 0; $i -lt 30; $i++) {

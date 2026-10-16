@@ -47,7 +47,7 @@ export function createService({ vault, arm, clock = Date.now, log = () => {}, ga
   }
   async function productSecret(name) {
     const s = await vault.getSecret(name);
-    if (!s || kindOf(s) !== "product" || !s.tags?.subscription || !["primary", "secondary"].includes(s.tags?.slot)) {
+    if (!s || kindOf(s) !== "product" || !/^poc-[a-z0-9-]+$/.test(s.tags?.subscription ?? "") || !["primary", "secondary"].includes(s.tags?.slot)) {
       throw new ServiceError(404, "No such product key (missing slot or subscription tags).");
     }
     return s;

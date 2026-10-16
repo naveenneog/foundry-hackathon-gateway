@@ -26,7 +26,7 @@ const SECURITY_HEADERS = {
     "object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
   "X-Content-Type-Options": "nosniff",
   "X-Frame-Options": "DENY",
-  "Referrer-Policy": "no-referrer",
+  "Referrer-Policy": "same-origin",
   "Strict-Transport-Security": "max-age=31536000",
   "Cross-Origin-Opener-Policy": "same-origin",
 };

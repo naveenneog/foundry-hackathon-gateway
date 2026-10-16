@@ -47,6 +47,14 @@ test("deploy script: assignment required, ID-token sign-in, admin-less registry,
   assert.match(deploy, /Console\.User/);
   assert.match(deploy, /--admin-enabled false/);
   assert.match(deploy, /acr build/);
+  // Tenants that disable user consent need a per-user grant for sign-in scopes (measured live).
+  assert.match(deploy, /oauth2PermissionGrants/);
+  assert.match(deploy, /consentType = 'Principal'/);
+  assert.match(deploy, /scope = 'openid profile email'/);
   assert.ok(!/Write-Host[^\n]*\$[\w.()$]*(appId|\.id\b|principalId|token|secret)/i.test(deploy), "no ids or secrets echoed");
-  assert.ok(!/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i.test(deploy), "no hard-coded GUIDs");
+  // Only the public, tenant-independent Microsoft Graph ids (app id; openid, profile, email scopes).
+  const WELL_KNOWN = ["00000003-0000-0000-c000-000000000000", "37f7f235-527c-4136-accd-4a02d197296e",
+    "14dad69e-099b-42c9-810b-d002981feec1", "64a6cdd6-aab1-4aaf-94b8-3cc8405e90d0"];
+  const guids = deploy.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi) ?? [];
+  assert.deepEqual(guids.filter((g) => !WELL_KNOWN.includes(g.toLowerCase())), [], "no hard-coded tenant GUIDs");
 });

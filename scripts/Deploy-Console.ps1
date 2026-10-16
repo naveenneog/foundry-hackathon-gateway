@@ -85,6 +85,29 @@ $me = Invoke-Az ad signed-in-user show --query '{id:id,upn:userPrincipalName}' -
 Grant-ConsoleRole $me.id 'Console.Admin' $me.upn
 foreach ($u in $Users) { Grant-ConsoleRole (Invoke-Az ad user show --id $u --query id -o json) 'Console.User' $u }
 
+# Sign-in needs Graph openid/profile/email. Where the tenant blocks user consent, a per-user grant
+# lets assigned people sign in without a tenant-wide admin consent; if this is refused, ask a
+# tenant admin to grant consent for the app instead.
+$graphAppId = '00000003-0000-0000-c000-000000000000'
+$null = Invoke-Az ad app permission add --id $app.appId --api $graphAppId --api-permissions `
+    '37f7f235-527c-4136-accd-4a02d197296e=Scope' '14dad69e-099b-42c9-810b-d002981feec1=Scope' '64a6cdd6-aab1-4aaf-94b8-3cc8405e90d0=Scope'
+$graphSp = @(Invoke-Az ad sp list --spn $graphAppId -o json)[0]
+function Grant-SignInConsent([string]$PrincipalId, [string]$Label) {
+    $grants = Invoke-Az rest --method GET --url "https://graph.microsoft.com/v1.0/servicePrincipals/$($sp.id)/oauth2PermissionGrants" -o json
+    if ($grants.value | Where-Object { $_.principalId -eq $PrincipalId -and $_.resourceId -eq $graphSp.id }) { return }
+    $body = New-TemporaryFile
+    @{ clientId = $sp.id; consentType = 'Principal'; principalId = $PrincipalId; resourceId = $graphSp.id; scope = 'openid profile email' } |
+        ConvertTo-Json | Set-Content $body -Encoding utf8
+    try {
+        $null = Invoke-Az rest --method POST --url 'https://graph.microsoft.com/v1.0/oauth2PermissionGrants' `
+            --headers 'Content-Type=application/json' --body "@$body"
+        Write-Host "  sign-in consent recorded for $Label"
+    } catch { Write-Warning "Could not record sign-in consent for $Label; a tenant admin must consent to $AppRegistrationName." }
+    finally { Remove-Item $body -Force }
+}
+Grant-SignInConsent $me.id $me.upn
+foreach ($u in $Users) { Grant-SignInConsent (Invoke-Az ad user show --id $u --query id -o json) $u }
+
 Write-Host "Ensuring registry $registry and building the image..."
 $exists = & az acr show --subscription $Subscription -g $ResourceGroup -n $registry --query name -o tsv 2>$null
 if (-not $exists) {

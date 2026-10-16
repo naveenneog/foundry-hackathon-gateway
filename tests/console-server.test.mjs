@@ -48,6 +48,9 @@ test("health is open; static app is served with a strict CSP; APIs are not cache
   assert.match(page.headers.get("content-security-policy"), /default-src 'self'/);
   assert.match(page.headers.get("content-security-policy"), /frame-ancestors 'none'/);
   assert.equal(page.headers.get("x-content-type-options"), "nosniff");
+  // Platform sign-in refuses cookie-authenticated browser POSTs without a same-origin Referer
+  // (measured live, ADR-0014), so the referrer may go to this origin and nowhere else.
+  assert.equal(page.headers.get("referrer-policy"), "same-origin");
   assert.match(await page.text(), /<title>[^<]*Console/);
   assert.equal((await get("/api/me", AS.alice)).headers.get("cache-control"), "no-store");
   assert.equal((await get("/../../package.json", AS.alice)).status, 404);

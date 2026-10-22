@@ -1,0 +1,11 @@
+{
+  "name": "key-dashboard-automation",
+  "private": true,
+  "type": "module",
+  "description": "Azure Functions (App Service path, ADR-0015): a timer that runs src/console/automation.mjs. Packaged by scripts/Deploy-Console.ps1.",
+  "main": "functions/sweep.mjs",
+  "engines": { "node": ">=24" },
+  "dependencies": {
+    "@azure/functions": "4.16.5"
+  }
+}

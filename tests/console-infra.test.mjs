@@ -154,3 +154,8 @@ test("deploy script: refuses to run when the active tenant is not the subscripti
   const firstAd = deploy.search(/Invoke-Az ad /);
   assert.ok(deploy.indexOf("Assert-SameTenant\n") < firstAd || deploy.indexOf("Assert-SameTenant\r\n") < firstAd, "guard runs before the first az ad call");
 });
+
+test("deploy script: fails when the dashboard never answers /healthz, instead of reporting success", () => {
+  assert.match(deploy, /\$healthy = \$false/);
+  assert.match(deploy, /if \(-not \$healthy\) \{ throw/);
+});

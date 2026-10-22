@@ -50,7 +50,13 @@ function client({ getToken, resource, fetchImpl, sleep }) {
         continue;
       }
       const text = await res.text();
-      const json = text ? JSON.parse(text) : {};
+      // APIM answers a policy PUT with the policy itself (raw XML), so only JSON is parsed; any
+      // other body is never echoed, because a body can hold a key.
+      const isJson = /json/i.test(res.headers.get("content-type") ?? "") || /^\s*[{[]/.test(text);
+      let json = {};
+      if (text && isJson) {
+        try { json = JSON.parse(text); } catch { json = {}; }
+      }
       if (!res.ok) {
         const err = json.error ?? {};
         throw new AzureError(res.status, `${method} ${url.split("?")[0]} failed (${res.status}): ${err.code ?? ""} ${err.message ?? ""}`.trim(), err.code);

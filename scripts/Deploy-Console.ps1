@@ -227,7 +227,9 @@ else {
 $null = Invoke-Az ad app update --id $app.appId --web-redirect-uris "$url/.auth/login/aad/callback" --enable-id-token-issuance true
 
 Write-Host "Waiting for $url/healthz (from this machine, which must be in $allowedCidr)..."
-for ($i = 0; $i -lt 30; $i++) {
-    try { if ((Invoke-WebRequest "$url/healthz" -TimeoutSec 20).StatusCode -eq 200) { break } } catch { Start-Sleep 10 }
+$healthy = $false
+for ($i = 0; $i -lt 30 -and -not $healthy; $i++) {
+    try { $healthy = (Invoke-WebRequest "$url/healthz" -TimeoutSec 20).StatusCode -eq 200 } catch { Start-Sleep 10 }
 }
+if (-not $healthy) { throw "$url/healthz did not answer 200 within five minutes (from outside $allowedCidr it is refused by design)." }
 Write-Host "Key Dashboard ($Hosting): $url  (sign in as an assigned user; admins: open 'Signing secret' and migrate first)"

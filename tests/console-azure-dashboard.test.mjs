@@ -10,10 +10,11 @@ function scripted(steps) {
     seen.push({ method, url, headers: init.headers ?? {}, body: init.body ? JSON.parse(init.body) : undefined });
     const step = steps.shift();
     assert.ok(step, `unexpected call ${method} ${url}`);
-    const [m, re, status, body] = step;
+    const [m, re, status, body, headers] = step;
     assert.equal(method, m, url);
     assert.match(url, re);
-    return new Response(body === undefined ? null : JSON.stringify(body), { status });
+    const raw = typeof body === "string";
+    return new Response(body === undefined ? null : raw ? body : JSON.stringify(body), { status, headers: headers ?? (raw ? {} : { "content-type": "application/json" }) });
   };
   return { fetchImpl, seen, steps };
 }
@@ -83,4 +84,16 @@ test("log analytics: posts the query with a timespan and returns rows as objects
   assert.deepEqual(s.seen[0].body, { query: "AppMetrics | take 1", timespan: "P7D" });
   assert.equal(s.seen[0].headers.Authorization, "Bearer TKN:https://api.loganalytics.io");
   assert.throws(() => logAnalytics({ workspaceId: "../x", getToken: token }), AzureError);
+});
+
+test("apim: a policy PUT that answers with the policy XML is a success, not a JSON error (found live)", async () => {
+  const xml = "<!--\r\n    comment\r\n-->\r\n<policies />";
+  const s = scripted([["PUT", /\/products\/pk-1\/policies\/policy\?/, 201, xml, { "content-type": "application/vnd.ms-azure-apim.policy.raw+xml; charset=utf-8" }]]);
+  await apim({ apimId: APIM_ID, getToken: token, fetchImpl: s.fetchImpl, sleep: noSleep }).setProductPolicy("pk-1", xml);
+});
+
+test("an error response that is not JSON still reports its status, without the body", async () => {
+  const s = scripted([["PUT", /\/products\/pk-1\/policies\/policy\?/, 400, "<error>bad <policies> near secret</error>", { "content-type": "text/xml" }]]);
+  await assert.rejects(apim({ apimId: APIM_ID, getToken: token, fetchImpl: s.fetchImpl, sleep: noSleep }).setProductPolicy("pk-1", "<p/>"),
+    (e) => e instanceof AzureError && e.status === 400 && !/secret/.test(e.message));
 });

@@ -48,7 +48,7 @@ test("console image: distroless Node 24, non-root, runs the console entry point,
 });
 
 test("console infra (Container Apps): one allowed IP, a cron job for the automation, no in-process sweep", () => {
-  assert.match(bicep, /ipSecurityRestrictions: \[\n\s+\{ name: 'allowed-ip', ipAddressRange: '\$\{allowedIp\}\/32', action: 'Allow' \}\n\s+\]/);
+  assert.match(bicep, /ipSecurityRestrictions: \[\n\s+\{ name: 'allowed-ip', ipAddressRange: allowedCidr, action: 'Allow' \}\n\s+\]/);
   assert.match(bicep, /resource job 'Microsoft\.App\/jobs@/);
   assert.match(bicep, /triggerType: 'Schedule'/);
   assert.match(bicep, /cronExpression: automationCron/);
@@ -91,7 +91,7 @@ test("console infra (App Service): web app and Function App on one plan, VNet-in
     "ftpsState: 'Disabled'", "minTlsVersion: '1.2'", "alwaysOn: true", "vnetRouteAllEnabled: true"]) {
     assert.equal(appsvc.split(s).length - 1, 2, `${s} on both sites`);
   }
-  assert.equal((appsvc.match(/ipAddress: '\$\{allowedIp\}\/32'/g) ?? []).length, 1, "one rule");
+  assert.equal((appsvc.match(/ipAddress: allowedCidr/g) ?? []).length, 1, "one rule");
   assert.equal((appsvc.match(/ipSecurityRestrictions: ipRules/g) ?? []).length, 2, "used by both sites");
   assert.equal((appsvc.match(/basicPublishingCredentialsPolicies/g) ?? []).length, 4, "ftp and scm basic auth off on both sites");
   assert.match(appsvc, /linuxFxVersion: 'NODE\|24-lts'/);
@@ -126,6 +126,8 @@ test("deploy script: the hosting is chosen at install and only that path is depl
   assert.match(deploy, /\[ValidateSet\('ContainerApps', 'AppService'\)\]\[string\]\$Hosting = 'ContainerApps'/);
   assert.match(deploy, /\[Parameter\(Mandatory\)\]\[string\]\$AllowedIp/);
   assert.match(deploy, /\[System\.Net\.IPAddress\]::TryParse/);
+  assert.match(deploy, /prefix -lt 24/, "a CIDR, when given for a NAT pool, is at most a /24");
+  assert.match(deploy, /allowedCidr=\$allowedCidr/);
   assert.match(deploy, /if \(\$Hosting -eq 'AppService'\)/);
   assert.match(deploy, /infra\/console-appservice\.bicep/);
   assert.match(deploy, /infra\/console\.bicep/);

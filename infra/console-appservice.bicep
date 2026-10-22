@@ -39,8 +39,8 @@ param clientId string
 @description('Gateway base URL put into client setup snippets.')
 param gatewayUrl string
 
-@description('The single IPv4 address allowed to reach both sites; everything else is refused.')
-param allowedIp string
+@description('The one address allowed to reach both sites, as CIDR: <ip>/32, or a narrow NAT pool. Everything else is refused.')
+param allowedCidr string
 
 var roles = {
   keyVaultSecretsOfficer: 'b86a8fe4-44ce-4948-aee5-eccb2c155cd7'
@@ -95,7 +95,7 @@ var common = [
 ]
 
 var ipRules = [
-  { name: 'allowed-ip', action: 'Allow', priority: 100, ipAddress: '${allowedIp}/32' }
+  { name: 'allowed-ip', action: 'Allow', priority: 100, ipAddress: allowedCidr }
 ]
 
 resource plan 'Microsoft.Web/serverfarms@2024-04-01' = {

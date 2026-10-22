@@ -38,11 +38,18 @@ param(
 )$ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 
+# One IPv4 address (made a /32). A CIDR is accepted only for a NAT pool that rotates the egress
+# address, at most a /24, and is reported as wider than one address.
+$addr, $prefix = $AllowedIp -split '/', 2
 $ip = $null
-if (-not [System.Net.IPAddress]::TryParse($AllowedIp, [ref]$ip) -or $ip.AddressFamily -ne [System.Net.Sockets.AddressFamily]::InterNetwork -or
-    $AllowedIp -notmatch '^\d{1,3}(\.\d{1,3}){3}$') {
+if (-not [System.Net.IPAddress]::TryParse($addr, [ref]$ip) -or $ip.AddressFamily -ne [System.Net.Sockets.AddressFamily]::InterNetwork -or
+    $addr -notmatch '^\d{1,3}(\.\d{1,3}){3}$') {
     throw "-AllowedIp must be one IPv4 address, such as 203.0.113.7."
 }
+$prefix = if ($null -eq $prefix) { 32 } else { [int]$prefix }
+if ($prefix -lt 24 -or $prefix -gt 32) { throw "-AllowedIp: a CIDR must be /24 to /32." }
+$allowedCidr = "$addr/$prefix"
+if ($prefix -ne 32) { Write-Warning "-AllowedIp $allowedCidr admits $([math]::Pow(2, 32 - $prefix)) addresses, not one." }
 if (-not $SubnetPrefix) { $SubnetPrefix = if ($Hosting -eq 'AppService') { '10.61.6.0/27' } else { '10.61.5.0/27' } }
 
 function Invoke-Az {
@@ -81,7 +88,7 @@ $suffix = ($apim.name -split '-')[-1]
 $appName = if ($Hosting -eq 'AppService') { "app-keys-$suffix" } else { "ca-console-$suffix" }
 $registry = "crconsole$suffix"
 Write-Host "  APIM $($apim.name), vault $vault, Foundry $($foundry.name), workspace $workspace, network $vnet"
-Write-Host "  hosting: $Hosting -> $appName, open to $AllowedIp only"
+Write-Host "  hosting: $Hosting -> $appName, open to $allowedCidr only"
 
 Write-Host "Ensuring app registration $AppRegistrationName..."
 $app = @(Invoke-Az ad app list --display-name $AppRegistrationName --query '[0]' -o json)[0]
@@ -164,7 +171,7 @@ function New-AppContext([string]$Name) {
 
 $common = @("vnetName=$vnet", "subnetPrefix=$SubnetPrefix", "vaultName=$vault", "apimName=$($apim.name)",
     "foundryAccountName=$($foundry.name)", "workspaceName=$workspace", "clientId=$($app.appId)",
-    "gatewayUrl=$($apim.url)", "allowedIp=$AllowedIp")
+    "gatewayUrl=$($apim.url)", "allowedCidr=$allowedCidr")
 
 if ($Hosting -eq 'AppService') {
     Write-Host "Deploying infra/console-appservice.bicep..."
@@ -219,7 +226,7 @@ else {
 }
 $null = Invoke-Az ad app update --id $app.appId --web-redirect-uris "$url/.auth/login/aad/callback" --enable-id-token-issuance true
 
-Write-Host "Waiting for $url/healthz (from this machine, which must be $AllowedIp)..."
+Write-Host "Waiting for $url/healthz (from this machine, which must be in $allowedCidr)..."
 for ($i = 0; $i -lt 30; $i++) {
     try { if ((Invoke-WebRequest "$url/healthz" -TimeoutSec 20).StatusCode -eq 200) { break } } catch { Start-Sleep 10 }
 }

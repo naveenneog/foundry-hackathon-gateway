@@ -95,6 +95,10 @@ export function keyVault({ vaultUrl, getToken, fetchImpl = fetch, sleep = defaul
       }
       return out;
     },
+    /** Soft delete: the secret stays recoverable for the vault's retention period. */
+    async deleteSecret(name) {
+      await call("DELETE", `${base}/secrets/${seg(name)}?${q}`, { allow404: true });
+    },
     async getKey(name) {
       const r = await call("GET", `${base}/keys/${seg(name)}?${q}`, { allow404: true });
       return r ? { kid: r.json.key.kid, jwk: r.json.key } : null;
@@ -178,8 +182,67 @@ export function apim({ apimId, getToken, fetchImpl = fetch, sleep = defaultSleep
       if (!op) throw new AzureError(400, `Unknown slot ${slot}.`);
       await call("POST", url(`/subscriptions/${seg(sid)}/${op}`));
     },
+    async deleteSubscription(sid) {
+      await call("DELETE", url(`/subscriptions/${seg(sid)}`), { headers: { "If-Match": "*" }, allow404: true });
+    },
+    async getProduct(id) {
+      const r = await call("GET", url(`/products/${seg(id)}`), { allow404: true });
+      return r ? { id: r.json.name ?? id, displayName: r.json.properties?.displayName, description: r.json.properties?.description } : null;
+    },
+    async createProduct(id, { displayName, description }) {
+      await call("PUT", url(`/products/${seg(id)}`), { body: { properties: { displayName, description, subscriptionRequired: true, approvalRequired: false, state: "notPublished" } } });
+    },
+    async setProductPolicy(id, xml) {
+      await call("PUT", url(`/products/${seg(id)}/policies/policy`), { body: { properties: { format: "rawxml", value: xml } } });
+    },
+    async linkProductApi(id, apiId) {
+      await call("PUT", url(`/products/${seg(id)}/apis/${seg(apiId)}`));
+    },
+    async hasProductSubscriptions(id) {
+      const r = await call("GET", url(`/products/${seg(id)}/subscriptions?$top=1`));
+      return (r.json.value ?? []).length > 0;
+    },
+    async deleteProduct(id) {
+      await call("DELETE", url(`/products/${seg(id)}?deleteSubscriptions=false`), { headers: { "If-Match": "*" }, allow404: true });
+    },
     async setSubscriptionState(sid, state) {
       await call("PATCH", url(`/subscriptions/${seg(sid)}`), { body: { properties: { state } }, headers: { "If-Match": "*" } });
+    },
+  };
+}
+
+const FOUNDRY_API = "2024-10-01";
+
+/** The Foundry (AIServices) account the gateway serves, and its model deployments. Reader is enough. */
+export function foundryAccount({ accountId, getToken, fetchImpl = fetch, sleep = defaultSleep }) {
+  const m = /^\/subscriptions\/[^/]+\/resourceGroups\/([^/]+)\/providers\/Microsoft\.CognitiveServices\/accounts\/[^/]+$/i.exec(String(accountId));
+  if (!m) throw new AzureError(500, "FOUNDRY_ACCOUNT_ID is not a Cognitive Services account resource id.");
+  const call = client({ getToken, resource: "https://management.azure.com", fetchImpl, sleep });
+  const base = `https://management.azure.com${accountId}`;
+  return {
+    async getAccount() {
+      const acct = await call("GET", `${base}?api-version=${FOUNDRY_API}`);
+      const deployments = [];
+      let next = `${base}/deployments?api-version=${FOUNDRY_API}`;
+      while (next) {
+        const r = await call("GET", next);
+        deployments.push(...(r.json.value ?? []));
+        next = r.json.nextLink ?? null;
+      }
+      return { name: acct.json.name, resourceGroup: m[1], location: acct.json.location, deployments };
+    },
+  };
+}
+
+/** Log Analytics query API, as the workspace's Log Analytics Reader. Rows come back as objects. */
+export function logAnalytics({ workspaceId, getToken, fetchImpl = fetch, sleep = defaultSleep }) {
+  if (!/^[0-9a-zA-Z-]{1,64}$/.test(String(workspaceId))) throw new AzureError(500, "LOG_WORKSPACE_ID is not a workspace id.");
+  const call = client({ getToken, resource: "https://api.loganalytics.io", fetchImpl, sleep });
+  return {
+    async query(query, { timespan }) {
+      const r = await call("POST", `https://api.loganalytics.io/v1/workspaces/${workspaceId}/query`, { body: { query, timespan } });
+      const table = r.json.tables?.[0] ?? { columns: [], rows: [] };
+      return table.rows.map((row) => Object.fromEntries(table.columns.map((c, i) => [c.name, row[i]])));
     },
   };
 }

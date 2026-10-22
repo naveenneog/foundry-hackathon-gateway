@@ -12,6 +12,7 @@ const SUBJECT_RE = /^[A-Za-z0-9._-]{1,64}$/;
 const NAME_RE = /^[a-z0-9][a-z0-9-]{0,38}[a-z0-9]$/;
 const MAX_BUDGET = 100_000_000;
 const MAX_HOURS = 24 * 90;
+const MAX_EXPIRES_DAYS = 3650;
 
 const fail = (m) => { throw new InputError(m); };
 
@@ -39,12 +40,25 @@ export function validateProductKeyRequest(body, { products }) {
   const owner = validateOwner(body?.owner);
   const name = String(body?.name ?? "").trim();
   if (!NAME_RE.test(name)) fail("Name: 2–40 lowercase letters, digits or dashes.");
-  const product = String(body?.product ?? "");
-  if (!products.includes(product)) fail(`Unknown product: ${product}`);
   let rotateDays = null;
   if (body?.rotateDays != null && body.rotateDays !== "") {
     rotateDays = Number(body.rotateDays);
     if (!Number.isInteger(rotateDays) || rotateDays < 1 || rotateDays > 90) fail("Rotate every 1–90 days.");
   }
-  return { owner, name, product, rotateDays, subscriptionId: `poc-${name}`, secretName: `poc-key-${name}` };
+  const ids = { subscriptionId: `poc-${name}`, secretName: `poc-key-${name}` };
+  // Chosen models (ADR-0015): the console makes the product. Otherwise a legacy pack by name.
+  if (body?.models !== undefined) {
+    if (!Array.isArray(body.models) || body.models.length === 0) fail("Grant at least one model.");
+    const monthlyTokens = Number(body?.monthlyTokens);
+    if (!Number.isInteger(monthlyTokens) || monthlyTokens < 1 || monthlyTokens > MAX_BUDGET) fail(`Monthly tokens: a whole number, 1–${MAX_BUDGET}.`);
+    let expiresDays = null;
+    if (body?.expiresDays != null && body.expiresDays !== "") {
+      expiresDays = Number(body.expiresDays);
+      if (!Number.isInteger(expiresDays) || expiresDays < 1 || expiresDays > MAX_EXPIRES_DAYS) fail(`Expires after 1–${MAX_EXPIRES_DAYS} days.`);
+    }
+    return { owner, name, product: null, models: body.models.map(String), monthlyTokens, expiresDays, rotateDays, ...ids };
+  }
+  const product = String(body?.product ?? "");
+  if (!products.includes(product)) fail(`Unknown product: ${product}`);
+  return { owner, name, product, rotateDays, ...ids };
 }

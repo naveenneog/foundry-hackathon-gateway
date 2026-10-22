@@ -62,6 +62,17 @@
             token-quota="__POOL_TOKENS__"
             token-quota-period="Monthly"
             estimate-prompt-tokens="false" />
+
+        <!-- Usage per key for the Key Dashboard (ADR-0015): the subscription is the key, so
+             regenerating a key keeps its history. Route "poc" separates product keys from the
+             hackathon routes, which emit the JWT's jti as KeyId. Product scope is allowed
+             (https://learn.microsoft.com/azure/api-management/llm-emit-token-metric-policy). -->
+        <llm-emit-token-metric namespace="hackathongw">
+            <dimension name="KeyId" value="@(context.Subscription.Id)" />
+            <dimension name="Model" value="@((string)context.Variables["pocModel"])" />
+            <dimension name="Product" value="@(context.Product.Id)" />
+            <dimension name="Route" value="poc" />
+        </llm-emit-token-metric>
     </inbound>
     <backend>
         <base />

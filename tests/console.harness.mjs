@@ -24,6 +24,10 @@ export function fakeVault() {
       secrets.set(name, s);
       return { ...s };
     },
+    async deleteSecret(name) {
+      calls.push(["deleteSecret", name]);
+      secrets.delete(name);
+    },
     async updateTags(name, tags) {
       const s = secrets.get(name);
       if (!s) throw Object.assign(new Error("SecretNotFound"), { status: 404 });
@@ -63,7 +67,8 @@ export function fakeArm({ signingKey = randomBytes(32).toString("base64") } = {}
     ["hackgw-revoked-keys", { value: ",", secret: false }],
   ]);
   const subscriptions = new Map();
-  const products = ["poc-claude-pack", "poc-deepseek-pack", "poc-tiny-pack"];
+  const products = new Map(["poc-claude-pack", "poc-deepseek-pack", "poc-tiny-pack"].map((id) => [id, { displayName: id, apis: [], policy: "" }]));
+  const calls = [];
   const newKey = () => randomBytes(16).toString("hex");
   const sub = (sid) => {
     const s = subscriptions.get(sid);
@@ -73,6 +78,8 @@ export function fakeArm({ signingKey = randomBytes(32).toString("base64") } = {}
   return {
     namedValues,
     subscriptions,
+    products,
+    calls,
     async getNamedValue(name) {
       const nv = namedValues.get(name);
       if (!nv) return null;
@@ -85,7 +92,7 @@ export function fakeArm({ signingKey = randomBytes(32).toString("base64") } = {}
       namedValues.set(name, { value, secret });
     },
     async listProducts() {
-      return products.map((id) => ({ id, displayName: id }));
+      return [...products.keys()].map((id) => ({ id, displayName: products.get(id).displayName }));
     },
     async getSubscription(sid) {
       const s = subscriptions.get(sid);
@@ -104,6 +111,32 @@ export function fakeArm({ signingKey = randomBytes(32).toString("base64") } = {}
     async setSubscriptionState(sid, state) {
       sub(sid).state = state;
     },
+    async deleteSubscription(sid) {
+      calls.push(["deleteSubscription", sid]);
+      subscriptions.delete(sid);
+    },
+    async getProduct(id) {
+      const p = products.get(id);
+      return p ? { id, displayName: p.displayName, description: p.description } : null;
+    },
+    async createProduct(id, { displayName, description }) {
+      calls.push(["createProduct", id]);
+      products.set(id, { displayName, description, apis: [], policy: "" });
+    },
+    async setProductPolicy(id, xml) {
+      products.get(id).policy = xml;
+    },
+    async linkProductApi(id, apiId) {
+      const p = products.get(id);
+      if (!p.apis.includes(apiId)) p.apis.push(apiId);
+    },
+    async hasProductSubscriptions(id) {
+      return [...subscriptions.values()].some((s) => s.scope === `/products/${id}`);
+    },
+    async deleteProduct(id) {
+      calls.push(["deleteProduct", id]);
+      products.delete(id);
+    },
   };
 }
 
@@ -111,16 +144,34 @@ export const ADMIN = { name: "admin@contoso.com", oid: "oid-admin", role: "admin
 export const ALICE = { name: "alice@contoso.com", oid: "oid-alice", role: "user" };
 export const BOB = { name: "bob@contoso.com", oid: "oid-bob", role: "user" };
 
+const deployment = (name, format, state = "Succeeded") => ({ name, properties: { model: { name, format, version: "1" }, provisioningState: state } });
+
+/** The Foundry account the gateway serves, as the ARM adapter returns it. */
+export function fakeFoundry() {
+  return {
+    async getAccount() {
+      return { name: "aif-test", resourceGroup: "rg-test", location: "eastus2", deployments: [
+        deployment("deepseek-v4-flash", "DeepSeek"),
+        deployment("claude-haiku-4-5", "Anthropic"),
+        deployment("claude-sonnet-5", "Anthropic"),
+        deployment("gpt-pending", "OpenAI", "Creating"),
+        deployment("mystery", "Unheard"),
+      ] };
+    },
+  };
+}
+
 export function harness({ now = Date.parse("2026-10-16T09:00:00Z") } = {}) {
   const vault = fakeVault();
   const arm = fakeArm();
+  const foundry = fakeFoundry();
   const audit = [];
   const clock = { now };
   const service = createService({
-    vault, arm,
+    vault, arm, foundry,
     clock: () => clock.now,
     log: (event) => audit.push(event),
     gatewayUrl: "https://gw.example.net",
   });
-  return { vault, arm, audit, clock, service };
+  return { vault, arm, foundry, audit, clock, service };
 }

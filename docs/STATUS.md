@@ -1,8 +1,9 @@
 # Status
 
-**Active packet:** none. P46 is done on branch `feature/admin-console` (not pushed, not
-merged). Filed from it: P47, P48.
-
+**Active packets:** P49–P54, the Key Dashboard (branch `feature/key-dashboard`, cut from
+`feature/admin-console` at `19a145c`; not pushed, not merged). Requirements of 2026-10-22 and
+the design: ADR-0015. U41–U45 are open. App Service has no quota in eastus2 (U40), so the live
+deployment uses the Container Apps path; the App Service path is checked by build and what-if.
 ### P46 — Key Console — DONE (branch `feature/admin-console`)
 
 A web app (`src/console/`) on Azure Container Apps, in the POC VNet, behind Entra sign-in. Its

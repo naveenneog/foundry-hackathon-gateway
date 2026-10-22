@@ -50,13 +50,19 @@ assumption is only closed if it names its blast radius and the detector that wou
 | U37 | In App Service authentication, which claim type carries Entra app roles in `X-MS-CLIENT-PRINCIPAL`? | RESOLVED |
 | U38 | Does Key Vault's ES256 `sign` return a signature Node verifies as IEEE P1363 against the key's JWK? | RESOLVED |
 | U39 | Can a VNet-integrated App Service reach the POC's private vault through the existing private DNS zone link? | RESOLVED |
+| U40 | Is there App Service quota in eastus2 for the dashboard's App Service path? | MEASURED |
+| U41 | Does API Management accept `llm-emit-token-metric` in a product-scope policy? | OPEN |
+| U42 | Does a Node Functions app on a Linux dedicated plan run a v3-model timer (`function.json`, ES module, no npm packages)? | OPEN |
+| U43 | What is the largest `token-quota` that `llm-token-limit` accepts? | OPEN |
+| U44 | Does a Container Apps job in a VNet-injected environment get a managed identity endpoint and reach the private vault? | OPEN |
+| U45 | Is Log Analytics Reader on the workspace enough for a managed identity to query `AppMetrics` through `api.loganalytics.io`? | OPEN |
 
 ---
 
 
 ## Open
 
-None.
+**U41–U45 (P49–P54):** logged 2026-10-22 before implementation; each is closed by research or a live measurement.
 
 ---
 
@@ -67,6 +73,12 @@ instance of U23, from a VM inside its virtual network; the final run (`10111658`
 on 2026-10-12. U31–U33 (P43) were researched, and U34 measured, on 2026-10-12. U35 (P45) was
 resolved on 2026-10-13.
 
+### U40 — Is there App Service quota in eastus2 for the dashboard's App Service path? — MEASURED
+
+**No, in this subscription.** On 2026-10-22, `az appservice plan create --is-linux -l eastus2`
+for B1, P0V3, P1V3 and S1 each returned "Operation cannot be completed without additional
+quota" (the same result as on 2026-10-16, ADR-0014). The App Service path (ADR-0015) is checked
+here with `az bicep build` and what-if, and the live deployment uses the Container Apps path.
 ### U39 — Can the console reach the POC's private vault through the existing private DNS zone link? — RESOLVED
 
 **Yes, from Container Apps.** Hosting moved from App Service, where the quota was 0 for every SKU

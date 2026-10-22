@@ -15,6 +15,7 @@ import { validateJwtRequest, validateProductKeyRequest, InputError } from "./val
 import { modelsApi } from "./service-models.mjs";
 import { resolveGrant, ensurePack } from "./packs.mjs";
 import { lifecycleApi } from "./service-lifecycle.mjs";
+import { usageApi } from "./service-usage.mjs";
 
 export class ServiceError extends Error {
   constructor(status, message) {
@@ -361,8 +362,9 @@ export function createService({ vault, arm, foundry = null, packTemplate: initia
   }
 
   const setPackTemplate = (xml) => { packTemplate = xml; };
+  const usageFns = usageApi({ vault, clock, owns, kindOf, visibleKey, ServiceError });
   const lifecycle = lifecycleApi({ vault, arm, clock, audit, requireAdmin, owns, kindOf, visibleKey, rotate, ServiceError, revokedName: NV.revoked, guard });
 
-  return { ...models, ...lifecycle, setPackTemplate, config, signingStatus, migrateSigningSecret, pushSigningSecret, rotateSigningSecret, issueJwt, issueJwtBulk, issueProductBulk, revealKey,
+  return { ...models, ...lifecycle, ...usageFns, setPackTemplate, config, signingStatus, migrateSigningSecret, pushSigningSecret, rotateSigningSecret, issueJwt, issueJwtBulk, issueProductBulk, revealKey,
     revokeJwt, issueProductKey, rotateProductKey, setProductState, setAutomation, runRotationSweep, bundlePublicKey, exportBundle };
 }

@@ -44,7 +44,7 @@ const routes = [
   ["GET", /^\/healthz$/, "open", () => ({ status: 200, body: { ok: true } })],
   ["GET", /^\/api\/me$/, "read-own", ({ actor }) => ({ body: { name: actor.name, role: actor.role } })],
   ["GET", /^\/api\/config$/, "read-own", ({ service }) => service.config()],
-  ["GET", /^\/api\/keys$/, "read-own", async ({ service, actor }) => ({ keys: await service.listKeys(actor) })],
+  ["GET", /^\/api\/keys$/, "read-own", async ({ service, actor, q }) => ({ keys: await service.listKeys(actor, { kind: q.get("kind") ?? undefined, status: q.get("status") ?? "active" }) })],
   ["GET", new RegExp(`^/api/keys/${NAME}$`), "read-own", ({ service, actor, m }) => service.revealKey(actor, m[1])],
   ["GET", /^\/api\/bundle-key$/, "read-own", ({ service }) => service.bundlePublicKey()],
   ["GET", /^\/api\/signing$/, "sync-secret", ({ service, actor }) => service.signingStatus(actor)],
@@ -57,7 +57,17 @@ const routes = [
   ["POST", new RegExp(`^/api/keys/${NAME}/rotate$`), "rotate", ({ service, actor, m }) => service.rotateProductKey(actor, m[1])],
   ["POST", new RegExp(`^/api/keys/${NAME}/state$`), "suspend", ({ service, actor, m, body }) => service.setProductState(actor, m[1], body?.state)],
   ["POST", new RegExp(`^/api/keys/${NAME}/automation$`), "automation", ({ service, actor, m, body }) => service.setAutomation(actor, m[1], body?.rotateDays)],
-  ["POST", /^\/api\/sweep$/, "rotate", ({ service }) => service.runRotationSweep()],
+  ["POST", /^\/api\/sweep$/, "rotate", ({ service }) => service.runSweep()],
+  ["GET", /^\/api\/models$/, "models", ({ service, actor }) => service.listModels(actor)],
+  ["POST", /^\/api\/models\/pin$/, "models", ({ service, actor, body }) => service.pinModel(actor, body)],
+  ["POST", /^\/api\/models\/unpin$/, "models", ({ service, actor, body }) => service.unpinModel(actor, body)],
+  ["POST", /^\/api\/jwt\/bulk$/, "issue", ({ service, actor, body }) => service.issueJwtBulk(actor, body)],
+  ["POST", /^\/api\/products\/bulk$/, "issue", ({ service, actor, body }) => service.issueProductBulk(actor, body)],
+  ["POST", new RegExp(`^/api/keys/${NAME}/owner$`), "owner", ({ service, actor, m, body }) => service.setOwner(actor, m[1], body)],
+  ["POST", new RegExp(`^/api/keys/${NAME}/archive$`), "archive", ({ service, actor, m }) => service.archiveKey(actor, m[1])],
+  ["POST", new RegExp(`^/api/keys/${NAME}/delete$`), "delete", ({ service, actor, m }) => service.deleteKey(actor, m[1])],
+  ["GET", /^\/api\/usage$/, "read-own", ({ service, actor, q }) => service.usage(actor, { kind: q.get("kind") ?? undefined, days: q.get("days") ?? undefined })],
+  ["GET", new RegExp(`^/api/usage/${NAME}$`), "read-own", ({ service, actor, m, q }) => service.keyUsage(actor, m[1], { days: q.get("days") ?? undefined })],
   ["POST", /^\/api\/export$/, "export", ({ service, actor, body }) => service.exportBundle(actor, body)],
 ];
 
@@ -117,7 +127,7 @@ export function createHandler({ service, env = process.env, log = (e) => console
         actor = { name: principal.name, oid: principal.oid, role: roleOf(principal) };
       }
       const body = req.method === "POST" ? await readJson(req) : undefined;
-      const out = await fn({ service, actor, body, m });
+      const out = await fn({ service, actor, body, m, q: url.searchParams });
       const wrapped = out && typeof out === "object" && "body" in out && Object.keys(out).every((k) => k === "body" || k === "status") ? out : { body: out };
       status = wrapped.status ?? 200;
       return send(res, status, wrapped.body, { "Content-Type": "application/json", "Cache-Control": "no-store" });

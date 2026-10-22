@@ -54,6 +54,12 @@ test("main: configuration is validated before the server starts", () => {
   assert.throws(() => loadConfig({ ...good, KEY_VAULT_URL: "http://kv-x.vault.azure.net" }), /KEY_VAULT_URL/);
   assert.throws(() => loadConfig({ ...good, GATEWAY_URL: "" }), /GATEWAY_URL/);
   assert.throws(() => loadConfig({ ...good, ROTATION_SWEEP_MINUTES: "-1" }), /ROTATION_SWEEP_MINUTES/);
+  assert.equal(c.foundryAccountId, null);
+  assert.equal(c.workspaceId, null);
+  const full = loadConfig({ ...good, FOUNDRY_ACCOUNT_ID: "/subscriptions/s/resourceGroups/r/providers/Microsoft.CognitiveServices/accounts/aif", LOG_WORKSPACE_ID: "0b6f2c1e-1111-2222-3333-444455556666" });
+  assert.equal(full.workspaceId, "0b6f2c1e-1111-2222-3333-444455556666");
+  assert.throws(() => loadConfig({ ...good, FOUNDRY_ACCOUNT_ID: "/subscriptions/s/x" }), /FOUNDRY_ACCOUNT_ID/);
+  assert.throws(() => loadConfig({ ...good, LOG_WORKSPACE_ID: "../x" }), /LOG_WORKSPACE_ID/);
 });
 
 test("main: the scheduler sweeps on its interval, logs failures, and can be disabled", async () => {
@@ -62,15 +68,26 @@ test("main: the scheduler sweeps on its interval, logs failures, and can be disa
   const timers = [];
   const fakeTimers = { setInterval: (fn, ms) => { timers.push({ fn, ms }); return timers.length; }, clearInterval: () => {} };
   let fail = false;
-  const service = { runRotationSweep: async () => { ticks.push(1); if (fail) throw new Error("vault down"); return { rotated: ["a"], failed: [] }; } };
+  const service = { runSweep: async () => { ticks.push(1); if (fail) throw new Error("vault down"); return { rotated: ["a"], archived: ["b", "c"], deleted: [], failed: [] }; } };
   const stop = startScheduler({ service, minutes: 60, log: (e) => logs.push(e), timers: fakeTimers });
   assert.equal(timers[0].ms, 3_600_000);
   await timers[0].fn();
   fail = true;
   await timers[0].fn();
   assert.equal(ticks.length, 2);
-  assert.ok(logs.some((e) => e.action === "rotation-sweep" && e.rotated === 1));
+  assert.ok(logs.some((e) => e.action === "sweep" && e.rotated === 1 && e.archived === 2 && e.deleted === 0));
   assert.ok(logs.some((e) => e.level === "error" && /vault down/.test(e.error)));
   stop();
   assert.equal(startScheduler({ service, minutes: 0, log: () => {}, timers: fakeTimers }), null);
+});
+
+test("automation: one sweep, a summary log line, and a failing exit code when any key failed", async () => {
+  const { runOnce } = await import("../src/console/automation.mjs");
+  const logs = [];
+  const ok = await runOnce({ service: { runSweep: async () => ({ rotated: ["a"], archived: [], deleted: ["d"], failed: [] }) }, log: (e) => logs.push(e) });
+  assert.equal(ok, 0);
+  assert.deepEqual(logs.at(-1), { level: "info", actor: "automation", action: "sweep", rotated: 1, archived: 0, deleted: 1, failed: [] });
+  assert.equal(await runOnce({ service: { runSweep: async () => ({ rotated: [], archived: [], deleted: [], failed: ["x"] }) }, log: () => {} }), 1);
+  assert.equal(await runOnce({ service: { runSweep: async () => { throw new Error("vault down"); } }, log: (e) => logs.push(e) }), 1);
+  assert.ok(logs.some((e) => e.level === "error" && /vault down/.test(e.error)));
 });

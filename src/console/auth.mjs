@@ -17,7 +17,7 @@ const NAME_TYPES = ["preferred_username", "upn",
   "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress"];
 
 const ADMIN_ACTIONS = new Set(["issue", "revoke", "rotate", "export", "sync-secret", "automation",
-  "suspend", "list-all"]);
+  "suspend", "list-all", "models", "archive", "delete", "owner"]);
 
 export function parsePrincipal(headers, env = process.env) {
   if (String(env.WEBSITE_AUTH_ENABLED ?? "").toLowerCase() !== "true") return null;

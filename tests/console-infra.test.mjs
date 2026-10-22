@@ -142,3 +142,13 @@ test("usage telemetry: metrics on the POC routes, no headers or bodies logged", 
   assert.match(tel, /backend: \{ request: noPayload, response: noPayload \}/);
   assert.match(deploy, /infra\/console-telemetry\.bicep/);
 });
+test("deploy script: refuses to run when the active tenant is not the subscription's, before any Entra change", () => {
+  // `az ad` and Graph calls use the CLI's active account, not --subscription. On a shared machine
+  // another process can switch it, and the app registration would be made in the wrong tenant.
+  const guard = deploy.indexOf("Assert-SameTenant");
+  assert.ok(guard > 0, "a tenant guard exists");
+  assert.match(deploy, /az account show --subscription \$Subscription --query tenantId/);
+  assert.match(deploy, /az account show --query tenantId/);
+  const firstAd = deploy.search(/Invoke-Az ad /);
+  assert.ok(deploy.indexOf("Assert-SameTenant\n") < firstAd || deploy.indexOf("Assert-SameTenant\r\n") < firstAd, "guard runs before the first az ad call");
+});

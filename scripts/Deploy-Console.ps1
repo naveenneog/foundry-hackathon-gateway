@@ -52,6 +52,16 @@ function Invoke-Az {
     if ($text.Trim()) { return $text | ConvertFrom-Json }
 }
 
+# Entra calls (az ad, Graph) use the CLI's ACTIVE account, not --subscription. On a shared machine
+# another process can switch it; the app registration would then be made in the wrong tenant.
+function Assert-SameTenant {
+    $want = (& az account show --subscription $Subscription --query tenantId -o tsv 2>$null)
+    $have = (& az account show --query tenantId -o tsv 2>$null)
+    if (-not $want -or $want -ne $have) {
+        throw "The Azure CLI's active account is in a different tenant from $Subscription. Run 'az account set --subscription $Subscription' (or use a separate AZURE_CONFIG_DIR) and retry."
+    }
+}
+Assert-SameTenant
 Write-Host "Discovering the gateway in $ResourceGroup..."
 $apim = @(Invoke-Az apim list --subscription $Subscription -g $ResourceGroup --query '[].{name:name,url:gatewayUrl}' -o json)[0]
 if (-not $apim) { throw "No API Management instance in $ResourceGroup." }

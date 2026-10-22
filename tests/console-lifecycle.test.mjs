@@ -133,3 +133,24 @@ test("runSweep: rotates due keys, archives expired ones (suspending products), d
   assert.ok(h.arm.products.has(h.vault.secrets.get("poc-key-rot").tags.product), "a pack still used by another key is kept");
   assert.deepEqual(later.failed, []);
 });
+
+test("archiving an unexpired hackathon key revokes it at the gateway (security review)", async () => {
+  const h = harness();
+  await h.service.migrateSigningSecret(ADMIN);
+  const k = await issueJwt(h, "alice@contoso.com", 48);
+  await h.service.archiveKey(ADMIN, k.name);
+  assert.match(h.arm.namedValues.get("hackgw-revoked-keys").value, new RegExp(`,${k.jti},`), "the jti is on the gateway's revocation list");
+  const tags = h.vault.secrets.get(k.name).tags;
+  assert.equal(tags.revoked, "true");
+  assert.equal(tags.archived, "true");
+});
+
+test("deleting an unexpired hackathon key is refused unless its jti is revoked (defence in depth)", async () => {
+  const h = harness();
+  await h.service.migrateSigningSecret(ADMIN);
+  const k = await issueJwt(h, "alice@contoso.com", 48);
+  const s = h.vault.secrets.get(k.name);
+  s.tags = { ...s.tags, archived: "true", archivedAt: s.tags.expires };
+  await assert.rejects(h.service.deleteKey(ADMIN, k.name), { status: 409, message: /revoke/i });
+  assert.ok(h.vault.secrets.has(k.name));
+});

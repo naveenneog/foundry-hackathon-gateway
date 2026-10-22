@@ -9,7 +9,7 @@ import { mintKey } from "../keys.mjs";
 import { generateSecret } from "../keys.mjs";
 import { createBundle, generatePassphrase } from "./bundle.mjs";
 import { jwtHandout, productHandout } from "./handout.mjs";
-import { addRevoked } from "./revocation.mjs";
+import { addRevoked, isRevoked } from "./revocation.mjs";
 import { isDue, otherSlot } from "./rotation.mjs";
 import { validateJwtRequest, validateProductKeyRequest, InputError } from "./validate.mjs";
 import { modelsApi } from "./service-models.mjs";
@@ -363,7 +363,17 @@ export function createService({ vault, arm, foundry = null, packTemplate: initia
 
   const setPackTemplate = (xml) => { packTemplate = xml; };
   const usageFns = usageApi({ vault, clock, owns, kindOf, visibleKey, ServiceError });
-  const lifecycle = lifecycleApi({ vault, arm, clock, audit, requireAdmin, owns, kindOf, visibleKey, rotate, ServiceError, revokedName: NV.revoked, guard });
+  const revocations = {
+    async add(jti) {
+      const current = (await arm.getNamedValue(NV.revoked))?.value ?? ",";
+      const next = addRevoked(current, jti);
+      if (next !== current) await arm.setNamedValue(NV.revoked, next, { secret: false });
+    },
+    async has(jti) {
+      return isRevoked((await arm.getNamedValue(NV.revoked))?.value ?? ",", jti);
+    },
+  };
+  const lifecycle = lifecycleApi({ vault, arm, clock, audit, requireAdmin, owns, kindOf, visibleKey, rotate, ServiceError, revokedName: NV.revoked, guard, revocations });
 
   return { ...models, ...lifecycle, ...usageFns, setPackTemplate, config, signingStatus, migrateSigningSecret, pushSigningSecret, rotateSigningSecret, issueJwt, issueJwtBulk, issueProductBulk, revealKey,
     revokeJwt, issueProductKey, rotateProductKey, setProductState, setAutomation, runRotationSweep, bundlePublicKey, exportBundle };

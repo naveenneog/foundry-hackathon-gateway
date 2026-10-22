@@ -9,7 +9,8 @@ const KINDS = ["jwt", "product"];
 const STATUSES = ["active", "archived"];
 
 export function lifecycleApi(ctx) {
-  const { vault, arm, clock, audit, requireAdmin, owns, kindOf, visibleKey, rotate, ServiceError, revokedName, guard } = ctx;
+  const { vault, arm, clock, audit, requireAdmin, owns, kindOf, visibleKey, rotate, ServiceError, revokedName, guard, revocations } = ctx;
+  const unexpired = (s) => !(Date.parse(s.tags?.expires ?? "") <= clock());
   const nowIso = () => new Date(clock()).toISOString();
 
   function shape(s, now) {
@@ -42,7 +43,14 @@ export function lifecycleApi(ctx) {
     if (kind === "product" && s.tags.subscription) {
       await arm.setSubscriptionState(s.tags.subscription, "suspended");
     }
-    const tags = { ...s.tags, archived: "true", archivedAt: nowIso(), archiveReason: reason, ...(kind === "product" ? { state: "suspended" } : {}) };
+    // An archived key must not work: a signed key that has not expired goes on the gateway's
+    // revocation list, because its token is self-contained (security review, 2026-10-22).
+    let revokedTags = {};
+    if (kind === "jwt" && s.tags.jti && s.tags.revoked !== "true" && unexpired(s)) {
+      await revocations.add(s.tags.jti);
+      revokedTags = { revoked: "true", revokedAt: nowIso() };
+    }
+    const tags = { ...s.tags, ...revokedTags, archived: "true", archivedAt: nowIso(), archiveReason: reason, ...(kind === "product" ? { state: "suspended" } : {}) };
     await vault.updateTags(s.name, tags);
     audit(actorName, "archive-key", { name: s.name, reason });
   }
@@ -55,6 +63,10 @@ export function lifecycleApi(ctx) {
   }
 
   async function removeKey(s, actorName) {
+    // Deleting the secret loses the jti; an unexpired token must already be refused by the gateway.
+    if (kindOf(s) === "jwt" && unexpired(s) && !(s.tags.jti && await revocations.has(s.tags.jti))) {
+      throw new ServiceError(409, "Revoke this signed key before deleting it: it has not expired and the gateway would still accept it.");
+    }
     if (kindOf(s) === "product" && s.tags.subscription) {
       await arm.deleteSubscription(s.tags.subscription);
       const pack = s.tags.product;

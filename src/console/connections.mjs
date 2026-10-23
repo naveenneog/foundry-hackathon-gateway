@@ -39,6 +39,15 @@ const operations = {
 };
 const suffix = { openai: "v1", claude: "claude", productOpenai: "poc/v1", productClaude: "poc/claude" };
 
+function compactPolicy(xml) {
+  // The APIM policy PUT measured a 16 KiB payload limit. Remove only comments and formatting,
+  // not governance statements; the source templates remain readable and unchanged.
+  const compact = xml.replace(/<!--[\s\S]*?-->/g, "").replace(/\r\n/g, "\n")
+    .replace(/^[ \t]*\/\/[^\n]*$/gm, "").split("\n").map((s) => s.trim()).filter(Boolean).join("\n");
+  if (Buffer.byteLength(compact) > 16 * 1024) throw new Error("Connection policy exceeds APIM's 16 KiB limit after removing formatting.");
+  return compact;
+}
+
 export async function provisionConnection(arm, connection, account, templates) {
   const c = connection;
   const endpoints = accountEndpoints(account);
@@ -72,7 +81,7 @@ export async function provisionConnection(arm, connection, account, templates) {
     for (const [id, method, urlTemplate] of ops) {
       await arm.putOperation(apiId, id, { displayName: id, method, urlTemplate, responses: [{ statusCode: 200 }] });
     }
-    await arm.setApiPolicy(apiId, policy);
+    await arm.setApiPolicy(apiId, compactPolicy(policy));
     const noPayload = { headers: [], body: { bytes: 0 } };
     await arm.setApiDiagnostic(apiId, {
       metrics: true, alwaysLog: "allErrors", verbosity: "information", httpCorrelationProtocol: "W3C",

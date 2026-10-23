@@ -54,6 +54,14 @@ test("attachment provisions full policy copies, account-local model maps and ope
   assert.deepEqual([...openai.operations.keys()].sort(), ["chat-completions", "list-models"]);
   assert.equal(openai.diagnostic.metrics, true);
   assert.deepEqual(openai.diagnostic.frontend.request, { headers: [], body: { bytes: 0 } });
+  for (const [id, api] of arm.apis) {
+    assert.ok(Buffer.byteLength(api.policy) <= 16 * 1024, `${id}: APIM's measured 16 KiB policy payload limit`);
+    if (!id.includes("product")) {
+      for (const guard of ["validate-jwt", "llm-token-limit", "grantedModels", "hackgw-revoked-keys"]) {
+        assert.ok(api.policy.includes(guard), `${id} retains ${guard}`);
+      }
+    }
+  }
   await arm.setNamedValue(c.mapNames.openai, "pinned=deployment", { secret: false });
   await provisionConnection(arm, c, account, templates);
   assert.equal(arm.namedValues.get(c.mapNames.openai).value, "pinned=deployment");

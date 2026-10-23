@@ -1,6 +1,6 @@
-// Key Dashboard — the per-key drawer: details, the key's own usage and, for admins, its owner,
-// rotation and lifecycle actions. Destructive actions confirm first; every change refreshes the
-// list, and the drawer redraws from the refreshed key (or closes when the key left the list).
+// Key Dashboard — the per-key drawer: details, the key's own usage, who it is issued to, rotation
+// and lifecycle actions. Destructive actions confirm first; every change refreshes the list, and
+// the drawer redraws from the refreshed key (or closes when the key left the list).
 
 import { apiPath, cachedGet, keyPath, post } from "./api.js";
 import { usageBody } from "./charts.js";
@@ -45,7 +45,7 @@ export async function openKeyDrawer(ctx, key, { opener, onChanged }) {
     const closeX = el("button", { type: "button", class: "btn-icon", "data-focus-id": "drawer-close", "aria-label": "Close details" }, icon("close"));
     closeX.addEventListener("click", () => dialog.close());
     let reveal = null;
-    if (["active", "suspended"].includes(k.status)) {
+    if (["active", "scheduled", "suspended"].includes(k.status)) {
       reveal = el("button", { type: "button", class: "btn btn-primary", "data-focus-id": "drawer-reveal" }, icon("key"), "Reveal key");
       reveal.addEventListener("click", busy(reveal, () => revealKey({ name: k.name, label: keyTitle(k), kind: k.kind, models: k.models, opener: reveal })));
     }
@@ -61,16 +61,16 @@ export async function openKeyDrawer(ctx, key, { opener, onChanged }) {
         reveal ? el("div", { class: "row" }, reveal, el("p", { class: "field-hint" }, "Shown masked; clears itself after 60 seconds.")) : null,
         detailsSection(),
         usageSection(),
-        ctx.admin && !archived ? ownerSection() : null,
-        ctx.admin && !archived && k.kind === "product" ? rotationSection() : null,
-        ctx.admin ? lifecycleSection(archived) : null));
+        archived ? null : ownerSection(),
+        !archived && k.kind === "product" ? rotationSection() : null,
+        lifecycleSection(archived)));
     if (refocus) (panel.querySelector(`[data-focus-id="${CSS.escape(refocus)}"]`) ?? closeX).focus();
   }
 
   function detailsSection() {
     const rows = [];
     const add = (term, ...value) => rows.push(el("dt", {}, term), el("dd", {}, ...value));
-    add("Owner", k.owner || el("span", { class: "muted" }, "none — only admins can see this key"));
+    add("Issued to", k.owner || el("span", { class: "muted" }, "not recorded"));
     if (k.label) add("Label", k.label);
     if (k.subject) add("Subject", k.subject);
     add("Models", Array.isArray(k.models) && k.models.length
@@ -78,6 +78,7 @@ export async function openKeyDrawer(ctx, key, { opener, onChanged }) {
       : "—");
     if (k.kind === "jwt") add("Token budget", `${fmtInt(k.budget)} tokens over the key's life`);
     if (k.kind === "product" && k.monthlyTokens) add("Monthly tokens", `${fmtInt(k.monthlyTokens)} a month`);
+    if (k.notBefore) add(k.status === "scheduled" ? "Starts" : "Started", fmtDateTime(k.notBefore), el("span", { class: "muted" }, ` (${fmtRelative(k.notBefore)})`));
     if (k.expires) add("Expires", fmtDateTime(k.expires), el("span", { class: "muted" }, ` (${fmtRelative(k.expires)})`));
     if (k.issuedBy) add("Issued by", k.issuedBy);
     if (k.jti) add("Key id", el("span", { class: "mono" }, k.jti));
@@ -110,10 +111,10 @@ export async function openKeyDrawer(ctx, key, { opener, onChanged }) {
   }
 
   function ownerSection() {
-    const owner = field({ label: "Owner (sign-in name)", control: el("input", { type: "email", class: "input", value: k.owner ?? "", autocomplete: "off", spellcheck: "false" }),
-      hint: "The owner sees this key on their dashboard and can reveal it." });
+    const owner = field({ label: "Issued to", control: el("input", { type: "email", class: "input", value: k.owner ?? "", autocomplete: "off", spellcheck: "false" }),
+      hint: "For attribution and usage; this person does not get dashboard access." });
     const label = field({ label: "Label", optional: true, control: el("input", { type: "text", class: "input", value: k.label ?? "", maxlength: String(LIMITS.label) }) });
-    const save = el("button", { type: "submit", class: "btn btn-secondary", "data-focus-id": "drawer-owner" }, "Save owner and label");
+    const save = el("button", { type: "submit", class: "btn btn-secondary", "data-focus-id": "drawer-owner" }, "Save");
     const form = el("form", { class: "form-grid", novalidate: true }, owner.wrap, label.wrap, el("div", { class: "form-actions" }, save));
     form.addEventListener("submit", busy(save, async () => {
       const errors = {};
@@ -122,9 +123,9 @@ export async function openKeyDrawer(ctx, key, { opener, onChanged }) {
       if (label.control.value.trim().length > LIMITS.label) errors.label = `Label: up to ${LIMITS.label} characters.`;
       if (!showErrors({ owner, label }, errors)) return;
       await post(keyPath(k.name, "owner"), { owner: normalizeOwner(owner.control.value), label: label.control.value.trim() });
-      await after(`Saved the owner of ${keyTitle(k)}.`);
+      await after(`Saved who ${keyTitle(k)} is issued to.`);
     }));
-    return el("section", { class: "drawer-section" }, el("h3", { class: "section-title" }, "Owner and label"), form);
+    return el("section", { class: "drawer-section" }, el("h3", { class: "section-title" }, "Issued to and label"), form);
   }
 
   function rotationSection() {
@@ -180,7 +181,7 @@ export async function openKeyDrawer(ctx, key, { opener, onChanged }) {
         await after(`Deleted ${t}.`);
       }));
     } else {
-      if (k.kind === "jwt" && k.status === "active") {
+      if (k.kind === "jwt" && ["active", "scheduled"].includes(k.status)) {
         buttons.push(action("Revoke key", "danger", async () => {
           const ok = await confirmDialog({
             title: `Revoke ${t}?`, confirmLabel: "Revoke key",

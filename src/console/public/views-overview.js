@@ -27,7 +27,7 @@ function othersLine(keys) {
 
 export function renderOverview(root, ctx) {
   const refresh = el("button", { type: "button", class: "btn btn-secondary" }, icon("refresh"), "Refresh");
-  const sweep = ctx.admin ? el("button", { type: "button", class: "btn btn-secondary" }, "Run automation now") : null;
+  const sweep = el("button", { type: "button", class: "btn btn-secondary" }, "Run automation now");
   const kpis = el("div", { class: "kpis" });
   const chartSlot = el("div", {});
   const topSlot = el("div", {});
@@ -36,7 +36,7 @@ export function renderOverview(root, ctx) {
   addChildren(root,
     el("header", { class: "view-head" },
       el("div", {}, el("h1", { class: "view-title", tabindex: "-1" }, "Overview"),
-        el("p", { class: "lede" }, ctx.admin ? "Every key and its usage, hackathon and product." : "Your keys and their usage.")),
+        el("p", { class: "lede" }, "Every key and its usage, short-lived and product.")),
       el("div", { class: "view-actions" }, periodSwitch(ctx.period, (d) => { ctx.setPeriod(d); load(false); }), refresh, sweep)),
     kpis,
     card("Tokens over time", chartSlot),
@@ -63,7 +63,7 @@ export function renderOverview(root, ctx) {
     const count = (kind) => (keys[kind] ? keys[kind].filter((k) => keyStatus(k) === "active").length : null);
 
     setChildren(kpis,
-      kpi({ label: "Active hackathon keys", value: keys.jwt ? fmtInt(count("jwt")) : "—", exact: count("jwt") ?? undefined, cls: "kpi-jwt", sub: keys.jwt ? othersLine(keys.jwt) : "could not be loaded" }),
+      kpi({ label: "Active short-lived keys", value: keys.jwt ? fmtInt(count("jwt")) : "—", exact: count("jwt") ?? undefined, cls: "kpi-jwt", sub: keys.jwt ? othersLine(keys.jwt) : "could not be loaded" }),
       kpi({ label: "Active product keys", value: keys.product ? fmtInt(count("product")) : "—", exact: count("product") ?? undefined, cls: "kpi-product", sub: keys.product ? othersLine(keys.product) : "could not be loaded" }),
       kpi({ label: `Tokens, last ${periodLabel(days)}`, value: fmtCompact(total("tokens")), exact: total("tokens"), sub: split("tokens") }),
       kpi({ label: `Requests, last ${periodLabel(days)}`, value: fmtCompact(total("requests")), exact: total("requests"), sub: split("requests") }));
@@ -80,7 +80,7 @@ export function renderOverview(root, ctx) {
     const unit = step >= DAY ? "day" : "hour";
     const noted = kinds.some((kind) => usage[kind].note);
     setChildren(chartSlot,
-      timeChart({ title: `Tokens per ${unit}, hackathon and product keys, last ${periodLabel(days)}`, times, step, height: 260,
+      timeChart({ title: `Tokens per ${unit}, short-lived and product keys, last ${periodLabel(days)}`, times, step, height: 260,
         series: kinds.map((kind, i) => ({ name: KINDS[kind].label, cls: KINDS[kind].cls, values: values[i] })) }),
       el("p", { class: "field-hint" }, `${unit === "day" ? "Days are UTC days." : "Hours are in your local time."}${noted ? "" : " Usage arrives a few minutes after each call."}`));
 
@@ -114,7 +114,7 @@ export function renderOverview(root, ctx) {
   }
 
   refresh.addEventListener("click", busy(refresh, () => load(true)));
-  sweep?.addEventListener("click", busy(sweep, async () => {
+  sweep.addEventListener("click", busy(sweep, async () => {
     const ok = await confirmDialog({
       title: "Run the automation now?", tone: "warn", confirmLabel: "Run now",
       message: "This runs the same sweep as the scheduled job:",

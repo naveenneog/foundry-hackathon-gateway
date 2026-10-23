@@ -13,6 +13,7 @@ export const LIMITS = Object.freeze({
   budget: [1, 100_000_000],
   monthlyTokens: [1, 100_000_000],
   hours: [0, 2160],
+  startInHours: [0, 2160],
   rotateDays: [1, 90],
   expiresDays: [1, 3650],
   label: 80,
@@ -21,15 +22,15 @@ export const LIMITS = Object.freeze({
 });
 
 export const KINDS = Object.freeze({
-  jwt: Object.freeze({ title: "Hackathon keys", label: "Hackathon", route: "hackathon", cls: "s-jwt", noun: "hackathon key" }),
+  jwt: Object.freeze({ title: "Short-lived keys", label: "Short-lived", route: "short-lived", cls: "s-jwt", noun: "short-lived key" }),
   product: Object.freeze({ title: "Product keys", label: "Product", route: "product", cls: "s-product", noun: "product key" }),
 });
 export const ROUTE_LABEL = Object.freeze({ openai: "OpenAI-compatible", claude: "Claude" });
-export const STATUSES = Object.freeze(["active", "suspended", "revoked", "expired", "archived"]);
+export const STATUSES = Object.freeze(["active", "scheduled", "suspended", "revoked", "expired", "archived"]);
 
 export const periodLabel = (days) => (days === 1 ? "24 hours" : `${days} days`);
 /**
- * What a key is called in lists: the hackathon subject, else its name without the "poc-key-"
+ * What a key is called in lists: the short-lived key's subject, else its name without the "poc-key-"
  * storage prefix. Labels are free text shared by many keys, so they never stand in for this.
  */
 export const keyTitle = (k) => k?.subject || String(k?.name ?? "").replace(/^poc-key-(?=.)/, "");
@@ -51,8 +52,8 @@ export const normalizeOwner = (v) => str(v).toLowerCase();
 
 export function checkOwner(v) {
   const owner = normalizeOwner(v);
-  if (!owner) return "Enter the owner's sign-in name.";
-  return EMAIL_RE.test(owner) ? null : "Owner: the person's sign-in name, an email address such as alex@contoso.com.";
+  if (!owner) return "Enter who the key is issued to: an email address.";
+  return EMAIL_RE.test(owner) ? null : "Issued to: an email address such as alex@contoso.com.";
 }
 
 export function checkSubject(v) {
@@ -78,6 +79,14 @@ export function checkHours(v) {
   const n = num(str(v));
   const max = LIMITS.hours[1];
   return Number.isFinite(n) && n > 0 && n <= max ? null : `Validity: more than 0 and at most ${fmtInt(max)} hours (90 days).`;
+}
+
+/** Hours from now until the key starts: blank is 0 (immediately); decimals are fine. */
+export function checkStart(v) {
+  if (str(v) === "") return null;
+  const n = num(str(v));
+  const max = LIMITS.startInHours[1];
+  return Number.isFinite(n) && n >= 0 && n <= max ? null : `Starts in: 0 to ${fmtInt(max)} hours from now.`;
 }
 
 export function checkModelChoice(mode, models) {
@@ -115,10 +124,12 @@ export function validateSettings(kind, v) {
   if (kind === "jwt") {
     put("budget", checkWhole(v.budget, LIMITS.budget, "a token budget"));
     put("hours", checkHours(v.hours));
+    put("startInHours", checkStart(v.startInHours));
     const label = str(v.label);
     put("label", label.length > LIMITS.label ? `Label: up to ${LIMITS.label} characters.` : null);
     body.budget = num(str(v.budget));
     body.hours = num(str(v.hours));
+    body.startInHours = str(v.startInHours) === "" ? 0 : num(str(v.startInHours));
     if (label) body.label = label;
   } else {
     put("monthlyTokens", checkWhole(v.monthlyTokens, LIMITS.monthlyTokens, "a monthly token budget"));
@@ -131,7 +142,7 @@ export function validateSettings(kind, v) {
   return { ok: Object.keys(errors).length === 0, errors, body };
 }
 
-/** A single-issue form: the shared settings plus owner and subject (hackathon) or name (product). */
+/** A single-issue form: the shared settings plus owner and subject (short-lived) or name (product). */
 export function validateIssue(kind, v) {
   const { errors, body } = validateSettings(kind, v);
   const owner = normalizeOwner(v.owner);
@@ -210,8 +221,9 @@ export function parseCsv(text, delimiter = detectDelimiter(text)) {
 }
 
 /**
- * Maps CSV records to bulk entries. A header row naming "owner" (or "email") and "subject"
- * (hackathon) or "name" (product) picks the columns; without one, the columns are owner then id.
+ * Maps CSV records to bulk entries. A header row naming "owner" (or "email" or "issued to") and
+ * "subject" (short-lived) or "name" (product) picks the columns; without one, the columns are owner
+ * then id.
  */
 export function entriesFromCsv(records, kind) {
   const field = idField(kind);
@@ -220,7 +232,7 @@ export function entriesFromCsv(records, kind) {
   let header = false;
   if (rows.length) {
     const head = rows[0].fields.map((f) => f.trim().toLowerCase());
-    const owner = head.findIndex((h) => h === "owner" || h === "email");
+    const owner = head.findIndex((h) => ["owner", "email", "issued to", "issued_to", "issued-to"].includes(h));
     const id = head.indexOf(field);
     if (owner !== -1 && id !== -1) {
       cols = [owner, id];
@@ -253,6 +265,28 @@ export function chunk(list, size = BATCH_SIZE) {
   const out = [];
   for (let i = 0; i < list.length; i += size) out.push(list.slice(i, i + size));
   return out;
+}
+
+/**
+ * Joins the server's per-batch CSV texts (keys.csv, index.csv): the first batch keeps its header
+ * line, later batches add only their data lines. The cells are the server's, already
+ * formula-escaped; they are never re-parsed or rebuilt here.
+ */
+export function appendCsv(current, next) {
+  if (typeof next !== "string" || next === "") return current ?? null;
+  const trimmed = (t) => t.replace(/(?:\r\n|\n|\r)+$/, "");
+  if (current === null || current === undefined || current === "") return trimmed(next);
+  const end = /\r\n|\n|\r/.exec(next);
+  const body = end ? trimmed(next.slice(end.index + end[0].length)) : "";
+  return body ? `${trimmed(current)}\r\n${body}` : current;
+}
+
+/** short-lived-keys-20261023-0839.csv: kind, which file, and the run's start in UTC. */
+export function csvFilename(kind, which, at = Date.now()) {
+  const d = new Date(at);
+  const p = (n) => String(n).padStart(2, "0");
+  const stamp = `${d.getUTCFullYear()}${p(d.getUTCMonth() + 1)}${p(d.getUTCDate())}-${p(d.getUTCHours())}${p(d.getUTCMinutes())}`;
+  return `${kind === "jwt" ? "short-lived" : "product"}-${which === "keys" ? "keys" : "index"}-${stamp}.csv`;
 }
 
 export function toCsv(rows) {
@@ -298,6 +332,20 @@ export function fmtDate(v, locale, options = { dateStyle: "medium" }) {
 }
 
 export const fmtDateTime = (v, locale) => fmtDate(v, locale, { dateStyle: "medium", timeStyle: "short" });
+export const fmtShortDateTime = (v, locale) => fmtDate(v, locale, { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
+
+/**
+ * When a short-lived key would be valid: from now + start until from + hours, as the server mints
+ * it (nbf = now + startInHours, exp = nbf + hours). Null while either value is not valid.
+ */
+export function activeWindow(startInHours, hours, now = Date.now()) {
+  const start = str(startInHours) === "" ? 0 : num(str(startInHours));
+  const span = num(str(hours));
+  const [lo, hi] = LIMITS.startInHours;
+  if (!Number.isFinite(start) || start < lo || start > hi || !Number.isFinite(span) || span <= 0 || span > LIMITS.hours[1]) return null;
+  const from = now + Math.round(start * HOUR);
+  return { from, until: from + Math.round(span * HOUR) };
+}
 
 export function fmtRelative(v, now = Date.now(), locale) {
   const d = toDate(v);
@@ -419,7 +467,19 @@ export function keyStatus(k, now = Date.now()) {
   if (k?.revoked === true || k?.revoked === "true") return "revoked";
   if (k?.state === "suspended") return "suspended";
   if (k?.expires && Date.parse(k.expires) <= now) return "expired";
+  if (k?.notBefore && Date.parse(k.notBefore) > now) return "scheduled";
   return "active";
+}
+
+/**
+ * The only fields of a bulk-issue row that a view may hold: who and what, never the key. The
+ * server's rows also carry the token (short-lived) or the subscription key (product).
+ */
+export function safeIssued(kind, row) {
+  const r = row ?? {};
+  return kind === "jwt"
+    ? { name: r.name, owner: r.owner, subject: r.subject, notBefore: r.notBefore ?? null, expiresAt: r.expiresAt ?? null }
+    : { name: r.name, owner: r.owner, label: r.label, expiresAt: r.expiresAt ?? null };
 }
 
 /** In the archive: the server's flag (set for archived, revoked and expired keys), else the status. */
@@ -467,7 +527,7 @@ export function sortKeys(rows, by = "key", dir = "asc") {
 }
 
 /**
- * Model options for the issue forms. Hackathon keys grant pinned gateway aliases; product keys
+ * Model options for the issue forms. Short-lived keys grant pinned gateway aliases; product keys
  * grant Foundry deployment names, which clients send as `model` unchanged.
  */
 export function modelOptions(kind, config) {

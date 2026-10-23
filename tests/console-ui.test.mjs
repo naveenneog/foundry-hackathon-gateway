@@ -1,9 +1,11 @@
 // Key Dashboard UI: static security invariants plus unit tests for the browser modules that run
-// under Node (lib.js and api.js have no DOM; dom.js touches `document` only when called).
+// under Node (lib.js and api.js have no DOM; dom.js and secret.js touch `document` only when
+// called, so they run here against a small stub document and a stubbed fetch).
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
+import { resolveObjectURL } from "node:buffer";
 
 const PUBLIC = new URL("../src/console/public/", import.meta.url);
 const read = (name) => readFileSync(new URL(name, PUBLIC), "utf8");
@@ -16,6 +18,7 @@ const charter = JSON.parse(readFileSync(new URL("../.ironclad/charter.json", imp
 const lib = await import(new URL("lib.js", PUBLIC));
 const api = await import(new URL("api.js", PUBLIC));
 const dom = await import(new URL("dom.js", PUBLIC));
+const secret = await import(new URL("secret.js", PUBLIC));
 
 const offenders = (re, files = JS) => files.filter((n) => re.test(source[n]));
 
@@ -93,10 +96,38 @@ test("network access goes through api.js only; secrets are fetched by secret.js 
   assert.deepEqual(offenders(/\bsetInterval\s*\(/), ["secret.js"], "the only interval is the reveal countdown");
 });
 
+test("key values in issue responses are handled by secret.js alone; the bulk result never holds one", () => {
+  assert.deepEqual(offenders(/\.token\b|\bkeysCsv\b|\bindexCsv\b/), ["secret.js"], "tokens and the server's CSVs stay in secret.js");
+  assert.deepEqual(offenders(/\/api\/(?:jwt|products)(?:\/bulk)?["`]/), ["secret.js"], "issue requests are sent from secret.js");
+  assert.doesNotMatch(source["views-issue.js"], /\.key\b|\.token\b/, "the bulk result table has no key column to fill");
+  assert.doesNotMatch(source["dom.js"], /setTimeout\([^;]*revokeObjectURL/, "download URLs are revoked at once, not later");
+});
+
+test("the dashboard is for admins and says Short-lived keys: no user-role paths and no old name", () => {
+  for (const [label, re] of [["the old name", /hackathon/i], ["the user role", /Console\.User|role-user|"user"/], ["user wording", /issued to you|your keys|ctx\.admin/i]]) {
+    assert.deepEqual(offenders(re), [], label);
+    assert.doesNotMatch(html, re, `${label} in index.html`);
+    assert.doesNotMatch(css, re, `${label} in app.css`);
+  }
+  assert.match(source["app.js"], /This dashboard is for administrators\. Ask an admin for your key\./);
+  assert.equal(lib.KINDS.jwt.title, "Short-lived keys");
+  assert.equal(lib.KINDS.jwt.route, "short-lived");
+  assert.match(source["views-issue.js"], /For attribution and usage; this person does not get dashboard access\./);
+  assert.deepEqual(offenders(/\bOwner\b/), [], "the attribution tag is called Issued to, not Owner");
+  assert.doesNotMatch(html, /\bOwner\b/);
+  for (const name of ["views-keys.js", "views-drawer.js", "views-issue.js"]) assert.match(source[name], /"Issued to"/, `${name} labels the owner "Issued to"`);
+});
+
+test("leaving a view or the page drops what secret.js holds, and closing the bulk result drops its CSVs", () => {
+  assert.match(source["app.js"], /addEventListener\("pagehide", closeSecrets\)/);
+  assert.match(source["app.js"], /function route\(ctx, moveFocus\) \{\s*closeSecrets\(\);/, "every route change wipes first");
+  assert.match(source["views-issue.js"], /run\.csv\.drop\(\);/, "Close results drops the CSVs");
+});
+
 test("URLs never carry data: views navigate to fixed routes and do not touch location", () => {
   assert.deepEqual(offenders(/\blocation\s*\./, JS.filter((n) => n !== "app.js")), []);
   for (const name of JS) {
-    for (const [call] of source[name].matchAll(/ctx\.go\([^)]*\)/g)) assert.match(call, /^ctx\.go\("#\/[a-z/]+"\)$/, `${name}: ${call}`);
+    for (const [call] of source[name].matchAll(/ctx\.go\([^)]*\)/g)) assert.match(call, /^ctx\.go\("#\/[a-z/-]+"\)$/, `${name}: ${call}`);
   }
 });
 
@@ -115,15 +146,20 @@ test("every module stays within the charter's file-size budget", () => {
 
 // ── dom.js: the only element builder ───────────────────────────────────────
 
-function fakeDocument() {
+/** Just enough DOM for el(), the secret panel and downloads; a click records the download. */
+function fakeDocument(clicks = []) {
   const make = (tag) => ({
     nodeType: 1, tagName: tag, attributes: {}, children: [], listeners: {},
     setAttribute(k, v) { this.attributes[k] = String(v); },
     append(...nodes) { this.children.push(...nodes); },
     replaceChildren(...nodes) { this.children = nodes; },
     addEventListener(type, fn) { this.listeners[type] = fn; },
+    querySelector() { return null; },
+    showModal() {}, close() {}, focus() {}, remove() {},
+    click() { clicks.push({ href: this.attributes.href, download: this.attributes.download, blob: resolveObjectURL(this.attributes.href) }); },
   });
-  return { createElement: make, createElementNS: (_ns, tag) => make(tag), createTextNode: (data) => ({ nodeType: 3, data }) };
+  return { createElement: make, createElementNS: (_ns, tag) => make(tag), createTextNode: (data) => ({ nodeType: 3, data }),
+    body: make("body"), addEventListener() {}, removeEventListener() {} };
 }
 
 test("el() writes text as text nodes and refuses style, HTML properties, string handlers and foreign URLs", () => {
@@ -148,6 +184,10 @@ test("el() writes text as text nodes and refuses style, HTML properties, string 
     dom.addChildren(box, null, ["c"]);
     assert.equal(box.children.length, 4);
     assert.deepEqual(dom.emailText("pat.o-brien@contoso.com").map((c) => c.data ?? c.tagName ?? c), ["pat.o-brien", "wbr", "@contoso.com"]);
+    const scheduled = dom.statusBadge("scheduled");
+    assert.equal(scheduled.attributes.class, "badge badge-info", "scheduled keys get the info (blue) badge");
+    assert.deepEqual(scheduled.children.map((c) => c.data), ["scheduled"]);
+    assert.deepEqual(dom.kindBadge("jwt").children.map((c) => c.data), ["Short-lived"]);
   } finally {
     delete globalThis.document;
   }
@@ -240,6 +280,83 @@ test("key values are never cached; lists and usage are, until invalidated; failu
   }
 });
 
+// ── secret.js: single issue and the bulk CSVs ─────────────────────────────
+
+test("single issue: the token goes to the secret panel; the caller gets only the name and validity", async () => {
+  globalThis.document = fakeDocument();
+  const calls = stubFetch(() => reply(201, { name: "jwt-k-9", jti: "k_9", token: "eyJ.nine", notBefore: 5, expiresAt: 9, handout: { env: { OPENAI_API_KEY: "eyJ.nine" } } }));
+  try {
+    const body = { owner: "a@contoso.com", subject: "team-9", models: ["flash"], budget: 10, hours: 2, startInHours: 1.5 };
+    const out = await secret.issueKey("jwt", body, { label: "team-9", models: ["flash"] });
+    assert.equal(calls[0].path, "/api/jwt");
+    assert.equal(JSON.parse(calls[0].init.body).startInHours, 1.5, "the start delay is sent as startInHours");
+    assert.deepEqual(out, { name: "jwt-k-9", product: undefined, notBefore: 5, expiresAt: 9 });
+    assert.doesNotMatch(JSON.stringify(out), /eyJ/);
+  } finally {
+    secret.closeSecrets();
+    delete globalThis.document;
+    delete globalThis.fetch;
+  }
+});
+
+test("bulk issue: rows without keys, one keys.csv across batches, downloads revoked at once, wiped on close", async () => {
+  const clicks = [];
+  globalThis.document = fakeDocument(clicks);
+  const head = "participant,owner,key,key_id,models,openai_base_url,anthropic_base_url,anthropic_model,budget_tokens,valid_from_utc,valid_until_utc";
+  const indexHead = "participant,owner,key_id,name";
+  const batches = [
+    { issued: [{ name: "jwt-k-1", owner: "a@contoso.com", subject: "team-1", jti: "k_1", token: "eyJ.one", models: ["flash"], notBefore: 1, expiresAt: 2 }],
+      failed: [{ index: 1, error: "Subject: up to 64 letters." }],
+      keysCsv: `${head}\r\nteam-1,a@contoso.com,eyJ.one,k_1,flash,https://gw/v1,,,1000,2026-10-23 03:09,2026-10-25 03:09`,
+      indexCsv: `${indexHead}\r\nteam-1,a@contoso.com,k_1,jwt-k-1` },
+    { issued: [], failed: [{ index: 0, error: "Bad owner." }], keysCsv: head, indexCsv: indexHead },
+    { issued: [{ name: "jwt-k-2", owner: "b@contoso.com", subject: "team-2", jti: "k_2", token: "eyJ.two", models: ["flash"], notBefore: 3, expiresAt: 4 }],
+      failed: [], keysCsv: `${head}\r\n'=team-2,b@contoso.com,eyJ.two,k_2,flash,https://gw/v1,,,1000,,\r\n`, indexCsv: `${indexHead}\r\n'=team-2,b@contoso.com,k_2,jwt-k-2` },
+  ];
+  const calls = stubFetch(() => reply(200, batches.shift()));
+  try {
+    const holder = secret.createBulkCsv("jwt", Date.UTC(2026, 9, 23, 3, 9));
+    holder.running = true;
+    assert.match(secret.pendingSecrets(), /still running/);
+    const results = [await holder.issue({ entries: [] }), await holder.issue({ entries: [] }), await holder.issue({ entries: [] })];
+    holder.running = false;
+    assert.deepEqual(calls.map((c) => c.path), ["/api/jwt/bulk", "/api/jwt/bulk", "/api/jwt/bulk"]);
+    assert.deepEqual(results[0].issued, [{ name: "jwt-k-1", owner: "a@contoso.com", subject: "team-1", notBefore: 1, expiresAt: 2 }]);
+    assert.deepEqual(results[0].failed, [{ index: 1, error: "Subject: up to 64 letters." }]);
+    assert.doesNotMatch(JSON.stringify(results), /eyJ|token|key_id/, "the rows a view gets carry no key");
+    assert.match(secret.pendingSecrets(), /keys\.csv/, "an undownloaded keys.csv holds the page");
+
+    holder.download("keys");
+    assert.equal(clicks[0].download, "short-lived-keys-20261023-0309.csv");
+    assert.equal(await clicks[0].blob.text(),
+      `${head}\r\nteam-1,a@contoso.com,eyJ.one,k_1,flash,https://gw/v1,,,1000,2026-10-23 03:09,2026-10-25 03:09\r\n'=team-2,b@contoso.com,eyJ.two,k_2,flash,https://gw/v1,,,1000,,`,
+      "one header; the server's cells unchanged, formula escapes included");
+    assert.equal(resolveObjectURL(clicks[0].href), undefined, "the object URL is revoked as soon as the download starts");
+    assert.equal(secret.pendingSecrets(), null, "a downloaded keys.csv no longer holds the page");
+    holder.download("index");
+    assert.equal(clicks[1].download, "short-lived-index-20261023-0309.csv");
+    assert.doesNotMatch(await clicks[1].blob.text(), /eyJ/);
+
+    secret.closeSecrets();
+    assert.equal(holder.dropped, true, "a route change or pagehide (closeSecrets) drops the CSVs");
+    assert.equal(holder.hasKeys, false, "dropping releases the keys.csv text itself");
+    assert.equal(holder.hasIndex, false, "and the index.csv text");
+    assert.throws(() => holder.download("keys"), /no longer held/);
+
+    stubFetch(() => reply(200, { issued: [{ name: "poc-key-a", label: "a", owner: "a@contoso.com", key: "f".repeat(32) }], failed: [], keysCsv: `name,owner,key\r\na,a@contoso.com,${"f".repeat(32)}`, indexCsv: "name,owner\r\na,a@contoso.com" }));
+    const late = secret.createBulkCsv("product");
+    const inFlight = late.issue({ entries: [] });
+    late.drop();
+    const rows = await inFlight;
+    assert.equal(late.hasKeys, false, "a batch that lands after the result closed is not kept");
+    assert.deepEqual(rows.issued, [{ name: "poc-key-a", owner: "a@contoso.com", label: "a", expiresAt: null }]);
+  } finally {
+    secret.closeSecrets();
+    delete globalThis.document;
+    delete globalThis.fetch;
+  }
+});
+
 // ── lib.js: CSV ─────────────────────────────────────────────────────────────
 
 test("parseCsv handles quotes, doubled quotes, embedded delimiters and line breaks, CRLF/CR and a BOM", () => {
@@ -266,6 +383,7 @@ test("bulk rows: header detection, column order, blank rows, normalisation, chec
   assert.match(rows[1].errors.join(), /Duplicate of line 2/);
   assert.match(rows[2].errors.join(), /email/i);
   assert.match(rows[3].errors.join(), /Subject/);
+  assert.deepEqual(lib.entriesFromCsv(lib.parseCsv("Issued to,subject\nalex@contoso.com,team-1"), "jwt").entries.map((e) => [e.owner, e.subject]), [["alex@contoso.com", "team-1"]], "an 'Issued to' header names the owner column");
 
   const products = lib.validateEntries(lib.entriesFromCsv(lib.parseCsv("a@contoso.com,ok-name\nb@contoso.com,ok-name\nc@contoso.com,Upper\nd@contoso.com,x\ne@contoso.com,-lead\nf@contoso.com," + "a".repeat(40) + "\ng@contoso.com," + "a".repeat(41)), "product").entries, "product");
   assert.equal(lib.entriesFromCsv(lib.parseCsv("a@contoso.com,ok-name"), "product").header, false);
@@ -273,6 +391,29 @@ test("bulk rows: header detection, column order, blank rows, normalisation, chec
   assert.match(products[1].errors.join(), /Duplicate of line 1/, "a product name is unique whoever owns it");
   assert.deepEqual(lib.chunk(Array.from({ length: 120 }, (_, i) => i)).map((c) => c.length), [50, 50, 20]);
   assert.equal(lib.toCsv([["owner", "subject"], ["a@contoso.com", 'x,"y"']]), 'owner,subject\r\na@contoso.com,"x,""y"""');
+});
+
+test("the server's batch CSVs join under one header, unchanged; files are named by kind and UTC time", () => {
+  const head = "participant,owner,key";
+  let merged = null;
+  for (const part of [`${head}\r\nteam-1,a@contoso.com,eyJ.1`, head, `${head}\r\n"team, ""2""",b@contoso.com,eyJ.2\r\n`, undefined]) merged = lib.appendCsv(merged, part);
+  assert.equal(merged, `${head}\r\nteam-1,a@contoso.com,eyJ.1\r\n"team, ""2""",b@contoso.com,eyJ.2`);
+  assert.equal(lib.appendCsv(null, head), head, "a first batch with no keys still gives the header");
+  assert.equal(lib.appendCsv(null, undefined), null);
+  const at = Date.UTC(2026, 9, 23, 3, 9);
+  const tz = process.env.TZ;
+  process.env.TZ = "Asia/Kolkata"; // UTC+05:30, so local time differs from UTC on any machine
+  try {
+    assert.deepEqual([["jwt", "keys"], ["jwt", "index"], ["product", "keys"], ["product", "index"]].map(([k, w]) => lib.csvFilename(k, w, at)),
+      ["short-lived-keys-20261023-0309.csv", "short-lived-index-20261023-0309.csv", "product-keys-20261023-0309.csv", "product-index-20261023-0309.csv"]);
+  } finally {
+    if (tz === undefined) delete process.env.TZ;
+    else process.env.TZ = tz;
+  }
+  assert.deepEqual(lib.safeIssued("jwt", { name: "n", owner: "o", subject: "s", jti: "k", token: "eyJ", notBefore: 1, expiresAt: 2, openaiBaseUrl: "u" }),
+    { name: "n", owner: "o", subject: "s", notBefore: 1, expiresAt: 2 });
+  assert.deepEqual(lib.safeIssued("product", { name: "poc-key-a", label: "a", owner: "o", key: "f00", subscriptionId: "poc-a" }),
+    { name: "poc-key-a", owner: "o", label: "a", expiresAt: null });
 });
 
 // ── lib.js: issue validation ───────────────────────────────────────────────
@@ -287,12 +428,14 @@ test("model choice is explicit: One means exactly one, Several means at least tw
   assert.ok(lib.checkModelChoice(undefined, ["flash"]));
 });
 
-test("hackathon issue requests mirror the server's limits and send exactly the contract's fields", () => {
+test("short-lived issue requests mirror the server's limits and send the contract's fields, startInHours included", () => {
   const good = { owner: " Alex@Contoso.com ", subject: "team-1", label: "  Workshop A ", budget: "100000", hours: "48", mode: "one", models: ["flash"] };
   const ok = lib.validateIssue("jwt", good);
   assert.equal(ok.ok, true);
-  assert.deepEqual(ok.body, { owner: "alex@contoso.com", subject: "team-1", models: ["flash"], budget: 100000, hours: 48, label: "Workshop A" });
+  assert.deepEqual(ok.body, { owner: "alex@contoso.com", subject: "team-1", models: ["flash"], budget: 100000, hours: 48, startInHours: 0, label: "Workshop A" });
   assert.equal("label" in lib.validateIssue("jwt", { ...good, label: "  " }).body, false);
+  assert.equal(lib.validateIssue("jwt", { ...good, startInHours: "1.5" }).body.startInHours, 1.5, "decimals are fine");
+  assert.equal(lib.validateSettings("jwt", { ...good, startInHours: "6" }).body.startInHours, 6, "bulk settings send it too");
   const bad = (patch) => Object.keys(lib.validateIssue("jwt", { ...good, ...patch }).errors);
   assert.deepEqual(bad({ budget: "0" }), ["budget"]);
   assert.deepEqual(bad({ budget: "100000001" }), ["budget"]);
@@ -301,8 +444,18 @@ test("hackathon issue requests mirror the server's limits and send exactly the c
   assert.deepEqual(bad({ hours: "0" }), ["hours"]);
   assert.deepEqual(bad({ hours: "2160.5" }), ["hours"]);
   assert.deepEqual(bad({ hours: "0.5" }), []);
+  assert.deepEqual(bad({ startInHours: "2160" }), []);
+  for (const start of ["-1", "2160.5", "x"]) assert.deepEqual(bad({ startInHours: start }), ["startInHours"], start);
   assert.deepEqual(bad({ label: "x".repeat(81) }), ["label"]);
   assert.deepEqual(bad({ owner: "alex", subject: "a b", mode: "several" }).sort(), ["models", "owner", "subject"]);
+});
+
+test("the live window: active from now + start until that + validity, or nothing while either is invalid", () => {
+  const t = Date.UTC(2026, 9, 23, 3, 0);
+  assert.deepEqual(lib.activeWindow("0", "48", t), { from: t, until: t + 48 * lib.HOUR });
+  assert.deepEqual(lib.activeWindow("1.5", "2", t), { from: t + 1.5 * lib.HOUR, until: t + 3.5 * lib.HOUR });
+  assert.deepEqual(lib.activeWindow("", "1", t), { from: t, until: t + lib.HOUR }, "blank starts now");
+  for (const [start, hours] of [["-1", "1"], ["2161", "1"], ["0", "0"], ["0", "2161"], ["x", "1"]]) assert.equal(lib.activeWindow(start, hours, t), null, `${start}/${hours}`);
 });
 
 test("product issue requests grant deployments and omit optional fields left blank", () => {
@@ -331,7 +484,7 @@ test("aliases, recipients and passphrases are checked like the server checks the
   assert.ok(lib.checkRecipient("x".repeat(121)));
 });
 
-test("model options: hackathon keys list pinned aliases; product keys list routable deployments", () => {
+test("model options: short-lived keys list pinned aliases; product keys list routable deployments", () => {
   const config = {
     models: { openai: ["flash"], claude: ["haiku-4-5"] },
     deployments: [{ deployment: "deepseek-v4-flash", model: "DeepSeek-V4-Flash", version: "1", route: "openai" }, { deployment: "odd", route: null }],
@@ -389,15 +542,18 @@ test("alignSeries fills missing buckets with zero and puts several series on one
   assert.equal(lib.alignSeries([[]], { days: 7, from: day(25), to: day(20) }).times.length, 1);
 });
 
-test("key lists: status, archive deletion date, search, usage join and sorting", () => {
+test("key lists: status (scheduled included), archive deletion date, search, usage join and sorting", () => {
   const now = Date.UTC(2026, 9, 22);
   assert.equal(lib.keyStatus({ status: "suspended" }, now), "suspended");
+  assert.equal(lib.keyStatus({ status: "scheduled" }, now), "scheduled");
+  assert.equal(lib.keyStatus({ notBefore: "2026-10-23T00:00:00Z", expires: "2026-10-30T00:00:00Z" }, now), "scheduled", "a future start is scheduled");
+  assert.equal(lib.keyStatus({ notBefore: "2026-10-21T00:00:00Z", expires: "2026-10-30T00:00:00Z" }, now), "active");
   assert.equal(lib.keyStatus({ expires: "2026-10-01T00:00:00Z" }, now), "expired");
   assert.equal(lib.keyStatus({ revoked: "true", expires: "2027-01-01T00:00:00Z" }, now), "revoked");
   assert.equal(lib.keyStatus({ archived: true }, now), "archived");
   assert.equal(lib.isArchived({ status: "revoked", archived: true }), true, "the server lists revoked keys in the archive");
   assert.equal(lib.isArchived({ status: "expired", archived: true }), true);
-  assert.equal(lib.isArchived({ status: "suspended", archived: false }), false);
+  assert.equal(lib.isArchived({ status: "scheduled", archived: false }), false, "a scheduled key is listed as active");
   assert.equal(lib.isArchived({ status: "archived" }), true);
   assert.equal(lib.deleteDate({ archivedAt: "2026-10-01T00:00:00.000Z" }), "2026-10-31T00:00:00.000Z");
   assert.equal(lib.deleteDate({ archivedAt: "2026-10-01T00:00:00Z", deleteAfter: "2026-11-05T00:00:00.000Z" }), "2026-11-05T00:00:00.000Z");
@@ -441,7 +597,7 @@ test("text, badges and chart marks meet WCAG AA contrast in the light and the da
     ...["bg", "surface", "surface-2", "selected-bg"].map((bg) => ["link", bg, TEXT]),
     ["danger", "surface", TEXT], ["danger", "bad-row", TEXT], ["ok", "surface", TEXT], ["grey-fg", "surface", TEXT],
     ["on-primary", "primary", TEXT], ["on-primary", "primary-hover", TEXT], ["on-danger", "danger", TEXT], ["on-warn", "warn", TEXT],
-    ["ok-fg", "ok-bg", TEXT], ["warn-fg", "warn-bg", TEXT], ["bad-fg", "bad-bg", TEXT], ["grey-fg", "grey-bg", TEXT],
+    ["ok-fg", "ok-bg", TEXT], ["info-fg", "info-bg", TEXT], ["warn-fg", "warn-bg", TEXT], ["bad-fg", "bad-bg", TEXT], ["grey-fg", "grey-bg", TEXT],
     ["jwt-fg", "jwt-bg", TEXT], ["product-fg", "product-bg", TEXT],
     ["topbar-fg", "topbar-bg", TEXT], ["topbar-muted", "topbar-bg", TEXT], ["topbar-fg", "topbar-chip", TEXT], ["topbar-fg", "topbar-admin", TEXT],
     ...["kind-jwt", "kind-product", "cat-1", "cat-2", "cat-3", "cat-4", "cat-5", "cat-6", "cat-other", "border-strong", "primary", "danger"].map((fg) => [fg, "surface", MARK]),
@@ -458,4 +614,5 @@ test("text, badges and chart marks meet WCAG AA contrast in the light and the da
   }
   assert.deepEqual(failures, []);
   assert.notEqual(tokens["kind-jwt"][0], tokens["kind-product"][0], "the two kinds never share a colour");
+  assert.notEqual(tokens["info-bg"][0], tokens["jwt-bg"][0], "a scheduled badge is not mistaken for the short-lived kind badge");
 });

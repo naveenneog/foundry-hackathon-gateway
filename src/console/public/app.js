@@ -1,27 +1,28 @@
-// Key Dashboard — entry point: sign-in check, theme, navigation and routing.
+// Key Dashboard — entry point: sign-in check (admins only, ADR-0016), theme, navigation, routing.
 //
 // CSP: script-src 'self' with no inline script, and every view builds its DOM with createElement
 // and textContent (dom.js). Nothing polls: data loads when a view opens, when the period changes
 // or on Refresh. The theme preference is the only thing kept in the browser.
 
 import { ApiError, cachedGet, get } from "./api.js";
-import { el, errorState, icon, reportError, segmented, setChildren } from "./dom.js";
+import { confirmDialog, el, errorState, icon, reportError, segmented, setChildren } from "./dom.js";
 import { keyTitle } from "./lib.js";
-import { closeSecrets } from "./secret.js";
+import { closeSecrets, pendingSecrets } from "./secret.js";
 import { renderExport, renderModels, renderSigning } from "./views-admin.js";
 import { renderKeysView } from "./views-keys.js";
 import { renderOverview } from "./views-overview.js";
 
 const ROUTES = [
   { id: "overview", label: "Overview", render: (root, ctx) => renderOverview(root, ctx) },
-  { id: "hackathon", label: "Hackathon keys", subs: ["issue", "bulk"], render: (root, ctx, sub) => renderKeysView(root, ctx, "jwt", sub) },
+  { id: "short-lived", label: "Short-lived keys", subs: ["issue", "bulk"], render: (root, ctx, sub) => renderKeysView(root, ctx, "jwt", sub) },
   { id: "product", label: "Product keys", subs: ["issue", "bulk"], render: (root, ctx, sub) => renderKeysView(root, ctx, "product", sub) },
-  { id: "models", label: "Models", admin: true, render: (root) => renderModels(root) },
-  { id: "export", label: "Export", admin: true, render: (root, ctx) => renderExport(root, ctx) },
-  { id: "signing", label: "Signing", admin: true, render: (root) => renderSigning(root) },
+  { id: "models", label: "Models", render: (root) => renderModels(root) },
+  { id: "export", label: "Export", render: (root, ctx) => renderExport(root, ctx) },
+  { id: "signing", label: "Signing", render: (root) => renderSigning(root) },
 ];
 const SUB_TITLES = { issue: "Issue", bulk: "Bulk issue" };
 const SIGN_IN = "/.auth/login/aad?post_login_redirect_uri=/";
+const ADMINS_ONLY = "This dashboard is for administrators. Ask an admin for your key.";
 
 // ── Theme ──────────────────────────────────────────────────────────────────
 
@@ -57,7 +58,6 @@ applyTheme(storedTheme());
 function createContext(me) {
   const ctx = {
     me,
-    admin: me.role === "admin",
     period: 7,
     /** Keys picked for export: name → { kind, title }. In memory only. */
     selection: new Map(),
@@ -91,29 +91,34 @@ function createContext(me) {
 
 // ── Navigation ─────────────────────────────────────────────────────────────
 
-function buildNav(ctx) {
-  setChildren(document.getElementById("nav-list"), ...ROUTES.filter((r) => !r.admin || ctx.admin).map((r) => el("li", {},
+function buildNav() {
+  setChildren(document.getElementById("nav-list"), ...ROUTES.map((r) => el("li", {},
     el("a", { class: "nav-link", href: `#/${r.id}`, "data-route": r.id }, r.label,
       r.id === "export" ? el("span", { class: "nav-count", id: "export-count", hidden: true }) : null))));
 }
 
 function parseHash() {
-  const m = /^#\/([a-z]+)(?:\/([a-z]+))?$/.exec(location.hash);
+  const m = /^#\/([a-z-]+)(?:\/([a-z]+))?$/.exec(location.hash);
   return m ? { id: m[1], sub: m[2] ?? null } : null;
 }
+
+/** The route on screen, so a refused navigation can put the address back. */
+let shown = "";
+let asking = false;
 
 function route(ctx, moveFocus) {
   closeSecrets();
   for (const dialog of document.querySelectorAll("dialog[open]")) dialog.close();
   const parsed = parseHash();
-  let r = ROUTES.find((x) => x.id === parsed?.id && (!x.admin || ctx.admin));
-  let sub = r && ctx.admin && r.subs?.includes(parsed.sub) ? parsed.sub : null;
+  let r = ROUTES.find((x) => x.id === parsed?.id);
+  let sub = r?.subs?.includes(parsed.sub) ? parsed.sub : null;
   if (!r) {
     r = ROUTES[0];
     sub = null;
   }
   const canonical = `#/${r.id}${sub ? `/${sub}` : ""}`;
   if (location.hash !== canonical) history.replaceState(null, "", canonical);
+  shown = canonical;
   for (const a of document.querySelectorAll(".nav-link")) {
     if (a.dataset.route === r.id) a.setAttribute("aria-current", "page");
     else a.removeAttribute("aria-current");
@@ -125,7 +130,34 @@ function route(ctx, moveFocus) {
   if (moveFocus) view.querySelector(".view-title")?.focus();
 }
 
+/**
+ * Leaving a view drops what secret.js holds (route() calls closeSecrets). When that would lose an
+ * undownloaded keys.csv or stop a running bulk issue, ask first and put the address back if not.
+ */
+async function onHashChange(ctx) {
+  if (location.hash !== "" && !location.hash.startsWith("#/")) return;
+  const target = location.hash || "#/overview";
+  if (target === shown) return;
+  const pending = pendingSecrets();
+  if (pending || asking) {
+    history.replaceState(null, "", shown);
+    if (asking) return;
+    asking = true;
+    let leave = false;
+    try {
+      leave = await confirmDialog({ title: "Leave this page?", message: pending, confirmLabel: "Leave and discard" });
+    } finally {
+      asking = false;
+    }
+    if (!leave) return;
+    history.pushState(null, "", target);
+  }
+  route(ctx, true);
+}
+
 // ── Start ──────────────────────────────────────────────────────────────────
+
+const adminsOnly = () => gate("Administrators only", ADMINS_ONLY, el("a", { class: "btn btn-secondary", href: "/.auth/logout" }, "Sign out"));
 
 function gate(title, text, ...actions) {
   setChildren(document.getElementById("main"), el("div", { class: "view" }, el("section", { class: "card gate" },
@@ -151,24 +183,22 @@ async function start() {
     if (error.status === 401) {
       gate("Sign in to the Key Dashboard", "Use your organisation account.", el("a", { class: "btn btn-primary", href: SIGN_IN }, "Sign in"));
     } else if (error.status === 403) {
-      gate("No access yet", "Your account has no Key Dashboard role. Ask an admin to assign you Console.User or Console.Admin, then sign in again.",
-        el("a", { class: "btn btn-secondary", href: "/.auth/logout" }, "Sign out"));
+      adminsOnly();
     } else {
       setChildren(document.getElementById("main"), el("div", { class: "view" }, errorState(error, () => location.reload())));
     }
     return;
   }
 
+  if (me?.role !== "admin") return adminsOnly();
   const ctx = createContext(me);
   document.getElementById("who-name").textContent = me.name ?? "";
   const role = document.getElementById("who-role");
-  role.textContent = ctx.admin ? "admin" : "user";
-  role.className = `role role-${ctx.admin ? "admin" : "user"}`;
+  role.textContent = "admin";
+  role.className = "role role-admin";
   role.hidden = false;
-  buildNav(ctx);
-  window.addEventListener("hashchange", () => {
-    if (location.hash === "" || location.hash.startsWith("#/")) route(ctx, true);
-  });
+  buildNav();
+  window.addEventListener("hashchange", () => { onHashChange(ctx).catch(reportError); });
   route(ctx, false);
 }
 

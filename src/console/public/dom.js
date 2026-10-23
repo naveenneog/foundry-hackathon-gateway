@@ -164,16 +164,21 @@ export function copyButton(getText, { label = "Copy", what = "Text" } = {}) {
   return button;
 }
 
-/** Downloads JSON through a short-lived object URL that is revoked straight after the click. */
-export function downloadJson(filename, data) {
-  const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }));
-  const name = String(filename ?? "download.json").replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 120) || "download.json";
+/** Saves text as a file through an object URL that is revoked as soon as the download starts. */
+export function downloadText(filename, text, type) {
+  const url = URL.createObjectURL(new Blob([text], { type }));
+  const name = String(filename ?? "download").replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 120) || "download";
   const a = el("a", { href: url, download: name, class: "sr-only" });
-  document.body.append(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  try {
+    document.body.append(a);
+    a.click();
+  } finally {
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
 }
+
+export const downloadJson = (filename, data) => downloadText(filename, JSON.stringify(data, null, 2), "application/json");
 
 // ── Modal dialogs: native <dialog>, Tab wraps inside, Esc closes, focus returns ──
 
@@ -329,8 +334,8 @@ export function badge(text, tone, title) {
   return el("span", { class: `badge badge-${tone}`, title }, text);
 }
 
-export const statusBadge = (status) => badge(status, { active: "ok", suspended: "warn", revoked: "bad", expired: "grey", archived: "archived" }[status] ?? "grey");
-export const kindBadge = (kind) => badge(kind === "jwt" ? "Hackathon" : "Product", kind === "jwt" ? "jwt" : "product");
+export const statusBadge = (status) => badge(status, { active: "ok", scheduled: "info", suspended: "warn", revoked: "bad", expired: "grey", archived: "archived" }[status] ?? "grey");
+export const kindBadge = (kind) => badge(kind === "jwt" ? "Short-lived" : "Product", kind === "jwt" ? "jwt" : "product");
 export const routeBadge = (route) => (route ? badge(route === "claude" ? "Claude" : "OpenAI", `route-${route}`, route === "claude" ? "Claude route (/claude)" : "OpenAI-compatible route (/v1)") : null);
 
 export function periodSwitch(value, onChange) {

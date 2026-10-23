@@ -1,4 +1,4 @@
-// Key Dashboard — Hackathon keys and Product keys: usage for the kind, then the key list with
+// Key Dashboard — Short-lived keys and Product keys: usage for the kind, then the key list with
 // Active | Archived, search, status filter, sorting, export selection and a per-key drawer.
 
 import { apiPath, cachedGet, invalidate, keyPath, post } from "./api.js";
@@ -8,7 +8,8 @@ import {
   segmented, setChildren, statusBadge, toast, uid,
 } from "./dom.js";
 import {
-  deleteDate, fmtCompact, fmtDate, fmtDateTime, fmtInt, fmtRelative, keyStatus, keyTitle, KINDS, matchesQuery, periodLabel, sortKeys, STATUSES, withUsage,
+  deleteDate, fmtCompact, fmtDate, fmtDateTime, fmtInt, fmtRelative, fmtShortDateTime, keyStatus, keyTitle, KINDS, matchesQuery, periodLabel, sortKeys,
+  STATUSES, withUsage,
 } from "./lib.js";
 import { revealKey } from "./secret.js";
 import { openKeyDrawer } from "./views-drawer.js";
@@ -34,11 +35,11 @@ export function renderKeysView(root, ctx, kind, sub) {
   const refresh = el("button", { type: "button", class: "btn btn-secondary" }, icon("refresh"), "Refresh");
   addChildren(root, el("header", { class: "view-head" },
     el("div", {}, el("h1", { class: "view-title", tabindex: "-1" }, meta.title),
-      el("p", { class: "lede" }, ctx.admin
-        ? (kind === "jwt" ? "Signed keys for hackathon participants: expiry, models and a token budget." : "API Management subscription keys, stored in Key Vault, with rotation.")
-        : `The ${meta.noun}s issued to you. Reveal one to get its value and client setup.`)),
+      el("p", { class: "lede" }, kind === "jwt"
+        ? "Signed keys with a start, an expiry, models and a token budget. Send each one by copy, keys.csv or an encrypted bundle."
+        : "API Management subscription keys, stored in Key Vault, with rotation.")),
     sub ? null : el("div", { class: "view-actions" }, refresh)));
-  if (ctx.admin) addChildren(root, subNav(kind, sub));
+  addChildren(root, subNav(kind, sub));
   if (sub === "issue") return renderIssue(root, ctx, kind);
   if (sub === "bulk") return renderBulk(root, ctx, kind);
 
@@ -53,7 +54,7 @@ export function renderKeysView(root, ctx, kind, sub) {
   const listSlot = el("div", {});
   const countText = el("p", { class: "count", "aria-live": "polite" });
   const selectionBar = el("div", { class: "selection-bar", hidden: true });
-  const search = el("input", { type: "search", class: "input", placeholder: "Search name, owner, label or model", value: p.query, "aria-label": `Search ${meta.title.toLowerCase()}` });
+  const search = el("input", { type: "search", class: "input", placeholder: "Search name, issued to, label or model", value: p.query, "aria-label": `Search ${meta.title.toLowerCase()}` });
   const only = el("select", { class: "input", "aria-label": "Status" });
   const listCard = el("section", { class: "card", "aria-labelledby": listId },
     el("div", { class: "card-head" }, el("h2", { class: "card-title", id: listId }, "Keys"),
@@ -128,7 +129,7 @@ export function renderKeysView(root, ctx, kind, sub) {
 
   function renderSelectionBar() {
     const n = ctx.selection.size;
-    selectionBar.hidden = !ctx.admin || n === 0;
+    selectionBar.hidden = n === 0;
     if (selectionBar.hidden) return;
     setChildren(selectionBar,
       el("p", {}, el("strong", {}, fmtInt(n)), n === 1 ? " key selected for export" : " keys selected for export"),
@@ -150,11 +151,9 @@ export function renderKeysView(root, ctx, kind, sub) {
     if (!rows.length) {
       setChildren(listSlot, p.status === "archived"
         ? emptyState("Nothing is archived.", "Expired, revoked and archived keys are listed here, and deleted 30 days after archiving.")
-        : ctx.admin
-          ? emptyState(`No ${meta.noun}s yet.`, "Issue one, or many at once from a CSV file.",
-            el("a", { class: "btn btn-primary btn-sm", href: `#/${meta.route}/issue` }, "Issue one"),
-            el("a", { class: "btn btn-secondary btn-sm", href: `#/${meta.route}/bulk` }, "Issue in bulk"))
-          : emptyState(`No ${meta.noun}s have been issued to you yet.`, "Ask an organiser if you expected one."));
+        : emptyState(`No ${meta.noun}s yet.`, "Issue one, or many at once from a CSV file.",
+          el("a", { class: "btn btn-primary btn-sm", href: `#/${meta.route}/issue` }, "Issue one"),
+          el("a", { class: "btn btn-secondary btn-sm", href: `#/${meta.route}/bulk` }, "Issue in bulk")));
       return;
     }
     if (!filtered.length) {
@@ -185,7 +184,7 @@ export function renderKeysView(root, ctx, kind, sub) {
 
   function table(shown, filtered) {
     const archived = p.status === "archived";
-    const selectable = ctx.admin && !archived;
+    const selectable = !archived;
     const usageHead = `Usage, ${periodLabel(ctx.period)}`;
     let all = null;
     if (selectable) {
@@ -200,10 +199,10 @@ export function renderKeysView(root, ctx, kind, sub) {
       });
     }
     const head = archived
-      ? [sortHeader("Key", "key"), sortHeader("Owner", "owner"), el("th", { scope: "col" }, "Models"), el("th", { scope: "col" }, "Why"), sortHeader("Archived", "archived", "desc"), el("th", { scope: "col" }, "Deleted on"), el("th", { scope: "col" }, el("span", { class: "sr-only" }, "Actions"))]
-      : [selectable ? el("th", { scope: "col", class: "col-check" }, all) : null, sortHeader("Key", "key"), sortHeader("Owner", "owner"),
+      ? [sortHeader("Key", "key"), sortHeader("Issued to", "owner"), el("th", { scope: "col" }, "Models"), el("th", { scope: "col" }, "Why"), sortHeader("Archived", "archived", "desc"), el("th", { scope: "col" }, "Deleted on"), el("th", { scope: "col" }, el("span", { class: "sr-only" }, "Actions"))]
+      : [selectable ? el("th", { scope: "col", class: "col-check" }, all) : null, sortHeader("Key", "key"), sortHeader("Issued to", "owner"),
         el("th", { scope: "col" }, "Models"), el("th", { scope: "col", class: "num" }, kind === "jwt" ? "Budget" : "Monthly"),
-        sortHeader(usageHead, "usage", "desc"), kind === "jwt" ? sortHeader("Expires", "expires") : sortHeader("Rotation", "rotated", "desc"),
+        sortHeader(usageHead, "usage", "desc"), kind === "jwt" ? sortHeader("Valid", "expires") : sortHeader("Rotation", "rotated", "desc"),
         el("th", { scope: "col" }, "Status"), el("th", { scope: "col" }, el("span", { class: "sr-only" }, "Actions"))];
     return el("div", { class: "table-wrap" }, el("table", { class: "table" },
       el("caption", { class: "sr-only" }, `${archived ? "Archived" : "Active"} ${meta.title.toLowerCase()}`),
@@ -219,7 +218,16 @@ export function renderKeysView(root, ctx, kind, sub) {
       kind === "jwt" && k.name !== keyTitle(k) ? el("span", { class: "key-sub mono" }, k.name) : null);
   }
 
-  const ownerCell = (k) => el("td", { class: "owner" }, k.owner ? emailText(k.owner) : el("span", { class: "muted" }, "no owner"));
+  const ownerCell = (k) => el("td", { class: "owner" }, k.owner ? emailText(k.owner) : el("span", { class: "muted" }, "not recorded"));
+
+  /** Valid: when a scheduled key starts, else how long it has left; the end date underneath. */
+  function validCell(k) {
+    const until = k.expires ? el("span", { class: "cell-sub", title: fmtDateTime(k.expires) }, `until ${fmtShortDateTime(k.expires)}`) : null;
+    if (k.status === "scheduled" && k.notBefore) {
+      return el("td", { class: "nowrap" }, el("span", { title: fmtDateTime(k.notBefore) }, `starts ${fmtShortDateTime(k.notBefore)}`), until);
+    }
+    return el("td", { class: "nowrap" }, k.expires ? el("span", { title: fmtDateTime(k.expires) }, fmtRelative(k.expires)) : "—", until);
+  }
 
   function drawer(k, opener) {
     openKeyDrawer(ctx, k, { opener, onChanged: changed });
@@ -241,12 +249,12 @@ export function renderKeysView(root, ctx, kind, sub) {
       box.addEventListener("change", () => { ctx.select(k, box.checked); renderSelectionBar(); });
       check = el("td", { class: "col-check" }, box);
     }
-    const reveal = ["active", "suspended"].includes(k.status) ? el("button", { type: "button", class: "btn btn-secondary btn-sm", "data-focus-id": `reveal:${k.name}` }, icon("key"), "Reveal") : null;
+    const reveal = ["active", "scheduled", "suspended"].includes(k.status) ? el("button", { type: "button", class: "btn btn-secondary btn-sm", "data-focus-id": `reveal:${k.name}` }, icon("key"), "Reveal") : null;
     reveal?.addEventListener("click", busy(reveal, () => revealKey({ name: k.name, label: keyTitle(k), kind, models: k.models, opener: reveal })));
-    const details = el("button", { type: "button", class: "btn btn-ghost btn-sm", "data-focus-id": `manage:${k.name}`, "aria-label": `${ctx.admin ? "Manage" : "Details for"} ${keyTitle(k)}` }, ctx.admin ? "Manage" : "Details");
+    const details = el("button", { type: "button", class: "btn btn-ghost btn-sm", "data-focus-id": `manage:${k.name}`, "aria-label": `Manage ${keyTitle(k)}` }, "Manage");
     details.addEventListener("click", () => drawer(k, details));
     const timing = kind === "jwt"
-      ? el("td", { class: "nowrap" }, k.expires ? el("span", { title: fmtDateTime(k.expires) }, fmtRelative(k.expires)) : "—", k.expires ? el("span", { class: "cell-sub" }, fmtDate(k.expires)) : null)
+      ? validCell(k)
       : el("td", {},
         el("span", { class: "nowrap" }, k.slot ?? "—", k.rotateDays ? [" ", badge(`auto ${k.rotateDays}d`, "auto", `Rotates automatically every ${k.rotateDays} days`)] : null),
         k.rotatedAt ? el("span", { class: "cell-sub nowrap", title: fmtDateTime(k.rotatedAt) }, `rotated ${fmtRelative(k.rotatedAt)}`) : null,
@@ -263,21 +271,18 @@ export function renderKeysView(root, ctx, kind, sub) {
     const when = deleteDate(k);
     const details = el("button", { type: "button", class: "btn btn-ghost btn-sm", "data-focus-id": `manage:${k.name}`, "aria-label": `Details for ${keyTitle(k)}` }, "Details");
     details.addEventListener("click", () => drawer(k, details));
-    let del = null;
-    if (ctx.admin) {
-      del = el("button", { type: "button", class: "btn btn-danger-ghost btn-sm" }, "Delete");
-      del.addEventListener("click", busy(del, async () => {
-        const ok = await confirmDialog({
-          title: `Delete ${keyTitle(k)}?`, confirmLabel: "Delete key",
-          message: "The key's secret is deleted from Key Vault (soft delete, recoverable by an Azure admin within the vault's retention period).",
-          points: kind === "product" ? ["Its API Management subscription is deleted first."] : [],
-        });
-        if (!ok) return;
-        await post(keyPath(k.name, "delete"), {});
-        toast(`Deleted ${keyTitle(k)}.`);
-        await changed();
-      }));
-    }
+    const del = el("button", { type: "button", class: "btn btn-danger-ghost btn-sm" }, "Delete");
+    del.addEventListener("click", busy(del, async () => {
+      const ok = await confirmDialog({
+        title: `Delete ${keyTitle(k)}?`, confirmLabel: "Delete key",
+        message: "The key's secret is deleted from Key Vault (soft delete, recoverable by an Azure admin within the vault's retention period).",
+        points: kind === "product" ? ["Its API Management subscription is deleted first."] : [],
+      });
+      if (!ok) return;
+      await post(keyPath(k.name, "delete"), {});
+      toast(`Deleted ${keyTitle(k)}.`);
+      await changed();
+    }));
     return el("tr", {}, keyCell(k), ownerCell(k), el("td", {}, modelChips(k.models)), el("td", {}, statusBadge(k.status)),
       el("td", {}, k.archivedAt ? el("span", { title: fmtDateTime(k.archivedAt) }, fmtDate(k.archivedAt)) : "—"),
       el("td", {}, when ? el("span", { title: fmtDateTime(when) }, fmtDate(when), el("span", { class: "cell-sub" }, fmtRelative(when))) : "—"),

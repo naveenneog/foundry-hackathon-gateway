@@ -4,12 +4,13 @@
  * tests/console-ui.test.mjs (text ≥ 4.5:1, chart marks and control borders ≥ 3:1).
  *   surfaces   page #f6f7f9 / #0f1419 · card #ffffff / #161b22 · inset #f3f5f8 / #1c232c
  *   text       ink #1f2328 / #e6edf3 (15.8 / 14.6:1 on card) · muted #59636e / #9da7b3 (6.1 / 7.1:1)
- *   kinds      hackathon #0072b2 / #56b4e9 (5.2 / 7.5:1) · product #c45200 / #e69f00 (4.6 / 7.7:1).
+ *   kinds      short-lived #0072b2 / #56b4e9 (5.2 / 7.5:1) · product #c45200 / #e69f00 (4.6 / 7.7:1).
  *              Okabe-Ito blue against orange: distinct in protan, deutan and tritan vision, and used
  *              for the two kinds everywhere (charts, KPI accents, badges).
  *   models     green #00875f / #2fbf8f · purple #b4508a / #d98cbc · ochre #8f6b00 / #f0e442 ·
  *              slate #5b6b8c / #9aa8c7, then blue and orange; ≥ 3:1 on the card in both themes.
- *   status     active green, suspended amber, revoked red, expired grey (filled, with a dot);
+ *   status     active green, scheduled indigo-blue, suspended amber, revoked red, expired grey (filled,
+ *              with a dot);
  *              archived is an outlined neutral. Badge text is ≥ 6.4:1 on its fill.
  * Theme: `color-scheme` plus light-dark(), so the system theme applies before any script runs;
  * [data-theme] (set from the header switch) forces one. Charts colour with currentColor and these
@@ -54,6 +55,8 @@
   --bad-bg: light-dark(#ffe5e7, #3b1519);
   --bad-border: light-dark(#f1aeb5, #7a2a30);
   --bad-row: light-dark(#fff6f6, #22161a);
+  --info-fg: light-dark(#2a3fa8, #aab8ff);
+  --info-bg: light-dark(#e6e9ff, #1b2149);
   --grey-fg: light-dark(#4b535d, #b1bac4);
   --grey-bg: light-dark(#eceff2, #262c34);
   --kind-jwt: light-dark(#0072b2, #56b4e9);
@@ -209,6 +212,8 @@ select.input { width: auto; padding-right: 28px; }
 .input-narrow { width: 14ch; }
 .input-row { display: flex; align-items: center; gap: 8px; }
 .presets { margin-top: 2px; }
+.window-line { margin: 0; padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); font-weight: 600; }
+.distribution { display: grid; gap: 12px; }
 .file-input:focus-visible + label { outline: 2px solid var(--focus); outline-offset: 2px; }
 input[type="checkbox"], input[type="radio"] { accent-color: var(--primary); }
 
@@ -245,9 +250,10 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--primary); }
 /* ── Badges, chips, callouts ───────────────────────────────────────────── */
 
 .badge { display: inline-flex; align-items: center; gap: 5px; padding: 0 8px; border: 1px solid transparent; border-radius: 999px; font-size: 12px; font-weight: 600; line-height: 20px; white-space: nowrap; }
-.badge-ok, .badge-warn, .badge-bad, .badge-grey { text-transform: capitalize; }
-.badge-ok::before, .badge-warn::before, .badge-bad::before, .badge-grey::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.badge-ok, .badge-info, .badge-warn, .badge-bad, .badge-grey { text-transform: capitalize; }
+.badge-ok::before, .badge-info::before, .badge-warn::before, .badge-bad::before, .badge-grey::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 .badge-ok { background: var(--ok-bg); color: var(--ok-fg); }
+.badge-info { background: var(--info-bg); color: var(--info-fg); }
 .badge-warn { background: var(--warn-bg); color: var(--warn-fg); }
 .badge-bad { background: var(--bad-bg); color: var(--bad-fg); }
 .badge-grey { background: var(--grey-bg); color: var(--grey-fg); }

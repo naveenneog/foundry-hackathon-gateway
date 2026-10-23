@@ -1,5 +1,5 @@
 // Key Dashboard — admin views: Models (Foundry deployments and alias pins), Export (encrypted,
-// signed bundles) and Signing (the hackathon-key signing secret).
+// signed bundles) and Signing (the secret that signs short-lived keys).
 
 import { cachedGet, get, invalidate, post } from "./api.js";
 import {
@@ -30,8 +30,8 @@ export function renderModels(root) {
   const depSlot = el("div", {});
   const search = el("input", { type: "search", class: "input", placeholder: "Search deployments", "aria-label": "Search deployments" });
   addChildren(root,
-    head("Models", "Foundry deployments in the gateway's account. Pin a deployment to an alias to offer it to hackathon keys; product keys use deployment names directly.", refresh),
-    card("Pinned aliases", el("p", { class: "field-hint" }, "Hackathon keys grant these aliases. Each route has its own map."), pinsSlot),
+    head("Models", "Foundry deployments in the gateway's account. Pin a deployment to an alias to offer it to short-lived keys; product keys use deployment names directly.", refresh),
+    card("Pinned aliases", el("p", { class: "field-hint" }, "Short-lived keys grant these aliases. Each route has its own map."), pinsSlot),
     card("Foundry deployments", el("div", { class: "toolbar" }, el("div", { class: "search" }, icon("search", "icon search-icon"), search)), depSlot));
   let data = null;
 
@@ -67,7 +67,7 @@ export function renderModels(root) {
             unpin.addEventListener("click", busy(unpin, async () => {
               const ok = await confirmDialog({
                 title: `Unpin ${p.alias}?`, confirmLabel: "Unpin alias",
-                message: `Hackathon keys that grant ${p.alias} are refused for it until an alias of that name is pinned again.`,
+                message: `Short-lived keys that grant ${p.alias} are refused for it until an alias of that name is pinned again.`,
               });
               if (!ok) return;
               await post("/api/models/unpin", { alias: p.alias, route });
@@ -168,8 +168,8 @@ export function renderExport(root, ctx) {
     multiHint.hidden = parts < 2;
     multiHint.textContent = `More than ${EXPORT_MAX} keys go into ${parts} bundles. Type a passphrase to use the same one for every part; left blank, each part gets its own.`;
     if (!items.length) {
-      setChildren(selectedSlot, emptyState("No keys are selected.", "Tick keys on the Hackathon keys and Product keys pages, or export the results of a bulk issue.",
-        el("a", { class: "btn btn-secondary btn-sm", href: "#/hackathon" }, "Hackathon keys"), el("a", { class: "btn btn-secondary btn-sm", href: "#/product" }, "Product keys")));
+      setChildren(selectedSlot, emptyState("No keys are selected.", "Tick keys on the Short-lived keys and Product keys pages, or export the results of a bulk issue.",
+        el("a", { class: "btn btn-secondary btn-sm", href: "#/short-lived" }, "Short-lived keys"), el("a", { class: "btn btn-secondary btn-sm", href: "#/product" }, "Product keys")));
       return;
     }
     setChildren(selectedSlot,
@@ -261,7 +261,7 @@ export function renderSigning(root) {
     const ok = await confirmDialog({
       title: "Push the vault's secret to API Management?", tone: "warn", typed: "PUSH", confirmLabel: "Push secret",
       message: "API Management's copy is overwritten with the value in Key Vault.",
-      points: ["Hackathon keys signed with a different secret stop working at the gateway."],
+      points: ["Short-lived keys signed with a different secret stop working at the gateway."],
     });
     if (!ok) return;
     await post("/api/signing/push", { confirm: "PUSH" });
@@ -272,21 +272,21 @@ export function renderSigning(root) {
     const ok = await confirmDialog({
       title: "Rotate the signing secret?", typed: "ROTATE", confirmLabel: "Rotate secret",
       message: "A new secret is written to Key Vault and to API Management.",
-      points: ["Every hackathon key issued before now stops working immediately.", "Product keys are not affected.", "Re-issue the hackathon keys that are still needed."],
+      points: ["Every short-lived key issued before now stops working immediately.", "Product keys are not affected.", "Re-issue the short-lived keys that are still needed."],
     });
     if (!ok) return;
     await post("/api/signing/rotate", { confirm: "ROTATE" });
-    toast("Signing secret rotated. Re-issue the hackathon keys that are still needed.");
+    toast("Signing secret rotated. Re-issue the short-lived keys that are still needed.");
     await load();
   });
   const action = (title, text, button, cls = "") => el("div", { class: ["action-row", cls] }, el("div", {}, el("h3", { class: "section-title" }, title), el("p", { class: "field-hint" }, text)), button);
   addChildren(root,
-    head("Signing secret", "Key Vault holds the secret that signs hackathon keys. API Management keeps an encrypted copy to check them, because a Key Vault reference would need the vault firewall opened.", refresh),
+    head("Signing secret", "Key Vault holds the secret that signs short-lived keys. API Management keeps an encrypted copy to check them, because a Key Vault reference would need the vault firewall opened.", refresh),
     card("Status", statusSlot),
     card("Actions",
       action("Migrate", "First run only: copies API Management's current secret into Key Vault. It never overwrites a different value.", migrate),
       action("Push", "Copies the vault's value to API Management, for example after restoring the vault.", push),
-      action("Rotate", "Writes a new secret to both. Every hackathon key issued before it stops working.", rotate, "action-danger")));
+      action("Rotate", "Writes a new secret to both. Every short-lived key issued before it stops working.", rotate, "action-danger")));
 
   async function load() {
     setChildren(statusSlot, loadingState("Checking the signing secret…", 1));

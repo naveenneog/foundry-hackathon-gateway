@@ -64,7 +64,10 @@ test("deploy script: assignment required, ID-token sign-in, admin-less registry,
   assert.match(deploy, /appRoleAssignmentRequired=true/);
   assert.match(deploy, /--enable-id-token-issuance true/);
   assert.match(deploy, /Console\.Admin/);
-  assert.match(deploy, /Console\.User/);
+  // Admin-only (ADR-0016): -Admins adds more admins; nobody is given Console.User.
+  assert.match(deploy, /\[string\[\]\]\$Admins = @\(\)/);
+  assert.doesNotMatch(deploy, /\$Users\b/);
+  assert.doesNotMatch(deploy, /Grant-ConsoleRole[^\n]*'Console\.User'/);
   assert.match(deploy, /--admin-enabled false/);
   assert.match(deploy, /acr build/);
   // Tenants that disable user consent need a per-user grant for sign-in scopes (measured live).

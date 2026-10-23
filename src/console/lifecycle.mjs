@@ -24,6 +24,8 @@ export function statusOf(kind, tags, now) {
   if (kind === "jwt" && tags?.revoked === "true") return "revoked";
   if (expiredAt(tags, now) !== null) return "expired";
   if (kind === "product" && tags?.state === "suspended") return "suspended";
+  const nbf = time(tags?.notBefore);
+  if (nbf !== null && nbf > now) return "scheduled";
   return "active";
 }
 

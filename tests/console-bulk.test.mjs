@@ -7,7 +7,7 @@ import { harness, ADMIN, ALICE } from "./console.harness.mjs";
 const TEMPLATE = readFileSync(new URL("../poc/products-keyvault/infra/product-policy.xml", import.meta.url), "utf8");
 const rows = (n, f) => Array.from({ length: n }, (_, i) => f(i));
 
-test("bulk hackathon keys: issues every valid row, reports bad rows by index, returns no key values", async () => {
+test("bulk short-lived keys: issues every valid row, reports bad rows by index, returns each key for keys.csv (ADR-0016)", async () => {
   const h = harness();
   await h.service.migrateSigningSecret(ADMIN);
   await assert.rejects(h.service.issueJwtBulk(ALICE, { models: ["flash"], budget: 10, hours: 1, entries: [] }), { status: 403 });
@@ -21,7 +21,8 @@ test("bulk hackathon keys: issues every valid row, reports bad rows by index, re
   assert.deepEqual(r.issued.map((x) => x.owner), ["a@contoso.com", "d@contoso.com"]);
   assert.deepEqual(r.failed.map((x) => x.index), [1, 2]);
   assert.match(r.failed[0].error, /Owner/);
-  assert.doesNotMatch(JSON.stringify(r), /eyJ/, "no token in the response");
+  assert.ok(r.issued.every((k) => /^eyJ/.test(k.token)), "each issued key comes back for the CSV");
+  assert.equal(r.keysCsv.split("\r\n").length, 3, "header and two rows");
   const tags = h.vault.secrets.get(r.issued[0].name).tags;
   assert.equal(tags.models, "flash,haiku-4-5");
   assert.equal(tags.label, "batch");
@@ -52,7 +53,8 @@ test("bulk product keys: one pack for the batch, duplicates and bad names fail p
   assert.match(r.failed[0].error, /already exists/);
   assert.equal(h.arm.calls.filter((c) => c[0] === "createProduct").length, 1);
   assert.equal(h.vault.secrets.get("poc-key-team-d").tags.rotateDays, "30");
-  assert.doesNotMatch(JSON.stringify(r), /[0-9a-f]{32}/, "no key value in the response");
+  assert.ok(r.issued.every((k) => /^[0-9a-f]{32}$/.test(k.key)), "each issued key comes back for the CSV");
+  assert.doesNotMatch(r.indexCsv, /[0-9a-f]{32}/, "the index has no keys");
   await assert.rejects(h.service.issueProductBulk(ADMIN, { models: [], monthlyTokens: 5, entries: [{ owner: "a@contoso.com", name: "x1" }] }), { status: 400 });
 });
 

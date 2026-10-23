@@ -52,8 +52,10 @@ export function can(principal, action) {
   if (!principal) return { ok: false, status: 401 };
   const role = roleOf(principal);
   if (!role) return { ok: false, status: 403 };
-  if (action === "read-own") return { ok: true };
-  if (role === "admin" && ADMIN_ACTIONS.has(action)) return { ok: true };
+  // Admin-only dashboard (ADR-0016): Console.User no longer opens it; keys reach their holders
+  // by copy, keys.csv or an export bundle, as with admin.ps1.
+  if (role !== "admin") return { ok: false, status: 403 };
+  if (action === "read-own" || ADMIN_ACTIONS.has(action)) return { ok: true };
   return { ok: false, status: 403 };
 }
 

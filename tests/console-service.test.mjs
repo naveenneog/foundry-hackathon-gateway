@@ -60,25 +60,26 @@ test("signed keys: minted from the vault secret, stored with owner tags, verifia
   await assert.rejects(service.issueJwt(ADMIN, jwtBody({ models: ["gpt-9"] })), (e) => e.status === 400);
 });
 
-test("listing and reveal: users see only their own keys and never another user's", async () => {
+test("listing and reveal: admin only; a key's owner is refused (ADR-0016)", async () => {
   const { service } = harness();
   await service.migrateSigningSecret(ADMIN);
   const a = await service.issueJwt(ADMIN, jwtBody());
   const b = await service.issueJwt(ADMIN, jwtBody({ owner: BOB.name, subject: "team-2" }));
   const p = await service.issueProductKey(ADMIN, { owner: ALICE.name, name: "alice-pack", product: "poc-tiny-pack" });
 
-  const mine = await service.listKeys(ALICE);
-  assert.deepEqual(mine.map((k) => k.name).sort(), [a.name, p.name].sort());
-  assert.ok(mine.every((k) => !("value" in k)), "listing never carries values");
+  await assert.rejects(service.listKeys(ALICE), (e) => e.status === 403);
+  const all = await service.listKeys(ADMIN);
+  assert.deepEqual(all.map((k) => k.name).sort(), [a.name, b.name, p.name].sort());
+  assert.ok(all.every((k) => !("value" in k)), "listing never carries values");
   assert.equal((await service.listKeys(ADMIN)).filter((k) => k.kind).length >= 3, true);
   assert.ok(!(await service.listKeys(ADMIN)).some((k) => k.name === "gw-signing-secret"));
 
-  const revealed = await service.revealKey(ALICE, a.name);
+  const revealed = await service.revealKey(ADMIN, a.name);
   assert.equal(revealed.value, a.token);
-  await assert.rejects(service.revealKey(ALICE, b.name), (e) => e.status === 404, "no existence leak");
-  await assert.rejects(service.revealKey(ALICE, "gw-signing-secret"), (e) => e.status === 404);
+  await assert.rejects(service.revealKey(ALICE, a.name), (e) => e.status === 403, "not even the owner");
+  await assert.rejects(service.revealKey(ADMIN, "nope-missing"), (e) => e.status === 404);
   await assert.rejects(service.revealKey(ADMIN, "gw-signing-secret"), (e) => e.status === 404, "the signing secret is never revealable");
-  const pr = await service.revealKey(ALICE, p.name);
+  const pr = await service.revealKey(ADMIN, p.name);
   assert.equal(pr.handout.claudeSettings.env.ANTHROPIC_API_KEY, pr.value);
 });
 

@@ -33,7 +33,9 @@ export function validateJwtRequest(body, { allowedModels }) {
   const hours = Number(body?.hours);
   if (!Number.isFinite(hours) || hours <= 0 || hours > MAX_HOURS) fail(`Window: up to ${MAX_HOURS} hours.`);
   const label = body?.label == null || body.label === "" ? undefined : String(body.label).slice(0, 80);
-  return { owner, subject, models, budget, hours, label };
+  const startInHours = body?.startInHours == null || body.startInHours === "" ? 0 : Number(body.startInHours);
+  if (!Number.isFinite(startInHours) || startInHours < 0 || startInHours > MAX_HOURS) fail(`Start in 0–${MAX_HOURS} hours.`);
+  return { owner, subject, models, budget, hours, startInHours, label };
 }
 
 export function validateProductKeyRequest(body, { products }) {

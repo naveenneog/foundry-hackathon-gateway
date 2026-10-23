@@ -5,7 +5,7 @@ import { buildUsageQuery, aggregateUsage, bucketFor, PERIODS } from "./usage.mjs
 const CACHE_MS = 60_000;
 const CACHE_MAX = 64;
 
-export function usageApi({ vault, clock, owns, kindOf, visibleKey, ServiceError }) {
+export function usageApi({ vault, clock, owns, kindOf, visibleKey, ServiceError, requireAdmin }) {
   let source = null;
   const cache = new Map();
   const setUsageSource = (la) => { source = la; cache.clear(); };
@@ -32,6 +32,7 @@ export function usageApi({ vault, clock, owns, kindOf, visibleKey, ServiceError 
   const empty = (kind, days, note) => ({ kind, days, ...aggregateUsage([], { keys: new Map(), includeUnknown: false, days, bucket: bucketFor(days), now: clock() }), note });
 
   async function usage(actor, { kind, days } = {}) {
+    requireAdmin(actor);
     if (!["jwt", "product"].includes(kind)) throw new ServiceError(400, "kind must be jwt or product.");
     const d = period(days);
     if (!source) return empty(kind, d, "Usage is not configured: the dashboard has no Log Analytics workspace.");
@@ -46,6 +47,7 @@ export function usageApi({ vault, clock, owns, kindOf, visibleKey, ServiceError 
   }
 
   async function keyUsage(actor, name, { days } = {}) {
+    requireAdmin(actor);
     const s = await visibleKey(actor, name);
     const d = period(days);
     const kind = kindOf(s);

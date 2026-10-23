@@ -52,7 +52,7 @@ function laFake(rowsFor) {
   return { calls, async query(q, opts) { calls.push({ q, opts }); return rowsFor(q); } };
 }
 
-test("service usage: users see only their keys; admins see all; product keys join on subscription; results cached 60 s", async () => {
+test("service usage: admin only; every key; product keys join on subscription; results cached 60 s", async () => {
   const h = harness();
   h.service.setPackTemplate(TEMPLATE);
   await h.service.migrateSigningSecret(ADMIN);
@@ -68,31 +68,32 @@ test("service usage: users see only their keys; admins see all; product keys joi
       { Bucket: today, KeyId: bJti, Model: "flash", Name: "Total Tokens", Tokens: 20, Calls: 1 },
     ]);
   h.service.setUsageSource(la);
-  const alice = await h.service.usage(ALICE, { kind: "jwt", days: 7 });
-  assert.deepEqual(alice.byKey.map((k) => k.owner), ["alice@contoso.com"]);
-  assert.equal(alice.total.tokens, 10);
+  await assert.rejects(h.service.usage(ALICE, { kind: "jwt", days: 7 }), { status: 403 });
   const admin = await h.service.usage(ADMIN, { kind: "jwt", days: 7 });
   assert.equal(admin.total.tokens, 30);
+  assert.deepEqual(admin.byKey.map((k) => k.owner).sort(), ["alice@contoso.com", "bob@contoso.com"]);
+  await h.service.usage(ADMIN, { kind: "jwt", days: 7 });
   assert.equal(la.calls.length, 1, "the second view reused the cached rows");
-  const prod = await h.service.usage(ALICE, { kind: "product", days: 7 });
+  const prod = await h.service.usage(ADMIN, { kind: "product", days: 7 });
   assert.deepEqual(prod.byKey.map((k) => [k.name, k.tokens]), [["poc-key-p1", 40]]);
   h.clock.now += 61_000;
   await h.service.usage(ADMIN, { kind: "jwt", days: 7 });
   assert.equal(la.calls.length, 3);
   assert.equal(la.calls[0].opts.timespan, "P7D");
-  await assert.rejects(h.service.usage(ALICE, { kind: "jwt", days: 5 }), { status: 400 });
+  await assert.rejects(h.service.usage(ADMIN, { kind: "jwt", days: 5 }), { status: 400 });
 });
 
-test("service keyUsage: one key's series, only for its owner or an admin", async () => {
+test("service keyUsage: one key's series, admin only", async () => {
   const h = harness();
   await h.service.migrateSigningSecret(ADMIN);
   const a = await h.service.issueJwt(ADMIN, { owner: "alice@contoso.com", subject: "t", models: ["flash"], budget: 9, hours: 48 });
   const la = laFake(() => [{ Bucket: "2026-10-16T00:00:00.000Z", KeyId: a.jti, Model: "flash", Name: "Total Tokens", Tokens: 5, Calls: 1 }]);
   h.service.setUsageSource(la);
-  const u = await h.service.keyUsage(ALICE, a.name, { days: 30 });
+  const u = await h.service.keyUsage(ADMIN, a.name, { days: 30 });
   assert.equal(u.total.tokens, 5);
   assert.match(la.calls[0].q, new RegExp(`KeyId == "${a.jti}"`));
-  await assert.rejects(h.service.keyUsage(BOB, a.name, { days: 30 }), { status: 404 });
+  await assert.rejects(h.service.keyUsage(ALICE, a.name, { days: 30 }), { status: 403 }, "not even the owner");
+  await assert.rejects(h.service.keyUsage(ADMIN, "jwt-k-missing0000000000", { days: 30 }), { status: 404 });
 });
 
 test("service usage without a workspace says so instead of failing", async () => {

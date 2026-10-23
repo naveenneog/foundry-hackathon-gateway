@@ -28,6 +28,7 @@ export function lifecycleApi(ctx) {
   }
 
   async function listKeys(actor, { kind, status = "active" } = {}) {
+    requireAdmin(actor);
     if (kind !== undefined && kind !== "" && !KINDS.includes(kind)) throw new ServiceError(400, "kind must be jwt or product.");
     if (!STATUSES.includes(status)) throw new ServiceError(400, "status must be active or archived.");
     const now = clock();

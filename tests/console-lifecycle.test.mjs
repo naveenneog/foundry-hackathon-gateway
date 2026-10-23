@@ -52,17 +52,17 @@ test("listKeys: active by default, archived on request, filtered by kind, with s
   h.service.setPackTemplate(TEMPLATE);
   await h.service.issueProductKey(ADMIN, { owner: "alice@contoso.com", name: "p1", models: ["claude-haiku-4-5"], monthlyTokens: 100 });
   h.clock.now = T + 2 * 3_600_000;
-  const active = await h.service.listKeys(ALICE);
+  const active = await h.service.listKeys(ADMIN);
   assert.deepEqual(active.map((k) => k.name).sort(), [b.name, "poc-key-p1"].sort());
-  const jwtOnly = await h.service.listKeys(ALICE, { kind: "jwt" });
+  const jwtOnly = await h.service.listKeys(ADMIN, { kind: "jwt" });
   assert.deepEqual(jwtOnly.map((k) => k.name), [b.name]);
   assert.deepEqual(jwtOnly[0].models, ["flash"]);
-  const archived = await h.service.listKeys(ALICE, { status: "archived" });
+  const archived = await h.service.listKeys(ADMIN, { status: "archived" });
   assert.deepEqual(archived.map((k) => k.name), [a.name]);
   assert.equal(archived[0].status, "expired");
   assert.equal(archived[0].archived, true);
   assert.equal(archived[0].deleteAfter, iso(T + 3_600_000 + 30 * DAY));
-  assert.deepEqual(await h.service.listKeys(BOB), []);
+  await assert.rejects(h.service.listKeys(BOB), { status: 403 });
 });
 
 test("archiveKey and deleteKey: admin only; only archived keys are deleted; product deletion removes the subscription and an empty pack", async () => {
@@ -98,15 +98,15 @@ test("deleteKey keeps a legacy pack and keeps a revoked jti that has not expired
   assert.equal(h.arm.products.has("poc-claude-pack"), true);
 });
 
-test("setOwner: admin re-tags a key, and the new owner sees it", async () => {
+test("setOwner: admin re-tags a key; the owner is attribution only (ADR-0016)", async () => {
   const h = harness();
   await h.service.issueProductKey(ADMIN, { owner: "alice@contoso.com", name: "x1", product: "poc-claude-pack" });
   await assert.rejects(h.service.setOwner(ALICE, "poc-key-x1", { owner: "bob@contoso.com" }), { status: 403 });
   await assert.rejects(h.service.setOwner(ADMIN, "poc-key-x1", { owner: "not-an-email" }), { status: 400 });
   const r = await h.service.setOwner(ADMIN, "poc-key-x1", { owner: "Bob@Contoso.com", label: "team red" });
   assert.deepEqual(r, { name: "poc-key-x1", owner: "bob@contoso.com", label: "team red" });
-  assert.deepEqual((await h.service.listKeys(BOB)).map((k) => k.name), ["poc-key-x1"]);
-  assert.deepEqual(await h.service.listKeys(ALICE), []);
+  assert.equal((await h.service.listKeys(ADMIN)).find((k) => k.name === "poc-key-x1").owner, "bob@contoso.com");
+  await assert.rejects(h.service.listKeys(BOB), { status: 403 }, "the new owner still cannot open the dashboard");
 });
 
 test("runSweep: rotates due keys, archives expired ones (suspending products), deletes after 30 days, prunes revocations", async () => {

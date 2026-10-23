@@ -16,6 +16,7 @@ import { modelsApi } from "./service-models.mjs";
 import { resolveGrant, ensurePack } from "./packs.mjs";
 import { lifecycleApi } from "./service-lifecycle.mjs";
 import { usageApi } from "./service-usage.mjs";
+import { keysCsv, indexCsv } from "./csv.mjs";
 
 export class ServiceError extends Error {
   constructor(status, message) {
@@ -38,13 +39,15 @@ const kindOf = (s) => s?.tags?.kind === "jwt" ? "jwt"
 
 export function createService({ vault, arm, foundry = null, packTemplate: initialTemplate = null, clock = Date.now, log = () => {}, gatewayUrl }) {
   let packTemplate = initialTemplate;
+  const gwBase = String(gatewayUrl ?? "").replace(/\/+$/, "");
   const audit = (actor, action, fields = {}) =>
     log({ at: new Date(clock()).toISOString(), actor: typeof actor === "string" ? actor : actor?.name, action, ...fields });
 
   const requireAdmin = (actor) => {
     if (actor?.role !== "admin") throw new ServiceError(403, "Admin role required.");
   };
-  const owns = (actor, s) => actor?.role === "admin" || String(s?.tags?.owner ?? "").toLowerCase() === actor?.name;
+  // Admin-only dashboard (ADR-0016): owner is a tag for attribution, not an access grant.
+  const owns = (actor) => actor?.role === "admin";
 
   /** A key the actor may see, or 404 — never revealing whether someone else's key exists. */
   async function visibleKey(actor, name) {
@@ -128,25 +131,25 @@ export function createService({ vault, arm, foundry = null, packTemplate: initia
   }
 
   async function mintAndStore(actor, req, secret) {
-    const notBefore = clock();
+    const notBefore = clock() + Math.round(req.startInHours * 3_600_000);
     const expiresAt = notBefore + Math.round(req.hours * 3_600_000);
     const { token, jti } = mintKey({ secret: secret.value, subject: req.subject, models: req.models, budget: req.budget, notBefore, expiresAt, label: req.label });
     const name = `jwt-${jti.replace("_", "-")}`;
     await vault.setSecret(name, token, {
       contentType: "application/jwt",
       tags: { kind: "jwt", jti, owner: req.owner, subject: req.subject, models: req.models.join(","), budget: String(req.budget),
-        expires: new Date(expiresAt).toISOString(), revoked: "false", issuedBy: actor.name, ...(req.label ? { label: req.label } : {}) },
+        notBefore: new Date(notBefore).toISOString(), expires: new Date(expiresAt).toISOString(), revoked: "false", issuedBy: actor.name, ...(req.label ? { label: req.label } : {}) },
     });
-    return { name, jti, token, expiresAt };
+    return { name, jti, token, notBefore, expiresAt };
   }
 
   async function issueJwt(actor, body) {
     requireAdmin(actor);
     const cfg = await config();
     const req = await guard(async () => validateJwtRequest(body, { allowedModels: [...cfg.models.openai, ...cfg.models.claude] }));
-    const { name, jti, token, expiresAt } = await mintAndStore(actor, req, await signingSecret());
-    audit(actor, "issue-jwt", { jti, owner: req.owner, subject: req.subject, models: req.models.join(","), budget: req.budget });
-    return { name, jti, token, expiresAt, handout: jwtHandout({ gatewayUrl, token, models: req.models, claudeModels: cfg.models.claude }) };
+    const { name, jti, token, notBefore, expiresAt } = await mintAndStore(actor, req, await signingSecret());
+    audit(actor, "issue-jwt", { jti, owner: req.owner, subject: req.subject, models: req.models.join(","), budget: req.budget, startInHours: req.startInHours });
+    return { name, jti, token, notBefore, expiresAt, handout: jwtHandout({ gatewayUrl, token, models: req.models, claudeModels: cfg.models.claude }) };
   }
 
   const entriesOf = (body) => {
@@ -155,13 +158,16 @@ export function createService({ vault, arm, foundry = null, packTemplate: initia
     return entries;
   };
 
-  /** Many keys on one grant. Rows fail one by one; no key value is returned — export a bundle. */
+  /**
+   * Many keys on one grant, returned with a keys.csv to send out, as admin.ps1 does (ADR-0016).
+   * Rows fail one by one. The response goes only to an admin and is never cached or logged.
+   */
   async function issueJwtBulk(actor, body) {
     requireAdmin(actor);
     const entries = entriesOf(body);
     const cfg = await config();
     const allowedModels = [...cfg.models.openai, ...cfg.models.claude];
-    const common = { models: body.models, budget: body.budget, hours: body.hours, label: body.label };
+    const common = { models: body.models, budget: body.budget, hours: body.hours, startInHours: body.startInHours, label: body.label };
     await guard(async () => validateJwtRequest({ ...common, owner: "check@example.com", subject: "check" }, { allowedModels }));
     const secret = await signingSecret();
     const issued = [];
@@ -169,18 +175,22 @@ export function createService({ vault, arm, foundry = null, packTemplate: initia
     for (const [index, row] of entries.entries()) {
       try {
         const req = validateJwtRequest({ ...common, owner: row?.owner, subject: row?.subject }, { allowedModels });
-        const { name } = await mintAndStore(actor, req, secret);
-        issued.push({ name, owner: req.owner, subject: req.subject });
+        const k = await mintAndStore(actor, req, secret);
+        const claude = req.models.filter((m) => cfg.models.claude.includes(m));
+        issued.push({ name: k.name, owner: req.owner, subject: req.subject, jti: k.jti, token: k.token, models: req.models, budget: req.budget,
+          notBefore: k.notBefore, expiresAt: k.expiresAt,
+          openaiBaseUrl: req.models.length > claude.length ? `${gwBase}/v1` : "", anthropicBaseUrl: claude.length ? `${gwBase}/claude` : "", anthropicModel: claude[0] ?? "" });
       } catch (e) {
         if (!(e instanceof InputError)) throw e;
         failed.push({ index, error: e.message });
       }
     }
     audit(actor, "issue-jwt-bulk", { issued: issued.length, failed: failed.length, models: common.models?.join?.(","), names: issued.map((k) => k.name) });
-    return { issued, failed };
+    return { issued, failed, keysCsv: keysCsv(issued, "jwt"), indexCsv: indexCsv(issued, "jwt") };
   }
 
   async function revealKey(actor, name) {
+    requireAdmin(actor);
     const s = await visibleKey(actor, name);
     audit(actor, "reveal", { name });
     const kind = kindOf(s);
@@ -226,7 +236,7 @@ export function createService({ vault, arm, foundry = null, packTemplate: initia
       ...(req.expiresDays ? { expires: new Date(clock() + req.expiresDays * 86_400_000).toISOString() } : {}),
       ...(req.rotateDays ? { rotateDays: String(req.rotateDays) } : {}) };
     await vault.setSecret(req.secretName, keys.primaryKey, { contentType: PRODUCT_CONTENT_TYPE, tags });
-    return { name: req.secretName, subscriptionId: req.subscriptionId, product };
+    return { name: req.secretName, subscriptionId: req.subscriptionId, product, key: keys.primaryKey };
   }
 
   async function issueProductKey(actor, body) {
@@ -234,7 +244,7 @@ export function createService({ vault, arm, foundry = null, packTemplate: initia
     const cfg = await config();
     const req = await guard(async () => validateProductKeyRequest(body, { products: cfg.products }));
     const grant = await productGrant(req);
-    const out = await createProductKey(actor, req, grant);
+    const { key: _key, ...out } = await createProductKey(actor, req, grant);
     audit(actor, "issue-product", { name: req.secretName, product: grant.product, owner: req.owner, models: grant.grantTags.models, rotateDays: req.rotateDays });
     return out;
   }
@@ -246,20 +256,25 @@ export function createService({ vault, arm, foundry = null, packTemplate: initia
     const common = { models: body.models, monthlyTokens: body.monthlyTokens, rotateDays: body.rotateDays, expiresDays: body.expiresDays, product: body.product };
     const first = await guard(async () => validateProductKeyRequest({ ...common, owner: "check@example.com", name: "check" }, { products: cfg.products }));
     const grant = await productGrant(first);
+    const granted = (grant.grantTags.models ?? "").split(",");
+    const routes = new Set((await models.grantableDeployments()).filter((d) => granted.includes(d.deployment)).map((d) => d.route));
     const issued = [];
     const failed = [];
     for (const [index, row] of entries.entries()) {
       try {
         const req = validateProductKeyRequest({ ...common, owner: row?.owner, name: row?.name }, { products: cfg.products });
-        const { name } = await createProductKey(actor, req, grant);
-        issued.push({ name, owner: req.owner });
+        const k = await createProductKey(actor, req, grant);
+        issued.push({ name: k.name, label: req.name, owner: req.owner, subscriptionId: k.subscriptionId, key: k.key,
+          models: (grant.grantTags.models ?? "").split(",").filter(Boolean), monthlyTokens: req.monthlyTokens ?? null,
+          expiresAt: req.expiresDays ? clock() + req.expiresDays * 86_400_000 : null,
+          anthropicBaseUrl: !grant.grantTags.models || routes.has("claude") ? `${gwBase}/poc/claude` : "", openaiBaseUrl: routes.has("openai") ? `${gwBase}/poc/v1` : "" });
       } catch (e) {
         if (!(e instanceof InputError) && !(e instanceof ServiceError && e.status === 409)) throw e;
         failed.push({ index, error: e.message });
       }
     }
     audit(actor, "issue-product-bulk", { issued: issued.length, failed: failed.length, product: grant.product, names: issued.map((k) => k.name) });
-    return { issued, failed };
+    return { issued, failed, keysCsv: keysCsv(issued, "product"), indexCsv: indexCsv(issued, "product") };
   }
 
   async function rotate(name, actorName) {
@@ -362,7 +377,7 @@ export function createService({ vault, arm, foundry = null, packTemplate: initia
   }
 
   const setPackTemplate = (xml) => { packTemplate = xml; };
-  const usageFns = usageApi({ vault, clock, owns, kindOf, visibleKey, ServiceError });
+  const usageFns = usageApi({ vault, clock, owns, kindOf, visibleKey, ServiceError, requireAdmin });
   const revocations = {
     async add(jti) {
       const current = (await arm.getNamedValue(NV.revoked))?.value ?? ",";

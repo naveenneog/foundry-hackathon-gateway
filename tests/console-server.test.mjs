@@ -37,8 +37,8 @@ const post = (path, who, body, extra = {}) => fetch(base + path, {
 test("no principal is 401, a principal without a console role is 403", async () => {
   assert.equal((await get("/api/me")).status, 401);
   assert.equal((await get("/api/me", AS.norole)).status, 403);
-  const me = await (await get("/api/me", AS.alice)).json();
-  assert.deepEqual(me, { name: ALICE.name, role: "user" });
+  assert.equal((await get("/api/me", AS.alice)).status, 403, "Console.User is refused (ADR-0016)");
+  assert.deepEqual(await (await get("/api/me", AS.admin)).json(), { name: ADMIN.name, role: "admin" });
 });
 
 test("health is open; static app is served with a strict CSP; APIs are not cached", async () => {
@@ -83,16 +83,17 @@ test("only admins issue, revoke, rotate, export and manage the signing secret", 
   assert.equal((await post(`/api/keys/${name}/revoke`, AS.admin, {})).status, 200);
 });
 
-test("users list and reveal only their own keys; another user's key is 404", async () => {
+test("only an admin lists and reveals keys; the owner of a key cannot (ADR-0016)", async () => {
   const k = await (await post("/api/jwt", AS.admin, { owner: ALICE.name, subject: "a", models: ["haiku-4-5"], budget: 1000, hours: 2 })).json();
-  const aliceKeys = await (await get("/api/keys", AS.alice)).json();
-  assert.ok(aliceKeys.keys.some((x) => x.name === k.name));
-  assert.ok(aliceKeys.keys.every((x) => !("value" in x)));
-  assert.ok((await (await get("/api/keys", AS.bob)).json()).keys.every((x) => x.owner === BOB.name));
-  const r = await get(`/api/keys/${k.name}`, AS.alice);
+  assert.equal((await get("/api/keys", AS.alice)).status, 403);
+  assert.equal((await get(`/api/keys/${k.name}`, AS.alice)).status, 403, "even the key's owner");
+  const all = await (await get("/api/keys", AS.admin)).json();
+  assert.ok(all.keys.some((x) => x.name === k.name));
+  assert.ok(all.keys.every((x) => !("value" in x)));
+  const r = await get(`/api/keys/${k.name}`, AS.admin);
   assert.equal(r.status, 200);
   assert.equal((await r.json()).value, k.token);
-  assert.equal((await get(`/api/keys/${k.name}`, AS.bob)).status, 404);
+  assert.equal((await get(`/api/keys/${k.name}`, AS.bob)).status, 403);
   assert.equal((await get("/api/keys/gw-signing-secret", AS.admin)).status, 404);
 });
 
@@ -102,7 +103,8 @@ test("admin export returns a signed bundle and a one-time passphrase; the public
   assert.equal(r.status, 200);
   const out = await r.json();
   assert.ok(out.bundle.signature && out.passphrase && out.filename);
-  const jwk = await (await get("/api/bundle-key", AS.bob)).json();
+  assert.equal((await get("/api/bundle-key", AS.bob)).status, 403);
+  const jwk = await (await get("/api/bundle-key", AS.admin)).json();
   assert.equal(jwk.crv, "P-256");
   assert.ok(!("d" in jwk), "never the private part");
 });

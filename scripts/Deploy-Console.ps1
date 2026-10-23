@@ -7,7 +7,7 @@
 .DESCRIPTION
   1. Ensures an Entra app registration "hackgw-key-console" with app roles Console.Admin and
      Console.User, ID-token sign-in, and "assignment required" so only assigned people can sign in.
-  2. Assigns the signed-in operator Console.Admin, and any -Users Console.User, and records
+  2. Assigns the signed-in operator, and any -Admins, Console.Admin, and records
      per-user sign-in consent where the tenant blocks user consent.
   3. Adds usage telemetry to the POC routes (infra/console-telemetry.bicep).
   4. Deploys ONE hosting path (ADR-0015):
@@ -33,7 +33,7 @@ param(
     [string]$AllowedIp = '',
     [ValidateSet('ContainerApps', 'AppService')][string]$Hosting = 'ContainerApps',
     [string]$AppRegistrationName = 'hackgw-key-console',
-    [string[]]$Users = @(),
+    [string[]]$Admins = @(),
     [string]$SubnetPrefix = '',
     [string]$AppServiceSku = 'B1'
 )$ErrorActionPreference = 'Stop'
@@ -129,7 +129,8 @@ function Grant-ConsoleRole([string]$PrincipalId, [string]$RoleValue, [string]$La
 }
 $me = Invoke-Az ad signed-in-user show --query '{id:id,upn:userPrincipalName}' -o json
 Grant-ConsoleRole $me.id 'Console.Admin' $me.upn
-foreach ($u in $Users) { Grant-ConsoleRole (Invoke-Az ad user show --id $u --query id -o json) 'Console.User' $u }
+# Admin-only dashboard (ADR-0016): keys reach their holders by copy, keys.csv or an export bundle.
+foreach ($u in $Admins) { Grant-ConsoleRole (Invoke-Az ad user show --id $u --query id -o json) 'Console.Admin' $u }
 
 # Sign-in needs Graph openid/profile/email. Where the tenant blocks user consent, a per-user grant
 # lets assigned people sign in without a tenant-wide admin consent; if this is refused, ask a
@@ -152,7 +153,7 @@ function Grant-SignInConsent([string]$PrincipalId, [string]$Label) {
     finally { Remove-Item $body -Force }
 }
 Grant-SignInConsent $me.id $me.upn
-foreach ($u in $Users) { Grant-SignInConsent (Invoke-Az ad user show --id $u --query id -o json) $u }
+foreach ($u in $Admins) { Grant-SignInConsent (Invoke-Az ad user show --id $u --query id -o json) $u }
 
 Write-Host "Adding usage telemetry to the POC routes..."
 $null = Invoke-Az deployment group create --subscription $Subscription -g $ResourceGroup -n "console-telemetry-$suffix" `

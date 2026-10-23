@@ -47,20 +47,22 @@ test("models, pinning and config's deployments over HTTP", async () => {
   const pin = await post("/api/models/pin", AS.admin, { alias: "sonnet-5", deployment: "claude-sonnet-5" });
   assert.equal(pin.status, 200);
   assert.equal((await post("/api/models/pin", AS.admin, { alias: "sonnet", deployment: "claude-sonnet-5" })).status, 400);
-  const cfg = await (await get("/api/config", AS.alice)).json();
+  assert.equal((await get("/api/config", AS.alice)).status, 403);
+  const cfg = await (await get("/api/config", AS.admin)).json();
   assert.ok(cfg.deployments.some((d) => d.deployment === "deepseek-v4-flash"));
 });
 
 test("keys are listed by kind and status from the query string; bad values are 400", async () => {
   const issued = await post("/api/products", AS.admin, { owner: ALICE.name, name: "srv1", models: ["claude-haiku-4-5"], monthlyTokens: 100 });
   assert.equal(issued.status, 201);
-  const prod = await (await get("/api/keys?kind=product", AS.alice)).json();
+  assert.equal((await get("/api/keys?kind=product", AS.alice)).status, 403);
+  const prod = await (await get("/api/keys?kind=product", AS.admin)).json();
   assert.deepEqual(prod.keys.map((k) => k.name), ["poc-key-srv1"]);
-  assert.deepEqual((await (await get("/api/keys?kind=jwt", AS.alice)).json()).keys, []);
-  assert.equal((await get("/api/keys?kind=nope", AS.alice)).status, 400);
-  assert.equal((await get("/api/keys?status=gone", AS.alice)).status, 400);
+  assert.ok((await (await get("/api/keys?kind=jwt", AS.admin)).json()).keys.every((k) => k.kind === "jwt"));
+  assert.equal((await get("/api/keys?kind=nope", AS.admin)).status, 400);
+  assert.equal((await get("/api/keys?status=gone", AS.admin)).status, 400);
   await post("/api/keys/poc-key-srv1/archive", AS.admin, {});
-  const archived = await (await get("/api/keys?kind=product&status=archived", AS.alice)).json();
+  const archived = await (await get("/api/keys?kind=product&status=archived", AS.admin)).json();
   assert.equal(archived.keys[0].status, "archived");
   assert.equal((await post("/api/keys/poc-key-srv1/delete", AS.admin, {})).status, 200);
   assert.equal((await fetch(base + "/api/keys/poc-key-srv1", { method: "DELETE", headers: { origin: base, ...AS.admin } })).status, 404, "no DELETE verb");
@@ -73,10 +75,12 @@ test("bulk issue, owner change and usage over HTTP", async () => {
   const name = bulk.issued[0].name;
   const own = await post(`/api/keys/${name}/owner`, AS.admin, { owner: "carol@contoso.com", label: "moved" });
   assert.deepEqual(await own.json(), { name, owner: "carol@contoso.com", label: "moved" });
-  const u = await (await get("/api/usage?kind=jwt&days=30", AS.alice)).json();
+  assert.match(bulk.keysCsv, /^participant,owner,key,/);
+  assert.equal((await get("/api/usage?kind=jwt&days=30", AS.alice)).status, 403);
+  const u = await (await get("/api/usage?kind=jwt&days=30", AS.admin)).json();
   assert.equal(u.days, 30);
-  assert.equal((await get("/api/usage?kind=jwt&days=2", AS.alice)).status, 400);
-  assert.equal((await get(`/api/usage/${name}?days=7`, AS.alice)).status, 404, "no longer Alice's key");
+  assert.equal((await get("/api/usage?kind=jwt&days=2", AS.admin)).status, 400);
+  assert.equal((await get(`/api/usage/${name}?days=7`, AS.alice)).status, 403);
   assert.equal((await get(`/api/usage/${name}?days=7`, AS.admin)).status, 200);
   const sweep = await (await post("/api/sweep", AS.admin, {})).json();
   assert.deepEqual(Object.keys(sweep).sort(), ["archived", "deleted", "failed", "rotated"]);

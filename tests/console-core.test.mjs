@@ -41,14 +41,15 @@ test("auth: roles are read from role_typ and from a plain roles claim; owner is 
   assert.equal(roleOf(p), "admin");
 });
 
-test("auth: role matrix fails closed", () => {
+test("auth: role matrix fails closed; the dashboard is admin-only (ADR-0016)", () => {
   const user = { name: "u@x.com", oid: "1", roles: ["Console.User"] };
   const admin = { name: "a@x.com", oid: "2", roles: ["Console.Admin"] };
   const none = { name: "n@x.com", oid: "3", roles: ["Something.Else"] };
   assert.equal(roleOf(none), null);
   assert.equal(can(null, "read-own").status, 401);
   assert.equal(can(none, "read-own").status, 403);
-  assert.equal(can(user, "read-own").ok, true);
+  assert.equal(can(user, "read-own").status, 403, "Console.User no longer opens the dashboard");
+  assert.equal(can(admin, "read-own").ok, true);
   for (const action of ["issue", "revoke", "rotate", "export", "sync-secret", "automation"]) {
     assert.equal(can(user, action).status, 403, action);
     assert.equal(can(admin, action).ok, true, action);

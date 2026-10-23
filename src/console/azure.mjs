@@ -68,6 +68,7 @@ function client({ getToken, resource, fetchImpl, sleep }) {
 
 const lastSegment = (id) => String(id ?? "").replace(/\/+$/, "").split("/").pop();
 const defaultSleep = (ms) => new Promise((r) => setTimeout(r, ms));
+export { client as azureClient };
 
 export function keyVault({ vaultUrl, getToken, fetchImpl = fetch, sleep = defaultSleep }) {
   const base = String(vaultUrl).replace(/\/+$/, "");

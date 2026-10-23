@@ -56,13 +56,16 @@ assumption is only closed if it names its blast radius and the detector that wou
 | U43 | What is the largest `token-quota` that `llm-token-limit` accepts? | RESOLVED |
 | U44 | Does a Container Apps job in a VNet-injected environment get a managed identity endpoint and reach the private vault? | RESOLVED |
 | U45 | Is Log Analytics Reader on the workspace enough for a managed identity to query `AppMetrics` through `api.loganalytics.io`? | RESOLVED |
+| U46 | Which ARM list APIs and read actions discover Foundry accounts and deployments across the subscription? | OPEN |
+| U47 | Can namespaced API copies reuse the gateway policies with account-local model maps and a different JWT audience? | OPEN |
+| U48 | Which gateway inference role and endpoint audience apply to attached AIServices and OpenAI accounts? | OPEN |
 
 ---
 
 
 ## Open
 
-None.
+U46–U48 belong to P56 (ADR-0017), logged before implementation.
 
 ---
 

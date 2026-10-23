@@ -1,6 +1,10 @@
 # Status
 
-**Active packets:** none. P55 (release branch) and P49–P54 are done on `feature/key-dashboard` (cut from
+**Active packet:** P56 — multi-Foundry discovery, attachment, account-bound key issue and guided
+help, on `release/key-dashboard`. Acceptance: ROADMAP; design: ADR-0017; unknowns U46–U48.
+The current single-account catalogue hides models deployed in other accounts.
+
+P55 (release branch) and P49–P54 are done on `feature/key-dashboard` (cut from
 `feature/admin-console`; local commits, not pushed or merged). Design: ADR-0015; owner amendment:
 ADR-0016. App Service quota in eastus2 is 0 (U40), so Container Apps is the live path. The App
 Service template builds; ARM validate/what-if is blocked by the zero quota. The live dashboard has no IP restriction; Entra

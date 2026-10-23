@@ -251,6 +251,16 @@ Key Vault. Nothing here changes the gateway on `main`.
       image referenced once, PNG, alt text and names free of identifiers, provenance note) and
       the 28 document tests pass.
 
+- [ ] **P56** Discover, attach and select Foundry backends, with highlighted help
+      *Acceptance:* deployments from AIServices/OpenAI accounts in the configured subscription
+      appear with their Foundry account and errors are visible. Refresh finds new deployments.
+      An admin attaches an account, pins its models, and selects it for single/bulk short-lived
+      or product key issue. Keys and handouts target the selected account, and a key for one
+      account cannot call another account's routes. Existing keys keep working. Highlightable
+      help explains setup, access, private networking and key distribution. UI by Opus 5.5 max;
+      tests, live verification and push to `release/key-dashboard`. ADR-0017.
+      *Why:* requested 2026-10-23; single `FOUNDRY_ACCOUNT_ID` omitted other deployed models.
+
 - [x] **P55** Key Dashboard release branch: README, install guide, architecture, local demo
       *Acceptance:* `release/key-dashboard` on GitHub. The README leads with the dashboard:
       architecture, a local try, the install commands and screenshots. `docs/INSTALL.md` covers

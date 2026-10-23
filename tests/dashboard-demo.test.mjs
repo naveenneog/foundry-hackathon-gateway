@@ -17,6 +17,13 @@ test("dashboard demo: serves the real UI and API on 127.0.0.1 with seeded keys a
     assert.ok((await (await fetch(url + "api/keys?kind=jwt&status=archived")).json()).keys.length >= 1);
     const usage = await (await fetch(url + "api/usage?kind=product&days=7")).json();
     assert.ok(usage.total.tokens > 0);
+    const foundries = await (await fetch(url + "api/foundries")).json();
+    assert.equal(foundries.accounts.length, 2, "practice selecting and attaching another Foundry without Azure");
+    const test = await fetch(url + "api/foundries/test", {
+      method: "POST", headers: { "content-type": "application/json", origin: url.replace(/\/$/, "") },
+      body: JSON.stringify({ alias: "flash", route: "openai" }),
+    });
+    assert.equal((await test.json()).ok, true, "the demo simulates inference instead of making external requests");
   } finally {
     server.close();
   }

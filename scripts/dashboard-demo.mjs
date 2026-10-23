@@ -75,7 +75,10 @@ function syntheticUsage(h, now) {
 }
 
 export async function startDemo({ port = Number(process.env.PORT ?? 8090), quiet = false } = {}) {
-  const h = harness({ now: Date.now() });
+  const h = harness({
+    now: Date.now(),
+    inferenceFetch: async () => Response.json({ demo: true }),
+  });
   const tick = setInterval(() => { h.clock.now = Date.now(); }, 1_000);
   tick.unref();
   await seed(h);

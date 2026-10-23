@@ -98,3 +98,26 @@ test("every browser module in public/ is served as JavaScript, and nothing else 
   assert.equal((await get("/service.mjs", AS.alice)).status, 404);
   assert.equal((await get("/views-nope.js", AS.alice)).status, 404);
 });
+
+test("Foundry discovery, attachment, scoped pins and key issue are wired through HTTP", async () => {
+  assert.equal((await get("/api/foundries", AS.alice)).status, 403);
+  assert.equal((await post("/api/foundries/attach", AS.alice, {})).status, 403);
+  const foundries = await (await get("/api/foundries", AS.admin)).json();
+  assert.equal(foundries.accounts.length, 2);
+  const foundryId = foundries.accounts[1].id;
+  const query = `?foundryId=${encodeURIComponent(foundryId)}`;
+  const models = await (await get(`/api/models${query}`, AS.admin)).json();
+  assert.equal(models.connected, false);
+  assert.equal((await get(`/api/config${query}`, AS.admin)).status, 409);
+  const attached = await post("/api/foundries/attach", AS.admin, { foundryId });
+  assert.equal(attached.status, 200);
+  assert.equal((await post("/api/models/pin", AS.admin, { foundryId, alias: "secondary", deployment: "deepseek-v4-flash" })).status, 200);
+  const config = await (await get(`/api/config${query}`, AS.admin)).json();
+  assert.equal(config.foundryId, foundryId);
+  assert.deepEqual(config.models.openai, ["secondary"]);
+  assert.ok(config.gatewayUrl.includes("/foundry/"));
+  const key = await post("/api/jwt", AS.admin, { owner: ADMIN.name, subject: "selected", foundryId, models: ["secondary"], budget: 10, hours: 1 });
+  assert.equal(key.status, 201);
+  assert.ok((await key.json()).handout.env.OPENAI_BASE_URL.startsWith(config.gatewayUrl));
+  assert.equal((await post("/api/foundries/test", AS.alice, { foundryId })).status, 403);
+});

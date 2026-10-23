@@ -9,7 +9,8 @@ import { createServer } from "node:http";
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
-import { managedIdentity, keyVault, apim, foundryAccount, logAnalytics } from "./azure.mjs";
+import { managedIdentity, keyVault, apim, logAnalytics } from "./azure.mjs";
+import { foundryDirectory } from "./azure-foundries.mjs";
 import { createService } from "./service.mjs";
 import { createHandler } from "./server.mjs";
 
@@ -41,8 +42,13 @@ export function buildService(cfg, { env = process.env, log }) {
   const service = createService({
     vault: keyVault({ vaultUrl: cfg.vaultUrl, getToken }),
     arm: apim({ apimId: cfg.apimId, getToken }),
-    foundry: cfg.foundryAccountId ? foundryAccount({ accountId: cfg.foundryAccountId, getToken }) : null,
+    foundry: cfg.foundryAccountId ? foundryDirectory({ accountId: cfg.foundryAccountId, getToken }) : null,
     packTemplate: readFileSync(PACK_TEMPLATE_URL, "utf8"),
+    connectionTemplates: Object.fromEntries([
+      ["openai", "../../infra/policy.xml"], ["claude", "../../infra/policy-claude.xml"],
+      ["productOpenai", "../../poc/products-keyvault/infra/api-openai-policy.xml"],
+      ["productClaude", "../../poc/products-keyvault/infra/api-claude-policy.xml"],
+    ].map(([name, path]) => [name, readFileSync(new URL(path, import.meta.url), "utf8")])),
     gatewayUrl: cfg.gatewayUrl,
     log,
   });

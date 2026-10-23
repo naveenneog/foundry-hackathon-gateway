@@ -44,7 +44,8 @@ test("console image: distroless Node 24, non-root, runs the console entry point,
   assert.match(dockerfile, /^USER nonroot$/m);
   assert.match(dockerfile, /^ENTRYPOINT \["node"\]$/m);
   assert.match(dockerfile, /^CMD \["src\/console\/main\.mjs"\]$/m);
-  assert.match(dockerfile, /COPY poc\/products-keyvault\/infra\/product-policy\.xml/);
+  assert.match(dockerfile, /COPY poc\/products-keyvault\/infra \.\/poc\/products-keyvault\/infra/);
+  assert.match(deploy, /Copy-Item \(Join-Path \$root 'poc\/products-keyvault\/infra\/product-policy\.xml'\) \$tpl/);
 });
 
 test("console infra (Container Apps): one allowed IP, a cron job for the automation, no in-process sweep", () => {
@@ -157,8 +158,8 @@ test("deploy script: refuses to run when the active tenant is not the subscripti
   // another process can switch it, and the app registration would be made in the wrong tenant.
   const guard = deploy.indexOf("Assert-SameTenant");
   assert.ok(guard > 0, "a tenant guard exists");
-  assert.match(deploy, /az account show --subscription \$Subscription --query tenantId/);
-  assert.match(deploy, /az account show --query tenantId/);
+  assert.match(deploy, /Invoke-Az account show --subscription \$Subscription --query tenantId/);
+  assert.match(deploy, /Invoke-Az account show --query tenantId/);
   const firstAd = deploy.search(/Invoke-Az ad /);
   assert.ok(deploy.indexOf("Assert-SameTenant\n") < firstAd || deploy.indexOf("Assert-SameTenant\r\n") < firstAd, "guard runs before the first az ad call");
 });

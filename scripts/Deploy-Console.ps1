@@ -18,6 +18,11 @@
        plan), then zip-deploys the dashboard and the Function App package.
   5. With -AllowedIp, admits only that address (optional; without it, Entra sign-in alone guards
      the dashboard). Points the redirect URI at the dashboard and waits for /healthz.
+  6. Grants the dashboard metadata-only account/deployment discovery across the APIM subscription.
+     The operator needs subscription roleDefinitions/write and roleAssignments/write privileges.
+     No subscription Reader/Contributor or RBAC write permission is granted to the dashboard.
+     Additional accounts need APIM inference access: use scripts/Connect-Foundry.ps1, then UI Test.
+     Neither installer switches the Azure CLI's account, login or profile.
 
   Prints names and URLs only; no ids, keys or tokens.
 
@@ -36,8 +41,19 @@ param(
     [string[]]$Admins = @(),
     [string]$SubnetPrefix = '',
     [string]$AppServiceSku = 'B1'
-)$ErrorActionPreference = 'Stop'
+)
+$ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
+
+function Assert-SafeAzArguments([object[]]$Values) {
+    foreach ($value in $Values) {
+        # az.cmd is interpreted by cmd.exe on Windows, even with PowerShell argument splatting.
+        if ([string]$value -match '[&|<>^%!"`;\r\n()]') { throw 'Unsafe Azure CLI argument: shell metacharacter refused.' }
+    }
+}
+Assert-SafeAzArguments (@($Subscription, $ResourceGroup, $AllowedIp, $AppRegistrationName, $SubnetPrefix, $AppServiceSku) + $Admins)
+if ([string]::IsNullOrWhiteSpace($Subscription) -or $Subscription.StartsWith('-')) { throw 'Invalid subscription.' }
+if ($ResourceGroup -notmatch '^[a-zA-Z0-9_().-]{1,90}$' -or $ResourceGroup.EndsWith('.')) { throw 'Invalid resource group.' }
 
 $allowedCidr = ''
 if ($AllowedIp) {
@@ -57,8 +73,9 @@ if ($AllowedIp) {
 if (-not $SubnetPrefix) { $SubnetPrefix = if ($Hosting -eq 'AppService') { '10.61.6.0/27' } else { '10.61.5.0/27' } }
 
 function Invoke-Az {
+    Assert-SafeAzArguments $args
     $out = & az @args 2>&1
-    if ($LASTEXITCODE -ne 0) { throw "az $($args[0..1] -join ' ') failed: $($out | Select-Object -Last 3 | Out-String)" }
+    if ($LASTEXITCODE -ne 0) { throw "Azure CLI command failed ($($args[0..1] -join ' ')); inspect operator permissions and retry." }
     $text = ($out | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] }) -join "`n"
     if ($text.Trim()) { return $text | ConvertFrom-Json }
 }
@@ -66,13 +83,15 @@ function Invoke-Az {
 # Entra calls (az ad, Graph) use the CLI's ACTIVE account, not --subscription. On a shared machine
 # another process can switch it; the app registration would then be made in the wrong tenant.
 function Assert-SameTenant {
-    $want = (& az account show --subscription $Subscription --query tenantId -o tsv 2>$null)
-    $have = (& az account show --query tenantId -o tsv 2>$null)
+    $want = Invoke-Az account show --subscription $Subscription --query tenantId -o json
+    $have = Invoke-Az account show --query tenantId -o json
     if (-not $want -or $want -ne $have) {
         throw "The Azure CLI's active account is in a different tenant from $Subscription. Run 'az account set --subscription $Subscription' (or use a separate AZURE_CONFIG_DIR) and retry."
     }
 }
 Assert-SameTenant
+$subscriptionId = (Invoke-Az account show --subscription $Subscription --query id -o json)
+if ($subscriptionId -notmatch '^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$') { throw 'Invalid resolved subscription id.' }
 Write-Host "Discovering the gateway in $ResourceGroup..."
 $apim = @(Invoke-Az apim list --subscription $Subscription -g $ResourceGroup --query '[].{name:name,url:gatewayUrl}' -o json)[0]
 if (-not $apim) { throw "No API Management instance in $ResourceGroup." }
@@ -87,7 +106,7 @@ if (-not $foundry) { throw "No Foundry (AIServices) account in $ResourceGroup." 
 # The gateway's workspace is the one its Application Insights component writes to.
 $component = @(Invoke-Az resource list --subscription $Subscription -g $ResourceGroup --resource-type Microsoft.Insights/components --query '[].id' -o json)[0]
 if (-not $component) { throw "No Application Insights component in $ResourceGroup; usage needs the gateway's telemetry." }
-$workspace = ((Invoke-Az resource show --ids $component --query properties.WorkspaceResourceId -o json) -split '/')[-1]
+$workspace = ((Invoke-Az resource show --subscription $Subscription --ids $component --query properties.WorkspaceResourceId -o json) -split '/')[-1]
 $suffix = ($apim.name -split '-')[-1]
 $appName = if ($Hosting -eq 'AppService') { "app-keys-$suffix" } else { "ca-console-$suffix" }
 $registry = "crconsole$suffix"
@@ -97,7 +116,7 @@ Write-Host "  hosting: $Hosting -> $appName, open to $(if ($allowedCidr) { "$all
 Write-Host "Ensuring app registration $AppRegistrationName..."
 $app = @(Invoke-Az ad app list --display-name $AppRegistrationName --query '[0]' -o json)[0]
 if (-not $app) {
-    $rolesFile = New-TemporaryFile
+    $rolesFile = Join-Path $root ".console-roles-$([guid]::NewGuid()).json"
     @(
         @{ allowedMemberTypes = @('User'); displayName = 'Console Admin'; value = 'Console.Admin'; isEnabled = $true; id = [guid]::NewGuid().ToString()
            description = 'Issue, revoke, rotate and export gateway keys; manage the signing secret.' },
@@ -119,7 +138,7 @@ function Grant-ConsoleRole([string]$PrincipalId, [string]$RoleValue, [string]$La
     if ($existing.value | Where-Object { $_.principalId -eq $PrincipalId -and $_.appRoleId -eq $roleId }) {
         Write-Host "  $Label already has $RoleValue"; return
     }
-    $body = New-TemporaryFile
+    $body = Join-Path $root ".console-role-grant-$([guid]::NewGuid()).json"
     @{ principalId = $PrincipalId; resourceId = $sp.id; appRoleId = $roleId } | ConvertTo-Json | Set-Content $body -Encoding utf8
     try {
         $null = Invoke-Az rest --method POST --url "https://graph.microsoft.com/v1.0/servicePrincipals/$($sp.id)/appRoleAssignedTo" `
@@ -142,7 +161,7 @@ $graphSp = @(Invoke-Az ad sp list --spn $graphAppId -o json)[0]
 function Grant-SignInConsent([string]$PrincipalId, [string]$Label) {
     $grants = Invoke-Az rest --method GET --url "https://graph.microsoft.com/v1.0/servicePrincipals/$($sp.id)/oauth2PermissionGrants" -o json
     if ($grants.value | Where-Object { $_.principalId -eq $PrincipalId -and $_.resourceId -eq $graphSp.id }) { return }
-    $body = New-TemporaryFile
+    $body = Join-Path $root ".console-consent-$([guid]::NewGuid()).json"
     @{ clientId = $sp.id; consentType = 'Principal'; principalId = $PrincipalId; resourceId = $graphSp.id; scope = 'openid profile email' } |
         ConvertTo-Json | Set-Content $body -Encoding utf8
     try {
@@ -161,7 +180,7 @@ $null = Invoke-Az deployment group create --subscription $Subscription -g $Resou
 
 # What both hosting paths run: the console modules, the canonical model rules, the pack template.
 function New-AppContext([string]$Name) {
-    $dir = Join-Path ([IO.Path]::GetTempPath()) "$Name-$suffix"
+    $dir = Join-Path $root ".$Name-$suffix"
     Remove-Item $dir -Recurse -Force -ErrorAction SilentlyContinue
     New-Item -ItemType Directory -Path (Join-Path $dir 'src') | Out-Null
     foreach ($f in 'keys.mjs', 'foundry.mjs', 'models.mjs') { Copy-Item (Join-Path $root "src/$f") (Join-Path $dir 'src') }
@@ -169,6 +188,12 @@ function New-AppContext([string]$Name) {
     $tpl = Join-Path $dir 'poc/products-keyvault/infra'
     New-Item -ItemType Directory -Path $tpl | Out-Null
     Copy-Item (Join-Path $root 'poc/products-keyvault/infra/product-policy.xml') $tpl
+    foreach ($policy in 'poc/products-keyvault/infra/api-openai-policy.xml', 'poc/products-keyvault/infra/api-claude-policy.xml') {
+        Copy-Item (Join-Path $root $policy) $tpl
+    }
+    $gatewayTemplates = Join-Path $dir 'infra'
+    New-Item -ItemType Directory -Path $gatewayTemplates | Out-Null
+    foreach ($policy in 'infra/policy.xml', 'infra/policy-claude.xml') { Copy-Item (Join-Path $root $policy) $gatewayTemplates }
     @{ name = 'hackgw-key-console'; private = $true; type = 'module'; engines = @{ node = '>=24' } } |
         ConvertTo-Json | Set-Content (Join-Path $dir 'package.json') -Encoding utf8
     return $dir
@@ -209,6 +234,7 @@ if ($Hosting -eq 'AppService') {
 }
 else {
     Write-Host "Ensuring registry $registry and building the image..."
+    Assert-SafeAzArguments @($Subscription, $ResourceGroup, $registry)
     $exists = & az acr show --subscription $Subscription -g $ResourceGroup -n $registry --query name -o tsv 2>$null
     if (-not $exists) {
         $null = Invoke-Az acr create --subscription $Subscription -g $ResourceGroup -n $registry --sku Basic --admin-enabled false -o json
@@ -229,6 +255,56 @@ else {
         --parameters appName=$appName registryName=$registry image=$image @common --query 'properties.outputs' -o json
     $url = $deploy.appUrl.value
 }
+
+function Grant-FoundryDiscovery([string]$PrincipalId, [string]$SubscriptionId) {
+    $guidPattern = '^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$'
+    if ($PrincipalId -notmatch $guidPattern -or $SubscriptionId -notmatch $guidPattern) {
+        throw 'Invalid dashboard principal or subscription id; discovery permissions were not granted.'
+    }
+    $scope = "/subscriptions/$($SubscriptionId.ToLowerInvariant())"
+    $roleName = "HackGW Foundry metadata discovery - $($SubscriptionId.ToLowerInvariant())"
+    $actions = @('Microsoft.CognitiveServices/accounts/read', 'Microsoft.CognitiveServices/accounts/deployments/read')
+    try {
+        $roles = @(Invoke-Az role definition list --subscription $SubscriptionId --scope $scope --custom-role-only true -o json)
+        # Match in PowerShell: quoted CLI filters are fragile with az.cmd. Azure CLI generates
+        # the GUID on create; the subscription-specific display name is our stable lookup key.
+        $existing = @($roles | Where-Object { $_.roleName -eq $roleName })
+        if ($existing.Count) {
+            $role = $existing[0]
+        } else {
+            $body = Join-Path $root ".foundry-discovery-$([guid]::NewGuid()).json"
+            try {
+                @{ Name = $roleName; IsCustom = $true
+                   Description = 'Discover Foundry accounts and deployments without inference, keys or RBAC access.'
+                   Actions = $actions; NotActions = @(); DataActions = @(); NotDataActions = @()
+                   AssignableScopes = @($scope) } |
+                    ConvertTo-Json -Depth 6 | Set-Content $body -Encoding utf8
+                $role = Invoke-Az role definition create --subscription $SubscriptionId --role-definition $body -o json
+            } finally { Remove-Item $body -Force -ErrorAction SilentlyContinue }
+        }
+        $permissions = @($role.permissions)
+        if ($existing.Count -gt 1 -or $role.roleName -ne $roleName -or $role.name -notmatch $guidPattern -or
+            $role.roleType -ne 'CustomRole' -or @($role.assignableScopes).Count -ne 1 -or
+            $role.assignableScopes[0] -ne $scope -or $permissions.Count -ne 1 -or
+            @($permissions[0].actions).Count -ne 2 -or
+            @(Compare-Object ($permissions[0].actions | Sort-Object) ($actions | Sort-Object)).Count -or
+            @($permissions[0].notActions).Count -or @($permissions[0].dataActions).Count -or
+            @($permissions[0].notDataActions).Count) {
+            throw 'Existing discovery role collision: definition does not match the metadata-only contract; nothing overwritten.'
+        }
+        $roleId = "$scope/providers/Microsoft.Authorization/roleDefinitions/$($role.name)"
+        $existingGrant = @(Invoke-Az role assignment list --subscription $SubscriptionId --scope $scope -o json) |
+            Where-Object { $_.principalId -eq $PrincipalId -and $_.scope -eq $scope -and $_.roleDefinitionId -eq $roleId }
+        if (-not $existingGrant) {
+            $null = Invoke-Az role assignment create --subscription $SubscriptionId --assignee-object-id $PrincipalId `
+                --assignee-principal-type ServicePrincipal --scope $scope --role $roleId -o json
+        }
+    } catch {
+        throw "Discovery permission NOT ready. The operator needs subscription custom-role definition and role assignment privileges (roleDefinitions/write, roleAssignments/write). Ask a subscription RBAC administrator to run this installer. $($_.Exception.Message)"
+    }
+    Write-Host 'Foundry discovery permission ready (account and deployment metadata only; RBAC propagation may take time).'
+}
+Grant-FoundryDiscovery $deploy.principalId.value $subscriptionId
 $null = Invoke-Az ad app update --id $app.appId --web-redirect-uris "$url/.auth/login/aad/callback" --enable-id-token-issuance true
 
 Write-Host "Waiting for $url/healthz ..."

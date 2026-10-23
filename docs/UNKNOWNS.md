@@ -59,13 +59,17 @@ assumption is only closed if it names its blast radius and the detector that wou
 | U46 | Which ARM list APIs and read actions discover Foundry accounts and deployments across the subscription? | OPEN |
 | U47 | Can namespaced API copies reuse the gateway policies with account-local model maps and a different JWT audience? | OPEN |
 | U48 | Which gateway inference role and endpoint audience apply to attached AIServices and OpenAI accounts? | OPEN |
+| U49 | Why does a second Foundry resolve publicly outside the VNet but fail DNS from the gateway? | OPEN |
 
 ---
 
 
 ## Open
 
-U46–U48 belong to P56 (ADR-0017), logged before implementation.
+U46–U49 belong to P56 (ADR-0017). U49 was logged after the first live attach test: its public
+hostname CNAMEs to a linked private zone that contains only the original account. Adding a
+per-account private endpoint/DNS record in the gateway VNet is an explicit operator option;
+no public access or firewall relaxation is used.
 
 ---
 

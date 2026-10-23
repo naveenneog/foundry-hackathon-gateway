@@ -39,7 +39,7 @@ const kindOf = (s) => s?.tags?.kind === "jwt" ? "jwt"
   : s?.tags?.kind === "product" || s?.contentType === PRODUCT_CONTENT_TYPE ? "product" : null;
 
 export function createService({ vault, arm, foundry = null, packTemplate: initialTemplate = null, connectionTemplates = null,
-  inferenceFetch = fetch, clock = Date.now, log = () => {}, gatewayUrl }) {
+  inferenceFetch = fetch, clock = Date.now, log = () => {}, gatewayUrl, vnetName = null }) {
   let packTemplate = initialTemplate;
   const audit = (actor, action, fields = {}) =>
     log({ at: new Date(clock()).toISOString(), actor: typeof actor === "string" ? actor : actor?.name, action, ...fields });
@@ -72,7 +72,7 @@ export function createService({ vault, arm, foundry = null, packTemplate: initia
     }
   };
 
-  const connections = foundriesApi({ vault, arm, foundry, gatewayUrl, connectionTemplates, inferenceFetch, clock, requireAdmin, audit, guard, ServiceError });
+  const connections = foundriesApi({ vault, arm, foundry, gatewayUrl, vnetName, connectionTemplates, inferenceFetch, clock, requireAdmin, audit, guard, ServiceError });
   const models = modelsApi({ arm, connections, requireAdmin, audit, guard });
 
   async function configuration(foundryId) {

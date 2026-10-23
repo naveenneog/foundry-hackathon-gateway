@@ -70,3 +70,16 @@ test("connection test uses a bounded key on the selected routes and reports back
   assert.ok(!JSON.stringify(r).includes("eyJ"));
   await assert.rejects(h.service.testFoundry(ALICE, { foundryId: selected(h), alias: "other", route: "openai" }), { status: 403 });
 });
+
+test("DNS failure gets precise private-network guidance without exposing the backend body", async () => {
+  const h = harness({ inferenceFetch: async () => Response.json({
+    error: { message: "gateway_error: No such host is known. PRIVATE_RESPONSE_SENTINEL" },
+  }, { status: 500 }) });
+  await h.service.migrateSigningSecret(ADMIN);
+  const r = await h.service.testFoundry(ADMIN, { alias: "flash", route: "openai" });
+  assert.equal(r.code, "backend_dns");
+  assert.match(r.detail, /private.*DNS/i);
+  assert.ok(!JSON.stringify(r).includes("PRIVATE_RESPONSE_SENTINEL"));
+  const selectedModel = await h.service.listModels(ADMIN);
+  assert.match(selectedModel.networkCommand, /ConfigurePrivateEndpoint/);
+});

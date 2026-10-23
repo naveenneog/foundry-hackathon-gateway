@@ -7,7 +7,7 @@ import { mintKey } from "../keys.mjs";
 const PREFIX = "gw-foundry-";
 const SIGNING = "gw-signing-secret";
 
-export function foundriesApi({ foundry, vault, arm, gatewayUrl, connectionTemplates, requireAdmin, guard, ServiceError, audit, clock, inferenceFetch }) {
+export function foundriesApi({ foundry, vault, arm, gatewayUrl, vnetName, connectionTemplates, requireAdmin, guard, ServiceError, audit, clock, inferenceFetch }) {
   const defaultId = foundry?.defaultAccountId;
   const legacy = connectionInfo({
     id: defaultId ?? "/subscriptions/default/resourceGroups/default/providers/Microsoft.CognitiveServices/accounts/default",
@@ -50,6 +50,7 @@ export function foundriesApi({ foundry, vault, arm, gatewayUrl, connectionTempla
     const apim = String(arm.resourceId ?? "").split("/");
     return `pwsh scripts/Connect-Foundry.ps1 -Subscription '${foundry?.subscriptionId ?? ""}' -ResourceGroup '${apim[4] ?? ""}' -ApimName '${apim[8] ?? ""}' -FoundryAccountId '${id}'`;
   };
+  const networkCommand = (id) => `${setupCommand(id)} -ConfigurePrivateEndpoint -VnetName '${vnetName ?? "<gateway-vnet>"}'`;
 
   async function discoverFoundries() {
     if (!foundry?.listAccounts) return { accounts: [], defaultFoundryId: defaultId ?? null, note: "Subscription discovery is not configured." };
@@ -61,7 +62,7 @@ export function foundriesApi({ foundry, vault, arm, gatewayUrl, connectionTempla
         const c = connectionInfo(a, gatewayUrl, a.id.toLowerCase() === defaultId?.toLowerCase());
         return { id: a.id, name: a.name, kind: a.kind, resourceGroup: a.resourceGroup, location: a.location,
           connected: c.id === "default" || saved.has(`${PREFIX}${c.id}`), connectionId: c.id,
-          deployments: a.deployments.length, ...(a.error ? { error: a.error } : {}), setupCommand: setupCommand(a.id) };
+          deployments: a.deployments.length, ...(a.error ? { error: a.error } : {}), setupCommand: setupCommand(a.id), networkCommand: networkCommand(a.id) };
       }),
     };
   }
@@ -96,7 +97,8 @@ export function foundriesApi({ foundry, vault, arm, gatewayUrl, connectionTempla
     }
     audit(actor, "attach-foundry", { foundryId, connection: c.id });
     return { attached: true, foundryId, foundryName: account.name, connectionId: c.id, gatewayUrl: c.gatewayUrl,
-      setupCommand: setupCommand(foundryId), message: "Routing configured. Gateway inference permissions and private-network access still need to be verified." };
+      setupCommand: setupCommand(foundryId), networkCommand: networkCommand(foundryId),
+      message: "Routing configured. Gateway inference permissions and private-network access still need to be verified." };
   }
 
   async function testFoundry(actor, { foundryId, alias, route } = {}) {
@@ -122,11 +124,26 @@ export function foundriesApi({ foundry, vault, arm, gatewayUrl, connectionTempla
       audit(actor, "test-foundry", { foundryId: c.foundryId, status: 0 });
       return { ok: false, status: 0, detail: "Gateway connection failed or timed out. Check APIM networking and private DNS." };
     }
-    await response.arrayBuffer();
+    let diagnostic = "";
+    if (response.ok) {
+      await response.arrayBuffer();
+    } else {
+      const text = await response.text();
+      try {
+        const body = JSON.parse(text);
+        diagnostic = String(body.error?.message ?? body.message ?? "").slice(0, 1000);
+      } catch (e) {
+        if (!(e instanceof SyntaxError)) throw e;
+      }
+    }
     audit(actor, "test-foundry", { foundryId: c.foundryId, status: response.status });
+    if (/No such host|NameResolution|DNS/i.test(diagnostic)) {
+      return { ok: false, status: response.status, code: "backend_dns",
+        detail: "APIM cannot resolve this Foundry endpoint. Its VNet may link a private DNS zone without this account's record. Configure a private endpoint and DNS for the selected account, then retry." };
+    }
     return { ok: response.ok, status: response.status, detail: response.ok ? "Model responded through the selected Foundry gateway route."
       : `Gateway returned ${response.status}. Check model pins, APIM inference permission, private networking and DNS; wait for APIM/RBAC propagation before retrying.` };
   }
 
-  return { connectionFor, connectionForKey, getAccount, setupCommand, discoverFoundries, listFoundries, attachFoundry, testFoundry };
+  return { connectionFor, connectionForKey, getAccount, setupCommand, networkCommand, discoverFoundries, listFoundries, attachFoundry, testFoundry };
 }

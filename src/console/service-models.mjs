@@ -37,7 +37,8 @@ export function modelsApi({ arm, connections, requireAdmin, audit, guard }) {
     const [cat, pins] = await Promise.all([catalogue(foundryId), currentPins(connection)]);
     return { deployments: describeDeployments(cat, pins), pins, foundryId: connection.foundryId,
       foundryName: connection.name, connectionId: connection.id, connected: connection.connected,
-      setupCommand: connection.foundryId ? connections.setupCommand(connection.foundryId) : null };
+      setupCommand: connection.foundryId ? connections.setupCommand(connection.foundryId) : null,
+      networkCommand: connection.foundryId ? connections.networkCommand(connection.foundryId) : null };
   }
 
   async function pinModel(actor, body) {

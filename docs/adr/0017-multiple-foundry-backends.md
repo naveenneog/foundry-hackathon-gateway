@@ -41,6 +41,10 @@ that Foundry when issuing single or bulk keys, and provide contextual help.
    grants the gateway identity inference access on an explicitly selected account. The UI
    explains this boundary, provides the exact setup command and exposes a small explicit
    connection test after pinning. A test failure is visible, not presented as a working backend.
+   An explicit operator `-ConfigurePrivateEndpoint` option can create a per-account private
+   endpoint in the existing gateway VNet and register its three existing private DNS zones.
+   This addresses private-zone shadowing found in live testing (U49), without changing the
+   account's public network access or firewall.
 8. UI: Foundry/account filter, deployment list with account/region/state, Attach, Refresh, account-
    local pins and a Foundry selector on both single and bulk issue forms. Highlightable help
    explains discovery permissions, attachment versus inference readiness, private DNS, model

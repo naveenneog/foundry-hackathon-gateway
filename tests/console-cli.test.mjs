@@ -60,6 +60,8 @@ test("main: configuration is validated before the server starts", () => {
   assert.equal(full.workspaceId, "0b6f2c1e-1111-2222-3333-444455556666");
   assert.throws(() => loadConfig({ ...good, FOUNDRY_ACCOUNT_ID: "/subscriptions/s/x" }), /FOUNDRY_ACCOUNT_ID/);
   assert.throws(() => loadConfig({ ...good, LOG_WORKSPACE_ID: "../x" }), /LOG_WORKSPACE_ID/);
+  assert.equal(loadConfig({ ...good, GATEWAY_VNET_NAME: "vnet-gateway" }).vnetName, "vnet-gateway");
+  assert.throws(() => loadConfig({ ...good, GATEWAY_VNET_NAME: "vnet';evil" }), /GATEWAY_VNET_NAME/);
 });
 
 test("main: the scheduler sweeps on its interval, logs failures, and can be disabled", async () => {

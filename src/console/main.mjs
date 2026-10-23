@@ -33,7 +33,9 @@ export function loadConfig(env = process.env) {
   const workspaceId = env.LOG_WORKSPACE_ID ? String(env.LOG_WORKSPACE_ID) : null;
   if (workspaceId && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(workspaceId)) fail("LOG_WORKSPACE_ID must be the workspace's customer id (a GUID)");
   const port = Number(env.PORT ?? 8080);
-  return { vaultUrl, apimId, gatewayUrl, sweepMinutes, port, foundryAccountId, workspaceId };
+  const vnetName = env.GATEWAY_VNET_NAME ? String(env.GATEWAY_VNET_NAME) : null;
+  if (vnetName && !/^[A-Za-z0-9._-]{1,80}$/.test(vnetName)) fail("GATEWAY_VNET_NAME is not a valid virtual network name");
+  return { vaultUrl, apimId, gatewayUrl, sweepMinutes, port, foundryAccountId, workspaceId, vnetName };
 }
 
 /** The service with real adapters; shared by the dashboard and the automation. */
@@ -50,6 +52,7 @@ export function buildService(cfg, { env = process.env, log }) {
       ["productClaude", "../../poc/products-keyvault/infra/api-claude-policy.xml"],
     ].map(([name, path]) => [name, readFileSync(new URL(path, import.meta.url), "utf8")])),
     gatewayUrl: cfg.gatewayUrl,
+    vnetName: cfg.vnetName,
     log,
   });
   if (cfg.workspaceId) service.setUsageSource(logAnalytics({ workspaceId: cfg.workspaceId, getToken }));

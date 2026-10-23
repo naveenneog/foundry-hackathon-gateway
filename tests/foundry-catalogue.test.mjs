@@ -56,6 +56,22 @@ describe("a deployment knows which wire format it speaks", () => {
     assert.equal(wireFormatOf(d), WIRE.OPENAI);
   });
 
+  test("non-chat deployments remain visible but cannot be pinned to chat/messages routes", () => {
+    const names = ["text-embedding-3-small", "gpt-image-2", "gpt-realtime", "gpt-4o-transcribe", "gpt-audio-1.5", "sora-2", "whisper", "tts-1", "dall-e-3", "mistral-document-ai-2505"];
+    for (const name of names) {
+      const d = deployment({ name, properties: { model: { format: "OpenAI", name }, provisioningState: "Succeeded" } });
+      const catalogue = buildCatalogue([{ name: "foundry", deployments: [d] }]);
+      assert.equal(catalogue.length, 1, `${name} is visible`);
+      assert.equal(wireFormatOf(d), WIRE.UNKNOWN, name);
+      assert.equal(canPin(catalogue[0], "openai").allowed, false, name);
+      assert.match(canPin(catalogue[0], "openai").reason, /chat.*messages/i);
+    }
+    const ps = fs.readFileSync(new URL("../scripts/Models.ps1", import.meta.url), "utf8");
+    for (const marker of ["embedding", "gpt-image", "realtime", "transcribe", "audio", "sora", "whisper", "tts", "dall-e", "document-ai"]) {
+      assert.ok(ps.includes(`'${marker}'`), `PowerShell parity: ${marker}`);
+    }
+  });
+
   test("Anthropic speaks the Messages API", () => {
     assert.equal(wireFormatOf(claude()), WIRE.ANTHROPIC);
   });

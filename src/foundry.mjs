@@ -33,6 +33,8 @@ const ROUTE_FOR_WIRE = {
  */
 const OPENAI_FORMATS = new Set(["openai", "deepseek", "meta", "mistral ai", "mistral", "microsoft", "xai", "ai21 labs"]);
 const ANTHROPIC_FORMATS = new Set(["anthropic"]);
+const NON_CHAT_MARKERS = ["embedding", "gpt-image", "realtime", "transcribe", "audio", "sora", "whisper", "tts", "dall-e", "document-ai"];
+const nonChat = (name) => NON_CHAT_MARKERS.some((marker) => String(name ?? "").toLowerCase().includes(marker));
 
 const text = (value) => (typeof value === "string" ? value.trim() : "");
 
@@ -52,6 +54,7 @@ export function wireFormatOf(deployment) {
   const format = text(model.format).toLowerCase();
   const name = text(model.name).toLowerCase();
 
+  if (nonChat(name)) return WIRE.UNKNOWN;
   if (ANTHROPIC_FORMATS.has(format) || name.startsWith("claude")) return WIRE.ANTHROPIC;
   if (OPENAI_FORMATS.has(format)) return WIRE.OPENAI;
   return WIRE.UNKNOWN;
@@ -109,6 +112,10 @@ export function canPin(entry, route) {
 
   if (!entry || typeof entry !== "object") {
     return { allowed: false, reason: "That deployment could not be read." };
+  }
+
+  if (nonChat(entry.model)) {
+    return { allowed: false, reason: `'${entry.deployment}' requires an embeddings, image, audio or realtime API; this gateway serves chat completions and messages only.` };
   }
 
   if (entry.wire === WIRE.UNKNOWN) {

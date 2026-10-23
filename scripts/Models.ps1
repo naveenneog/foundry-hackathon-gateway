@@ -90,12 +90,22 @@ function ConvertFrom-ModelMapString {
 # rather than assumed: assuming puts a model on a route that cannot serve it, and the symptom
 # is a 404 that reads as a gateway fault.
 $script:OpenAiFormats = @('openai', 'deepseek', 'meta', 'mistral ai', 'mistral', 'microsoft', 'xai', 'ai21 labs')
+$script:NonChatMarkers = @('embedding', 'gpt-image', 'realtime', 'transcribe', 'audio', 'sora', 'whisper', 'tts', 'dall-e', 'document-ai')
+
+function Test-NonChatModel {
+    param([string]$Name)
+    foreach ($marker in $script:NonChatMarkers) {
+        if ($Name.ToLowerInvariant().Contains($marker)) { return $true }
+    }
+    return $false
+}
 
 function Get-WireFormat {
     param($Deployment)
     $format = ([string]$Deployment.properties.model.format).Trim().ToLowerInvariant()
     $name   = ([string]$Deployment.properties.model.name).Trim().ToLowerInvariant()
 
+    if (Test-NonChatModel $name) { return 'unknown' }
     # The name is checked too: a Claude deployment with no format field must not fall through
     # to the OpenAI route.
     if ($format -eq 'anthropic' -or $name.StartsWith('claude')) { return 'anthropic-messages' }
@@ -272,6 +282,9 @@ function Test-CanPin {
 
     if (-not $Entry) { return [pscustomobject]@{ allowed = $false; reason = 'That deployment could not be read.' } }
 
+    if (Test-NonChatModel ([string]$Entry.model)) {
+        return [pscustomobject]@{ allowed = $false; reason = "'$($Entry.deployment)' requires another API; this gateway serves chat completions and messages only." }
+    }
     if ($Entry.wire -eq 'unknown') {
         return [pscustomobject]@{
             allowed = $false

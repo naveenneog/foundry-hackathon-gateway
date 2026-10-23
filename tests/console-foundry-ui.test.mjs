@@ -596,22 +596,42 @@ test("Show me for another page goes there by a fixed route, highlights once it r
   }
 });
 
-test("Escape on the page clears a highlight but leaves modal dialogs alone; Back and Next move between steps", () => {
+test("Escape anywhere closes the guide and its highlight and restores focus, but a modal dialog's Escape stays its own; Back and Next move between steps", () => {
   const { doc, guide, main } = mountGuide();
   try {
-    guide.open("discover", guide.button);
+    const ask = dom.el("button", { type: "button" }, "How this works");
+    dom.addChildren(main, ask);
+    guide.open("discover", ask);
     guide.panel.querySelector("[data-help-show]").click();
     const section = main.querySelector('[data-help="foundry-accounts"]');
+    const control = section.querySelector("[data-help-focus]");
+    assert.equal(doc.activeElement, control, "Show me moved focus onto the page");
+
     const dialog = dom.el("dialog", {});
     dialog.setAttribute("open", "");
     dom.addChildren(doc.body, dialog);
-    dialog.dispatchEvent(keydown("Escape"));
-    assert.ok(section.classList.contains("help-target"), "a modal dialog's Escape is its own");
+    const fromDialog = keydown("Escape");
+    dialog.dispatchEvent(fromDialog);
+    assert.equal(fromDialog.defaultPrevented, false, "a modal dialog's Escape is its own");
+    assert.ok(section.classList.contains("help-target"), "so the highlight stays");
+    assert.equal(guide.panel.hidden, false, "and so does the guide");
     dialog.remove();
-    doc.activeElement.dispatchEvent(keydown("Escape"));
-    assert.equal(section.classList.contains("help-target"), false, "Escape clears the highlight");
-    assert.equal(guide.panel.hidden, false, "and the guide stays open");
 
+    const escape = keydown("Escape");
+    control.dispatchEvent(escape);
+    assert.equal(escape.defaultPrevented, true);
+    assert.equal(guide.panel.hidden, true, "Escape on the highlighted control closes the guide");
+    assert.equal(guide.button.getAttribute("aria-expanded"), "false");
+    assert.equal(doc.body.classList.contains("help-open"), false, "the page is no longer docked");
+    assert.equal(section.classList.contains("help-target"), false, "the highlight goes with it");
+    assert.equal(section.hasAttribute("data-help-label"), false);
+    assert.equal(control.hasAttribute("aria-describedby"), false, "the control's aria description is restored");
+    assert.equal(doc.activeElement, ask, "focus returns to what opened the guide");
+    const late = keydown("Escape");
+    doc.body.dispatchEvent(late);
+    assert.equal(late.defaultPrevented, false, "a closed guide no longer listens");
+
+    guide.open("discover", guide.button);
     const next = guide.panel.querySelector("[data-help-next]");
     const back = guide.panel.querySelector("[data-help-back]");
     assert.equal(back.getAttribute("aria-disabled"), "true", "no step before the first");

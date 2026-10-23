@@ -211,17 +211,12 @@ export function createGuide(ctx) {
     render(focusHead);
   }
 
+  /** Escape closes the guide and its highlight wherever focus is, unless a modal dialog is open: its Escape is its own. */
   function onKey(event) {
     if (event.key !== "Escape" || event.defaultPrevented) return;
     if (document.querySelector("dialog[open]")) return;
-    if (panel.contains(event.target)) {
-      event.preventDefault();
-      close();
-    } else if (clearMark) {
-      event.preventDefault();
-      unmark();
-      say("Highlight cleared.");
-    }
+    event.preventDefault();
+    close();
   }
 
   /** Opens the guide, at `stepId` if given. With `highlight`, marks that step's section on this page without moving focus. */

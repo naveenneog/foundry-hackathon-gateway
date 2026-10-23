@@ -1,14 +1,89 @@
 # Status
 
-**Active packet:** P56 — multi-Foundry discovery, attachment, account-bound key issue and guided
-help, on `release/key-dashboard`. Acceptance: ROADMAP; design: ADR-0017; unknowns U46–U48.
-The current single-account catalogue hides models deployed in other accounts.
+**Active packet:** none. P56 — multi-Foundry discovery, attachment, account-bound key issue and
+guided help — is complete on `release/key-dashboard`. Design: ADR-0017; U46–U49 resolved.
 
-P55 (release branch) and P49–P54 are done on `feature/key-dashboard` (cut from
-`feature/admin-console`; local commits, not pushed or merged). Design: ADR-0015; owner amendment:
+P55 (release branch) and P49–P54 are published on `release/key-dashboard`, not merged to `main`.
+Design: ADR-0015; owner amendment:
 ADR-0016. App Service quota in eastus2 is 0 (U40), so Container Apps is the live path. The App
 Service template builds; ARM validate/what-if is blocked by the zero quota. The live dashboard has no IP restriction; Entra
 sign-in and the admin role remain required.
+
+### P56 — multi-Foundry discovery, attachment, selection and highlighted help — DONE
+
+The catalogue now discovers AIServices and OpenAI accounts across the configured subscription.
+Its first live response showed 16 accounts and 79 deployments instead of two deployments from
+one account. An independent ARM list is used in live checks so a newly created account cannot
+be silently missed. Account permission failures are displayed, not turned into empty lists.
+
+Each attached account has isolated APIM backends, API paths, model maps and a short-lived-key
+audience. Product hashes/API links and single/bulk handouts, CSVs, reveal and export are
+account-specific. The original account's routes, maps and audience remain unchanged.
+
+The UI was built by Opus 5.5 at max effort. It includes Foundry/account selection, refreshed
+deployment lists, account-local pins, Attach, an explicit bounded connection Test, key issue
+Foundry selection, and help that highlights each setup step. Unsupported non-chat deployments
+remain visible with the reason they cannot be pinned to the chat/messages APIs.
+
+**Live bug-bash findings and fixes (2026-10-23/24):**
+- APIM rejected readable source policy copies above 16 KiB. Deployed copies now remove comments
+  and formatting only; tests require the payload bound and every enforcement guard.
+- Attached-account DNS failed because linked private DNS zones had only the original account's
+  records. Explicit operator private-endpoint setup fixed this without relaxing a firewall.
+  Original private DNS records remain unchanged; the new endpoint is Approved/Succeeded.
+- APIM returned 502 for duplicate product display names despite distinct product IDs.
+  Product display names now include their stable ID before any truncated description; tests
+  cover equal models in different accounts and different budget variants.
+- Escape after **Show me** cleared the highlight without closing the help guide. The Opus UI
+  follow-up fixed it test-first; one Escape now closes the guide and restores its opener, while
+  modal dialogs retain their own Escape handling.
+
+**Live generated-key/client checks:**
+- Selected-account short-lived and product keys each returned 401 on the default account's
+  routes. An ungranted model returned 403.
+- OpenAI-compatible and Claude inference on the attached account each returned 200.
+- OpenCode 1.18.21 used a newly dashboard-issued short-lived key through the attached account
+  and exited 0 with `OK`.
+- Anthropic Python SDK 1.15.0 used both a newly issued short-lived key and a product key through
+  the selected account; each replied `OK` (12 input / 4 output tokens in the smoke test).
+- Test short-lived keys were revoked; test product keys were suspended and deleted. Empty APIM
+  diagnostic products were individually removed. The original backend connection test remains
+  successful.
+
+**Browser and regression verification:**
+- All 720 repository tests pass. The 55 UI tests include account identity, cache refresh,
+  account changes clearing stale grants, highlight lifecycle and keyboard/modal precedence.
+- All 14 final live browser checks passed: discovery matched an independent ARM account list;
+  the secondary account's Opus deployment appeared; Help highlighted the control and Escape
+  closed it; the UI connection test succeeded; all four single/bulk key forms cleared their
+  model choice when switching Foundry; 900px had no document overflow. No console/CSP errors.
+- The catalogue refreshed to 17 accounts / 81 deployments as more resources appeared during
+  testing. The implementation does not hardcode account/model counts.
+- The local demo simulates inference tests too; it sends no requests to Azure or the sample
+  gateway. New screenshots show account selection, deployed Claude models, issue-time Foundry
+  choice and highlighted help, with identifying text replaced before capture.
+- The packet gate exits 0 (22 passed, one pre-existing `src/diagnose.mjs` warning). All 15
+  browser modules pass syntax checks; both hosting templates and the new optional
+  private-endpoint template build.
+
+Backend and UI security reviews reported no vulnerabilities. Discovery grants only the two
+account/deployment metadata-read actions. The dashboard cannot grant roles or modify firewalls;
+operator commands are displayed/copied only. New API operations are blocked until their full
+governance policy is installed. Negative checks caught all five backend isolation mutants with
+clean imports and unchanged test counts; the UI agent caught 28 UI regressions.
+
+**Council — P56**
+
+| Seat | Verdict | Evidence |
+|---|---|---|
+| Architect | PASS | ADR-0017 isolates attached accounts by API paths, model maps, JWT audiences and product links; old routes are unchanged |
+| Coder | PASS | Shared canonical model rules, existing governance policy copies, trusted ARM-derived hosts; partial APIs fail closed and attachment is retryable |
+| QA | PASS | 720 tests, five clean-import backend mutants, 14 live browser checks, actual OpenCode/SDK calls and wrong-account controls |
+| UX | PASS | Opus 5.5 max UI; all accounts/deployment states visible; account choice on all issue forms; guided highlights; Escape bug fixed; axe in both themes |
+| Security | PASS | Backend/UI reviews found no vulnerabilities; subscription discovery is metadata-only, operator access setup is explicit, no dashboard elevation/firewall relaxation |
+
+Live source image: `ecbc672` (final guide keyboard fix). Empty diagnostic APIM products were
+removed; selected-account private connectivity remains available for the attached backend.
 
 ### P55 — release branch, README, install guide, local demo — DONE
 

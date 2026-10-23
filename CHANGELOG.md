@@ -6,6 +6,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · [Semantic Ve
 ## [Unreleased]
 
 ### Added
+- **Multiple Foundry backends (P56).** The deployed-model list discovers accounts and deployments
+  across the configured subscription, with visible permission errors and explicit refresh.
+  Administrators can attach another Foundry, pin its models and select it during single or bulk
+  key issuance. Isolated API routes, JWT audiences and product scopes prevent cross-account use;
+  existing routes and keys are unchanged. Highlighted help guides discovery, setup, pinning and
+  issue. Discovery is metadata-only; an operator grants per-account inference access and can
+  optionally configure a private endpoint without relaxing a firewall. ADR-0017.
 - **Release branch `release/key-dashboard`: install guide, architecture and a local demo.**
   The README now opens with the Key Dashboard: an architecture illustration with a note on how
   recipients authenticate, a one-minute local try (`npm run dashboard:demo`, sample data, no

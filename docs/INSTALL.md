@@ -67,6 +67,7 @@ flowchart LR
 | An Azure subscription, a region with Claude on Foundry (this guide uses `eastus2`) | Every resource is created there |
 | Contributor and User Access Administrator (or Owner) on the resource group | The templates create resources and role assignments |
 | Permission to create an Entra app registration and assign its app roles | The dashboard's sign-in ([`Deploy-Console.ps1`](../scripts/Deploy-Console.ps1)) |
+| Subscription custom-role definition and role-assignment privileges for the installer | The dashboard's discovery role has only `Microsoft.CognitiveServices/accounts/read` and `Microsoft.CognitiveServices/accounts/deployments/read`; no inference, account keys or RBAC writes |
 | PowerShell 7, Azure CLI 2.60+ signed in (`az login`), Node.js 20+ | The scripts and the local demo |
 | Quota for Container Apps (the default) or for an App Service plan B1 | The dashboard host; App Service quota was 0 in the test subscription ([U40](UNKNOWNS.md)) |
 
@@ -179,6 +180,10 @@ Foundry account, the gateway's workspace and the VNet in the resource group. It 
      and zip-deploys the dashboard and [`functions/`](../functions/).
 5. Waits for `/healthz` and prints the URL.
 
+The installer also grants a subscription-scoped **metadata-only discovery role** to the
+dashboard identity. It does not grant subscription Reader/Contributor or role-assignment rights.
+This is why the deployed-model list can cover Foundry accounts in other resource groups.
+
 | Created | Container Apps path | App Service path |
 |---|---|---|
 | Dashboard | Container app, scale 0–1, built-in Entra sign-in | Linux web app, built-in Entra sign-in |
@@ -202,12 +207,38 @@ short-lived keys. Keys already issued keep working. The page then shows **Copies
 
 ## 6. Issue and use a key
 
+**Select a Foundry backend.** In **Foundry & models**, select an account and inspect its
+deployments. Refresh picks up new deployments. The configured original account is already
+attached; other accounts are attached explicitly. For another account, run the displayed
+operator command to grant APIM inference access:
+
+```powershell
+pwsh scripts/Connect-Foundry.ps1 -Subscription <subscription> -ResourceGroup <apim-rg> `
+  -ApimName <apim> -FoundryAccountId <full-account-resource-id>
+```
+
+An optional private endpoint may be needed when the gateway uses private DNS:
+
+```powershell
+pwsh scripts/Connect-Foundry.ps1 -Subscription <subscription> -ResourceGroup <apim-rg> `
+  -ApimName <apim> -FoundryAccountId <full-account-resource-id> `
+  -ConfigurePrivateEndpoint -VnetName <gateway-vnet>
+```
+
+This operator action adds account-specific connectivity in the existing VNet. It does not
+change public-network access or firewall rules. It can incur private endpoint charges. Pin a
+ready model and use **Test** to verify inference access before distributing keys. The dashboard
+help highlights the relevant controls and explains metadata access versus inference access.
+
 **A short-lived key.** **Short-lived keys → Issue one**:
-1. Fill in **Issued to**, a subject, and **One model** (for example `haiku-4-5`).
+1. Select the attached Foundry. Fill in **Issued to**, a subject, and **One model** (for example `haiku-4-5`).
 2. Set **Starts in** 0, **Valid for** 48 hours, and a token budget.
 3. Click **Issue key**, then **Copy**. The key is shown once.
 
 For Claude Code, set these in the project's `.claude/settings.json` `env` block, or export them:
+The values below show the original account's route. An attached account includes
+`/foundry/<connection-id>` before `/claude` or `/poc/claude`; the dashboard's handout and CSV
+already contain that prefix. Copy those values rather than constructing the URL manually.
 
 ```bash
 ANTHROPIC_BASE_URL=https://<apim>.azure-api.net/claude
@@ -216,7 +247,7 @@ ANTHROPIC_MODEL=haiku-4-5
 ```
 
 **A product key.** **Product keys → Issue one**:
-1. Pick one or several Foundry deployments and a monthly budget.
+1. Select the attached Foundry, one or several of its deployments, and a monthly budget.
 2. Click **Issue product key**, then **Reveal** it in the list.
 
 ```bash
@@ -256,6 +287,9 @@ encrypted bundles.
 | `InternalSubscriptionIsOverQuotaForSku` with `-Hosting AppService` | No App Service quota in the region. Use the default Container Apps path or request quota. |
 | A browser POST returns a bodyless 403 | Platform sign-in needs a same-origin `Referer`; the dashboard sends `Referrer-Policy: same-origin`. A browser extension or proxy that strips `Referer` causes it ([ADR-0014](adr/0014-console-on-container-apps.md)). |
 | Usage shows 0 right after a call | Metrics reach Log Analytics a few minutes after the call. |
+| Only the original Foundry's models appear | Upgrade/redeploy this branch so the dashboard receives the metadata-only subscription discovery role. Then use **Foundry & models → Refresh** and select an account. |
+| An account's deployments show an access error | The dashboard identity lacks account/deployment metadata-read permission. The installer reports whether its discovery role was granted; no account-key access is needed. |
+| Attached backend test reports DNS failure | The account's public hostname may CNAME into a linked private DNS zone that has no record for that account. Use the optional private-endpoint setup command and test again; do not relax the account's firewall. |
 | A product key returns 401 right after issue or rotation | APIM applies key changes within about 20 seconds (16 s measured). |
 
 ## Remove

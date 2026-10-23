@@ -56,22 +56,62 @@ assumption is only closed if it names its blast radius and the detector that wou
 | U43 | What is the largest `token-quota` that `llm-token-limit` accepts? | RESOLVED |
 | U44 | Does a Container Apps job in a VNet-injected environment get a managed identity endpoint and reach the private vault? | RESOLVED |
 | U45 | Is Log Analytics Reader on the workspace enough for a managed identity to query `AppMetrics` through `api.loganalytics.io`? | RESOLVED |
-| U46 | Which ARM list APIs and read actions discover Foundry accounts and deployments across the subscription? | OPEN |
-| U47 | Can namespaced API copies reuse the gateway policies with account-local model maps and a different JWT audience? | OPEN |
-| U48 | Which gateway inference role and endpoint audience apply to attached AIServices and OpenAI accounts? | OPEN |
-| U49 | Why does a second Foundry resolve publicly outside the VNet but fail DNS from the gateway? | OPEN |
+| U46 | Which ARM list APIs and read actions discover Foundry accounts and deployments across the subscription? | RESOLVED |
+| U47 | Can namespaced API copies reuse the gateway policies with account-local model maps and a different JWT audience? | RESOLVED |
+| U48 | Which gateway inference role and endpoint audience apply to attached AIServices and OpenAI accounts? | RESOLVED |
+| U49 | Why does a second Foundry resolve publicly outside the VNet but fail DNS from the gateway? | RESOLVED |
 
 ---
 
 
 ## Open
 
-U46–U49 belong to P56 (ADR-0017). U49 was logged after the first live attach test: its public
-hostname CNAMEs to a linked private zone that contains only the original account. Adding a
-per-account private endpoint/DNS record in the gateway VNet is an explicit operator option;
-no public access or firewall relaxation is used.
+None.
 
 ---
+
+### U46 — Subscription-wide Foundry discovery — RESOLVED
+
+ARM `2024-10-01` exposes account list and deployment list, both paged with `nextLink`:
+[accounts/list](https://learn.microsoft.com/rest/api/aiservices/accountmanagement/accounts/list?view=rest-aiservices-accountmanagement-2024-10-01)
+and [deployments/list](https://learn.microsoft.com/rest/api/aiservices/accountmanagement/deployments/list?view=rest-aiservices-accountmanagement-2024-10-01).
+Read on 2026-10-23. Live provider operations identify `accounts/read` and
+`accounts/deployments/read` as control-plane actions, not DataActions. The installer creates
+exactly those two discovery actions. Live dashboard discovery returned 16 accounts and 79
+deployments, with no per-account errors, versus the original two deployments.
+
+### U47 — Namespaced APIM policy copies — RESOLVED
+
+On 2026-10-23 APIM accepted four isolated APIs and their full governance policies for a second
+account, with local model maps, a distinct JWT audience and backend IDs. The first PUT failed
+with **Policy size exceeds allowed limit of 16 KB**. Removing source comments and formatting,
+without removing enforcement statements, passed. Tests assert the size bound and retained
+JWT, model, budget and revocation guards. APIs are blocked before operations are exposed.
+
+### U48 — Inference roles and audience — RESOLVED
+
+Current [official v1 SDK examples](https://learn.microsoft.com/azure/foundry/openai/supported-languages?pivots=programming-language-python)
+use `https://ai.azure.com/.default`, including the Azure OpenAI host (read 2026-10-23).
+AIServices uses the existing Cognitive Services User grant; OpenAI accounts use Cognitive
+Services OpenAI User. Roles are verified by their built-in IDs before assignment:
+[role definitions](https://learn.microsoft.com/azure/role-based-access-control/built-in-roles/ai-machine-learning).
+The dashboard has no permission to grant either role itself. Existing live AIServices inference
+already verifies the `ai.azure.com` audience (U9 and U2b).
+
+### U49 — Private-zone shadowing when attaching another account — RESOLVED
+
+Live on 2026-10-23: the secondary account's public host CNAME resolved through a private zone
+linked to the gateway VNet, but that zone had only the original account's records. APIM returned
+`No such host is known`. The operator helper's explicit `-ConfigurePrivateEndpoint` option
+created a per-account private endpoint and registrations in all three existing zones.
+What-if showed only two creates; the original records remained unchanged. The new endpoint is
+Approved/Succeeded. OpenAI-compatible and Claude inference then each returned 200 through APIM,
+and actual OpenCode and Anthropic SDK clients succeeded.
+
+The original account remains public-access Disabled. The selected account's existing public
+access setting was not changed. No firewall was opened. See
+[private endpoint DNS integration](https://learn.microsoft.com/azure/private-link/private-endpoint-dns-integration)
+(read 2026-10-23) for linked-zone name resolution.
 
 U24–U34 belong to the proof of concept on branch `poc/apim-products-keyvault`
 (`poc/products-keyvault/`). U24–U28 (P37) were measured on 2026-10-11 on the Standard v2 test

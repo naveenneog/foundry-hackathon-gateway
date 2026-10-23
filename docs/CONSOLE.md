@@ -113,11 +113,46 @@ automation deletes them 30 days after archive. Deletion is a Key Vault soft dele
 
 A change to a product key reaches the gateway within about 20 seconds (16 s measured).
 
+### Foundry discovery, backend attachment and model pinning
+
+**Foundry & models** discovers AIServices and Azure OpenAI accounts in the configured subscription,
+including accounts outside the gateway's resource group. **Refresh** re-reads deployments from
+ARM; newly deployed models do not require an app redeploy. An unreadable account is shown with
+its error, not omitted as an empty catalogue.
+
+![Subscription-wide Foundry account discovery with connection states and deployment counts](images/console/console-foundries.png)
+
+1. Select the Foundry account by its name, resource group and region. Deployment names may repeat
+   across accounts; the account's resource ID distinguishes them.
+2. **Attach** provisions that account's APIM backends and isolated gateway routes. It does not
+   give the dashboard permission to grant Azure roles or open a firewall.
+3. Run the displayed operator setup command to grant the APIM managed identity inference access
+   on the selected account. If the gateway's private DNS zones have no record for this account,
+   the optional private-endpoint setup command creates the endpoint and records in its VNet.
+4. Pin aliases for ready chat/messages deployments. Embeddings, image, audio, realtime and
+   unsupported model formats remain visible with a reason; this gateway does not expose their
+   modality-specific APIs.
+5. **Test** makes a small inference request through APIM. Attachment is configuration, not proof
+   that RBAC and networking work; a failure shows the next setup step.
+
+The **Help** control explains these steps and highlights the relevant controls. Discovery uses
+metadata-only read permissions. Inference uses APIM's separate identity and per-account role.
+Private endpoint setup is an operator action; no public-network or firewall settings are relaxed.
+
+![Setup guide highlighting the account discovery controls](images/console/console-foundry-help.png)
+
+The original account keeps its existing `/v1`, `/claude` and `/poc/*` routes. Other accounts use
+`/foundry/<connection-id>/...`. Returned handouts, CSVs and encrypted exports contain the correct
+selected-account URLs. A short-lived key for one account is rejected at another account's routes;
+product keys are linked only to their own account's APIs.
+
 ### Issue a short-lived key
 
 ![Issue a short-lived key: intended holder, subject, models, token budget, activation delay and validity](images/console/console-issue-signed.png)
 
-The key is minted with the signing secret in Key Vault. Choose one or several pinned model aliases.
+The key is minted with the signing secret in Key Vault. Select an attached **Foundry**, then
+choose one or several of that account's pinned aliases. Changing the Foundry clears the model
+selection so a grant cannot accidentally use a different account's models.
 **Starts in (hours from now)** defaults to 0; a future start is shown as **Scheduled**. The
 gateway checks `nbf`, expiry, the model allowlist and token budget. This matches
 `scripts/Keys.ps1`'s `Read-KeySettings`. **Revoke** adds the key ID to the gateway's denylist.
@@ -146,7 +181,7 @@ view changes or the page unloads. The files are not written to browser storage.
 
 ![Issue a product key: owner, name, product pack and optional automatic rotation](images/console/console-issue-product.png)
 
-Choose one or several Foundry deployments. This creates/reuses a product whose policy allows
+Select an attached **Foundry**, then one or several of its deployments. This creates/reuses a product whose policy allows
 exactly those deployments and stores each APIM subscription's primary key in Key Vault.
 
 ![Product key issue form with Foundry deployments, monthly budget and rotation settings](images/console/console-issue-product.png)
@@ -261,5 +296,6 @@ owners cannot sign in to reveal keys.
 - The runner VM resolved the vault to `10.61.2.7` and Foundry to `10.61.2.4`. The vault responded
   over its private endpoint; dashboard traffic from the VM reached the app.
 
-The current-interface screenshots were captured from the live UI on 2026-10-23. The header
-account and the `Issued to` example values are generic examples; no key values are shown.
+The interface screenshots were captured from the live UI on 2026-10-23/24. Account/resource
+names, subscription IDs and header identities are replaced with generic examples before capture;
+no key values are shown.

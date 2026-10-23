@@ -251,7 +251,7 @@ Key Vault. Nothing here changes the gateway on `main`.
       image referenced once, PNG, alt text and names free of identifiers, provenance note) and
       the 28 document tests pass.
 
-- [ ] **P56** Discover, attach and select Foundry backends, with highlighted help
+- [x] **P56** Discover, attach and select Foundry backends, with highlighted help
       *Acceptance:* deployments from AIServices/OpenAI accounts in the configured subscription
       appear with their Foundry account and errors are visible. Refresh finds new deployments.
       An admin attaches an account, pins its models, and selects it for single/bulk short-lived

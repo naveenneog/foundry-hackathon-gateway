@@ -43,6 +43,13 @@ Entra ID signs in administrators to the dashboard. The dashboard and the automat
 Vault, API Management and Foundry with managed identities, and APIM does not call Key Vault per
 request. A text version of the diagram is in [docs/INSTALL.md](docs/INSTALL.md#architecture).
 
+**Multiple Foundry accounts:** the dashboard discovers deployed models across the configured
+subscription, not just the original gateway account. **Foundry & models** shows each account's
+deployments, readiness and supported route. Attach an account, pin its aliases, then choose that
+Foundry when issuing single or bulk keys. Each attached account has isolated gateway routes and
+short-lived-key audiences; existing keys are not redirected. Inference permission and private
+DNS are checked separately from discovery. The highlighted help walks through each step.
+
 ### Try it in one minute (no Azure)
 
 ```powershell
@@ -86,6 +93,8 @@ az deployment group create -g <rg> --template-file infra/examples/private-foundr
 | ![Bulk issue: shared settings and CSV rows](docs/images/console/console-short-lived-bulk.png) | **Issue in bulk.** Paste or upload CSV rows. The dashboard returns `keys.csv`, to send each person their row, and `index.csv`, which holds no keys. |
 | ![Product key issue: Foundry deployments, monthly budget, rotation and expiry](docs/images/console/console-issue-product.png) | **Product keys** grant Foundry deployments. The dashboard creates one APIM product per model set, so the key is refused for any other model (403). |
 | ![Models: pinned aliases per route and the Foundry deployments](docs/images/console/console-models.png) | **Models.** Lists the Foundry deployments and pins or unpins aliases, with the same rules as `admin.ps1`. |
+| ![Foundry account discovery with connected and unattached accounts, region and deployment counts](docs/images/console/console-foundries.png) | **Foundry & models.** Discover accounts across the subscription, refresh new deployments and attach an additional backend without redirecting existing keys. |
+| ![Setup guide with a highlighted Foundry account section](docs/images/console/console-foundry-help.png) | **Help → Show me.** Highlights discovery, attachment, access/network setup, pinning, key issue and distribution controls. Operator commands are copied, not executed by the dashboard. |
 | ![Export: an encrypted bundle signed by the Key Vault key](docs/images/console/console-export.png) | **Export.** An AES-256-GCM bundle signed by a Key Vault key. The recipient verifies and opens it with `scripts/open-bundle.mjs`. |
 
 Expired or revoked keys move to **Archived** automatically. Product keys are suspended first.
@@ -523,7 +532,7 @@ functions/
   sweep.mjs                  App Service option: v4 timer function for key automation
 examples/
   claude-agent.ipynb         a tool-calling Claude agent, with a real recorded run
-tests/                       652 tests, including tamper and alg:none attacks
+tests/                       regression, client, key-isolation and UI safety tests
 docs/adr/                    architecture decisions and their reasoning
 docs/UNKNOWNS.md             what we did not know, and how each was closed
 docs/PRIVATE-ENDPOINT.md     Foundry behind a private endpoint: requirements, steps, evidence
@@ -536,7 +545,7 @@ transcriptions of it. **Change one, change both** — the unit tests guard the m
 parity tests guard the transcriptions, and `Test-Governance.ps1` guards the deployed behaviour.
 
 ```powershell
-npm test                                  # 652 tests
+npm test                                  # full regression suite
 node .ironclad/gate.mjs --stage packet    # full quality gate
 ```
 

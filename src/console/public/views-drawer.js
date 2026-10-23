@@ -10,14 +10,26 @@ import {
 import {
   checkOwner, checkWhole, deleteDate, fmtDate, fmtDateTime, fmtInt, fmtRelative, isArchived, keyStatus, keyTitle, LIMITS, normalizeOwner, routeOf,
 } from "./lib.js";
+import { accountForKey, accountsOf, keyFoundry } from "./foundry.js";
 import { revealKey } from "./secret.js";
+
+/**
+ * The key's Foundry account and that Foundry's config (for route badges). A key without Foundry
+ * metadata belongs to the default; either value is null when it cannot be read.
+ */
+async function keyContext(ctx, k) {
+  const accounts = await ctx.foundries().then(accountsOf, () => null);
+  const account = accounts ? accountForKey(accounts, k) : null;
+  const config = account ? ctx.config(account.id) : keyFoundry(k).isDefault ? ctx.config() : null;
+  return { account, config: await Promise.resolve(config).catch(() => null) };
+}
 
 /**
  * Opens the drawer for `key`. `onChanged()` refreshes the list after an admin action and resolves
  * to the refreshed keys, from which the drawer redraws itself.
  */
 export async function openKeyDrawer(ctx, key, { opener, onChanged }) {
-  const config = await ctx.config().catch(() => null);
+  const { account, config } = await keyContext(ctx, key);
   const titleId = uid("drawer-title");
   const panel = el("div", { class: "drawer-panel" });
   const dialog = el("dialog", { class: "drawer", "aria-labelledby": titleId }, panel);
@@ -73,6 +85,10 @@ export async function openKeyDrawer(ctx, key, { opener, onChanged }) {
     add("Issued to", k.owner || el("span", { class: "muted" }, "not recorded"));
     if (k.label) add("Label", k.label);
     if (k.subject) add("Subject", k.subject);
+    const foundry = keyFoundry(k);
+    add("Foundry", foundry.name,
+      account ? el("span", { class: "muted" }, ` · ${[account.location, account.resourceGroup].filter(Boolean).join(" · ")}`) : null,
+      foundry.isDefault ? null : el("span", { class: "cell-sub mono" }, `connection ${foundry.connectionId}`));
     add("Models", Array.isArray(k.models) && k.models.length
       ? el("ul", { class: "model-list" }, k.models.map((m) => el("li", {}, el("span", { class: "mono" }, m), routeBadge(routeOf(k.kind, config, m)))))
       : "—");

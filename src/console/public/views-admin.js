@@ -1,15 +1,14 @@
-// Key Dashboard — admin views: Models (Foundry deployments and alias pins), Export (encrypted,
-// signed bundles) and Signing (the secret that signs short-lived keys).
+// Key Dashboard — admin views: Export (encrypted, signed bundles) and Signing (the secret that signs
+// short-lived keys). Foundry accounts, deployments and pins are views-foundry.js.
 
-import { cachedGet, get, invalidate, post } from "./api.js";
+import { cachedGet, get, post } from "./api.js";
 import {
-  addChildren, badge, busy, confirmDialog, copyButton, downloadJson, el, emptyState, errorState, field, icon, loadingState, routeBadge, setChildren, showErrors, toast, uid,
+  addChildren, busy, confirmDialog, copyButton, downloadJson, el, emptyState, errorState, field, icon, loadingState, setChildren, showErrors, toast, uid,
 } from "./dom.js";
-import { checkAlias, checkPassphrase, checkRecipient, chunk, fmtInt, KINDS, LIMITS, matchesQuery, ROUTE_LABEL } from "./lib.js";
+import { checkPassphrase, checkRecipient, chunk, fmtInt, KINDS, LIMITS } from "./lib.js";
 import { showSecret } from "./secret.js";
 
 const EXPORT_MAX = 50;
-const WIRE_LABEL = { "openai-chat-completions": "OpenAI chat completions", "anthropic-messages": "Anthropic Messages", unknown: "Unknown format" };
 
 function head(title, lede, ...actions) {
   return el("header", { class: "view-head" },
@@ -20,113 +19,6 @@ function head(title, lede, ...actions) {
 function card(title, ...children) {
   const id = uid("card");
   return el("section", { class: "card", "aria-labelledby": id }, el("h2", { class: "card-title", id }, title), children);
-}
-
-// ── Models ──────────────────────────────────────────────────────────────────
-
-export function renderModels(root) {
-  const refresh = el("button", { type: "button", class: "btn btn-secondary" }, icon("refresh"), "Refresh");
-  const pinsSlot = el("div", {});
-  const depSlot = el("div", {});
-  const search = el("input", { type: "search", class: "input", placeholder: "Search deployments", "aria-label": "Search deployments" });
-  addChildren(root,
-    head("Models", "Foundry deployments in the gateway's account. Pin a deployment to an alias to offer it to short-lived keys; product keys use deployment names directly.", refresh),
-    card("Pinned aliases", el("p", { class: "field-hint" }, "Short-lived keys grant these aliases. Each route has its own map."), pinsSlot),
-    card("Foundry deployments", el("div", { class: "toolbar" }, el("div", { class: "search" }, icon("search", "icon search-icon"), search)), depSlot));
-  let data = null;
-
-  async function load(fresh = false) {
-    setChildren(pinsSlot, loadingState("Loading pins…", 2));
-    setChildren(depSlot, loadingState("Loading deployments…", 4));
-    try {
-      data = await cachedGet("/api/models", { ttl: Infinity, fresh });
-      draw();
-    } catch (error) {
-      setChildren(pinsSlot, errorState(error, () => load(true)));
-      setChildren(depSlot);
-    }
-  }
-
-  async function changed(message) {
-    toast(message);
-    invalidate("/api/models", "/api/config");
-    await load(true);
-  }
-
-  function draw() {
-    const pins = data.pins ?? {};
-    setChildren(pinsSlot, el("div", { class: "pin-columns" }, ["openai", "claude"].map((route) => {
-      const list = Array.isArray(pins[route]) ? pins[route] : [];
-      return el("div", { class: "pin-column" },
-        el("h3", { class: "section-title" }, routeBadge(route), ` ${ROUTE_LABEL[route]} route`),
-        list.length ? el("table", { class: "table table-dense" },
-          el("caption", { class: "sr-only" }, `Aliases pinned to the ${ROUTE_LABEL[route]} route`),
-          el("thead", {}, el("tr", {}, el("th", { scope: "col" }, "Alias"), el("th", { scope: "col" }, "Deployment"), el("th", { scope: "col" }, el("span", { class: "sr-only" }, "Actions")))),
-          el("tbody", {}, list.map((p) => {
-            const unpin = el("button", { type: "button", class: "btn btn-danger-ghost btn-sm", "aria-label": `Unpin ${p.alias}` }, "Unpin");
-            unpin.addEventListener("click", busy(unpin, async () => {
-              const ok = await confirmDialog({
-                title: `Unpin ${p.alias}?`, confirmLabel: "Unpin alias",
-                message: `Short-lived keys that grant ${p.alias} are refused for it until an alias of that name is pinned again.`,
-              });
-              if (!ok) return;
-              await post("/api/models/unpin", { alias: p.alias, route });
-              await changed(`Unpinned ${p.alias} from the ${ROUTE_LABEL[route]} route.`);
-            }));
-            return el("tr", {}, el("th", { scope: "row", class: "mono" }, p.alias), el("td", { class: "mono" }, p.deployment), el("td", { class: "actions" }, unpin));
-          }))) : el("p", { class: "muted" }, "Nothing is pinned to this route."));
-    })));
-    drawDeployments();
-  }
-
-  function drawDeployments() {
-    const all = Array.isArray(data.deployments) ? data.deployments : [];
-    const list = all.filter((d) => matchesQuery({ name: d.deployment, label: d.model, models: (d.pinnedAs ?? []).map((p) => p.alias) }, search.value));
-    if (!all.length) return setChildren(depSlot, emptyState("No deployments found.", "Deploy a model in the gateway's Foundry account, then refresh."));
-    if (!list.length) return setChildren(depSlot, emptyState("No deployments match.", "Try another search."));
-    setChildren(depSlot, el("div", { class: "table-wrap" }, el("table", { class: "table" },
-      el("caption", { class: "sr-only" }, "Foundry deployments"),
-      el("thead", {}, el("tr", {}, ["Deployment", "Model", "Format and route", "State", "Pinned as", "Pin an alias"].map((h) => el("th", { scope: "col" }, h)))),
-      el("tbody", {}, list.map(deploymentRow)))));
-  }
-
-  function deploymentRow(d) {
-    const allowed = d.canPin?.allowed === true;
-    const reasonId = uid("why");
-    const alias = el("input", { type: "text", class: "input input-narrow mono", value: d.suggestedAlias ?? "", disabled: !allowed, spellcheck: "false", autocomplete: "off", "aria-label": `Alias for ${d.deployment}` });
-    const pin = el("button", { type: "submit", class: "btn btn-secondary btn-sm", disabled: !allowed, "aria-describedby": allowed ? undefined : reasonId }, "Pin");
-    const error = el("p", { class: "field-error", hidden: true, id: uid("pin-error") });
-    alias.setAttribute("aria-describedby", allowed ? error.id : reasonId);
-    const form = el("form", { class: "pin-form", novalidate: true }, el("div", { class: "row row-tight" }, alias, pin), error,
-      allowed ? null : el("p", { class: "field-hint", id: reasonId }, d.canPin?.reason || "This deployment cannot be pinned."));
-    form.addEventListener("submit", busy(pin, async () => {
-      const value = alias.value.trim().toLowerCase();
-      const taken = (data.pins?.[d.route] ?? []).find((p) => p.alias === value);
-      const message = checkAlias(value, d.route) ?? (taken ? `${value} is already pinned to ${taken.deployment}. Unpin it first.` : null);
-      error.textContent = message ?? "";
-      error.hidden = !message;
-      if (message) {
-        alias.setAttribute("aria-invalid", "true");
-        alias.focus();
-        return;
-      }
-      alias.removeAttribute("aria-invalid");
-      await post("/api/models/pin", { alias: value, deployment: d.deployment, route: d.route });
-      await changed(`Pinned ${value} to ${d.deployment} on the ${ROUTE_LABEL[d.route]} route.`);
-    }));
-    const pinned = Array.isArray(d.pinnedAs) ? d.pinnedAs : [];
-    return el("tr", {},
-      el("th", { scope: "row", class: "mono" }, d.deployment),
-      el("td", {}, d.model ?? "—", d.version ? el("span", { class: "cell-sub" }, `version ${d.version}`) : null),
-      el("td", {}, el("span", {}, WIRE_LABEL[d.wire] ?? d.wire ?? "—"), el("span", { class: "cell-sub" }, d.route ? routeBadge(d.route) : badge("no route", "grey"))),
-      el("td", {}, d.ready ? badge("ready", "ok") : badge(String(d.state ?? "not ready").toLowerCase(), /fail/i.test(d.state ?? "") ? "bad" : "warn")),
-      el("td", {}, pinned.length ? el("span", { class: "chips" }, pinned.map((p) => el("span", { class: "chip mono", title: `${ROUTE_LABEL[p.route] ?? p.route} route` }, p.alias))) : el("span", { class: "muted" }, "—")),
-      el("td", { class: "pin-cell" }, form));
-  }
-
-  search.addEventListener("input", () => { if (data) drawDeployments(); });
-  refresh.addEventListener("click", busy(refresh, async () => { invalidate("/api/config"); await load(true); }));
-  load();
 }
 
 // ── Export ──────────────────────────────────────────────────────────────────

@@ -79,7 +79,8 @@ export const fetchSecret = (name) => get(keyPath(name));
 // ── Short-lived read cache ─────────────────────────────────────────────────
 
 const cache = new Map();
-const CACHEABLE = [/^\/api\/(config|models|bundle-key)$/, /^\/api\/keys\?/, /^\/api\/usage(\?|\/[A-Za-z0-9-]+\?)/];
+// Foundry reads may name one account (?foundryId=<ARM id>): each full query is its own entry.
+const CACHEABLE = [/^\/api\/(?:config|models)(?:\?foundryId=[^&#]+)?$/, /^\/api\/(?:foundries|bundle-key)$/, /^\/api\/keys\?/, /^\/api\/usage(\?|\/[A-Za-z0-9-]+\?)/];
 
 export function isCacheable(path) {
   return CACHEABLE.some((re) => re.test(path));

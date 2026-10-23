@@ -492,11 +492,11 @@ export function deleteDate(k) {
   return Number.isFinite(at) ? new Date(at + ARCHIVE_DAYS * DAY).toISOString() : null;
 }
 
-/** Case-insensitive search over name, owner, label, subject, product and models; every term must match. */
+/** Case-insensitive search over name, owner, label, subject, product, Foundry and models; every term must match. */
 export function matchesQuery(k, query) {
   const terms = str(query).toLowerCase().split(/\s+/).filter(Boolean);
   if (!terms.length) return true;
-  const hay = [k?.name, k?.owner, k?.label, k?.subject, k?.product, ...(Array.isArray(k?.models) ? k.models : [])]
+  const hay = [k?.name, k?.owner, k?.label, k?.subject, k?.product, k?.foundryName, k?.foundry, ...(Array.isArray(k?.models) ? k.models : [])]
     .filter(Boolean).join(" ").toLowerCase();
   return terms.every((t) => hay.includes(t));
 }

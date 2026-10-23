@@ -1,16 +1,20 @@
 // Key Dashboard — issuing keys. Single and bulk, for both kinds, with an explicit "One model" /
-// "Several models" choice. Short-lived keys grant pinned gateway aliases and may start later;
-// product keys grant Foundry deployment names. Bulk rows come from pasted or uploaded CSV, are
-// checked here, then sent in sequential batches of 50 through secret.js, which keeps the server's
-// keys.csv and index.csv for download and hands this module rows without keys.
+// "Several models" choice. Both forms start with the Foundry (ADR-0017): only its models are
+// offered, choosing another drops the model choice, and every request names it. Short-lived keys
+// grant pinned gateway aliases and may start later; product keys grant Foundry deployment names.
+// Bulk rows come from pasted or uploaded CSV, are checked here, then sent in sequential batches of
+// 50 through secret.js, which keeps the server's keys.csv and index.csv for download and hands
+// this module rows without keys.
 
 import { invalidate } from "./api.js";
 import {
   addChildren, busy, confirmDialog, copyText, el, emailText, emptyState, errorState, field, icon, loadingState, reportError, routeBadge,
   segmented, setChildren, showErrors, toast, uid,
 } from "./dom.js";
+import { issueChoice } from "./foundry.js";
+import { foundryChooser } from "./foundry-picker.js";
 import {
-  activeWindow, BATCH_SIZE, chunk, CsvError, entriesFromCsv, fmtDateTime, fmtInt, fmtShortDateTime, idField, KINDS, LIMITS, modelOptions,
+  activeWindow, BATCH_SIZE, chunk, CsvError, entriesFromCsv, fmtDateTime, fmtInt, fmtShortDateTime, idField, KINDS, LIMITS,
   parseCsv, ROUTE_LABEL, toCsv, validateEntries, validateIssue, validateSettings,
 } from "./lib.js";
 import { createBulkCsv, issueKey, revealKey } from "./secret.js";
@@ -22,8 +26,8 @@ const HOUR_PRESETS = [[24, "24 h"], [48, "48 h"], [168, "7 days"], [720, "30 day
 const ISSUED_TO_HINT = "For attribution and usage; this person does not get dashboard access.";
 const runs = { jwt: null, product: null };
 
-/** The explicit model choice. `values()` returns the ticked models; nothing is ever pre-ticked. */
-function modelPicker(kind, options) {
+/** The explicit model choice for one Foundry. `values()` returns the ticked models; nothing is ever pre-ticked. */
+function modelPicker(kind, options, account) {
   let mode = "one";
   const list = el("div", { class: "picker-list" });
   const hint = el("p", { class: "field-hint" });
@@ -55,12 +59,14 @@ function modelPicker(kind, options) {
   }
   list.addEventListener("change", update);
   const wrap = el("fieldset", { class: "picker", "aria-describedby": error.id },
-    el("legend", { class: "field-label" }, kind === "jwt" ? "Models (gateway aliases)" : "Models (Foundry deployments)"),
+    el("legend", { class: "field-label" }, kind === "jwt" ? `Models in ${account.name} (gateway aliases)` : `Models in ${account.name} (Foundry deployments)`),
     options.length ? [modeSwitch, hint, list, summary] : emptyState(
-      kind === "jwt" ? "No models are pinned." : "No ready deployments were found.",
-      kind === "jwt" ? "Pin a Foundry deployment to an alias on the Models page first." : "Deploy a model in the gateway's Foundry account, then reload this page.",
-      kind === "jwt" ? el("a", { class: "btn btn-secondary btn-sm", href: "#/models" }, "Open Models") : null),
+      kind === "jwt" ? `No models are pinned in ${account.name}.` : `No ready deployments in ${account.name} can be granted.`,
+      kind === "jwt" ? "Short-lived keys grant aliases. Pin one of this Foundry's deployments on Foundry & models first."
+        : "Deploy a chat or messages model in this Foundry, then select Refresh from Azure on Foundry & models.",
+      el("a", { class: "btn btn-secondary btn-sm", href: "#/models" }, "Open Foundry & models")),
     kind === "product" && options.length ? el("p", { class: "field-hint" }, "Clients send the deployment name as the request's model field.") : null,
+    options.length ? el("p", { class: "field-hint" }, "A deployment missing here? Select Refresh from Azure on Foundry & models", kind === "jwt" ? " and pin it." : ".") : null,
     error);
   if (options.length) draw();
   return {
@@ -128,26 +134,62 @@ const readValues = (fields, picker) => ({
   mode: picker.mode, models: picker.values(),
 });
 
-async function loadOptions(ctx, kind, slot) {
-  setChildren(slot, loadingState("Loading models…", 3));
-  try {
-    return modelOptions(kind, await ctx.config());
-  } catch (error) {
-    setChildren(slot, errorState(error, () => ctx.rerender()));
+/**
+ * The Foundry choice and, below it, that Foundry's models. Choosing again drops the picker before
+ * the new Foundry's config loads; a config that answers an earlier choice, or another account, is
+ * refused (issueChoice), so a key never mixes accounts.
+ */
+function foundryModels(ctx, kind) {
+  const choice = issueChoice(kind);
+  const slot = el("div", { class: "span-all" });
+  const scope = { choice, slot, picker: null, gatewayUrl: null, chooser: null };
+  scope.chooser = foundryChooser(ctx, {
+    async onChoose(account) {
+      scope.gatewayUrl = null;
+      scope.picker = null;
+      const ticket = choice.choose(account);
+      if (!account) return setChildren(slot);
+      setChildren(slot, loadingState(`Loading ${account.name}'s models…`, 3));
+      let config;
+      try {
+        config = await ctx.config(account.id);
+      } catch (error) {
+        if (choice.isCurrent(ticket)) setChildren(slot, errorState(error, () => scope.chooser.reload()));
+        return;
+      }
+      const answer = choice.accept(ticket, config);
+      if (answer.stale) return;
+      if (answer.error) return setChildren(slot, errorState(new Error(answer.error), () => scope.chooser.reload()));
+      scope.picker = modelPicker(kind, answer.options, account);
+      scope.gatewayUrl = typeof config.gatewayUrl === "string" ? config.gatewayUrl : null;
+      scope.chooser.setTarget(scope.gatewayUrl);
+      setChildren(slot, scope.picker.wrap);
+    },
+  });
+  return scope;
+}
+
+/** The chosen Foundry and its loaded picker, or null after saying what is missing. */
+function ready(scope, what) {
+  const account = scope.choice.account;
+  if (!account) {
+    scope.chooser.setError(`Choose the Foundry ${what}.`);
+    scope.chooser.focus();
     return null;
   }
+  if (!scope.picker) {
+    toast(`Wait for ${account.name}'s models to load, then try again.`, "error");
+    return null;
+  }
+  return { account, picker: scope.picker };
 }
 
 const validity = (from, until) => (from ? `Active from ${fmtDateTime(from)} until ${fmtDateTime(until)}.` : until ? `Valid until ${fmtDateTime(until)}.` : "");
 
 export async function renderIssue(root, ctx, kind) {
   const meta = KINDS[kind];
-  const slot = el("div", {});
   const titleId = uid("issue");
-  addChildren(root, el("section", { class: "card", "aria-labelledby": titleId }, el("h2", { class: "card-title", id: titleId }, `Issue a ${meta.noun}`), slot));
-  const options = await loadOptions(ctx, kind, slot);
-  if (!options) return;
-  const picker = modelPicker(kind, options);
+  const scope = foundryModels(ctx, kind);
   const fields = {
     owner: field({ label: "Issued to", control: input({ type: "email", placeholder: "alex@contoso.com" }), hint: ISSUED_TO_HINT }),
     [idField(kind)]: kind === "jwt"
@@ -159,33 +201,39 @@ export async function renderIssue(root, ctx, kind) {
   const submit = el("button", { type: "submit", class: "btn btn-primary" }, kind === "jwt" ? "Issue key" : "Issue product key");
   const result = el("div", { "aria-live": "polite" });
   const form = el("form", { class: "form-grid", novalidate: true },
-    fields.owner.wrap, fields[idField(kind)].wrap, el("div", { class: "span-all" }, picker.wrap),
+    fields.owner.wrap, fields[idField(kind)].wrap, scope.slot,
     Object.entries(fields).filter(([k]) => k !== "owner" && k !== idField(kind)).map(([, f]) => f.wrap),
     preview?.line,
     el("div", { class: "form-actions span-all" }, submit, el("button", { type: "reset", class: "btn btn-ghost" }, "Clear")));
+  // The Foundry sits outside the form, so Clear (a form reset) never changes it behind the picker's back.
+  addChildren(root, el("section", { class: "card", "aria-labelledby": titleId },
+    el("h2", { class: "card-title", id: titleId }, `Issue a ${meta.noun}`), scope.chooser.wrap, form, result));
   if (preview) form.addEventListener("focusin", preview.update);
   form.addEventListener("reset", () => {
-    setTimeout(() => { picker.reset(); preview?.update(); });
+    setTimeout(() => { scope.picker?.reset(); preview?.update(); });
     for (const f of Object.values(fields)) f.setError(null);
-    picker.setError(null);
+    scope.picker?.setError(null);
   });
   form.addEventListener("submit", busy(submit, async () => {
+    const chosen = ready(scope, "this key is for");
+    if (!chosen) return;
+    const { account, picker } = chosen;
     const check = validateIssue(kind, readValues(fields, picker));
     if (!showErrors({ ...fields, models: picker }, check.errors)) return;
     const { owner, models } = check.body;
     const label = check.body.subject ?? check.body.name;
-    const { name, product, notBefore, expiresAt } = await issueKey(kind, check.body, { label, models, opener: submit });
+    const body = scope.choice.body(check.body);
+    const { name, product, notBefore, expiresAt } = await issueKey(kind, body, { label, models, opener: submit });
     invalidate(`/api/keys?kind=${kind}`);
     const reveal = el("button", { type: "button", class: "btn btn-secondary btn-sm" }, icon("key"), kind === "jwt" ? "Reveal again" : "Reveal key");
     reveal.addEventListener("click", busy(reveal, () => revealKey({ name, label, kind, models, opener: reveal })));
     setChildren(result, el("div", { class: "callout callout-ok" }, icon("check", "icon callout-icon"),
       el("div", {},
-        el("p", {}, el("strong", {}, `Issued ${name}`), ` for ${label}, issued to ${owner}. `,
+        el("p", {}, el("strong", {}, `Issued ${name}`), ` for ${label}, issued to ${owner}, on ${account.name}. `,
           kind === "jwt" ? validity(notBefore, expiresAt) : `${product ? `Product ${product}. ` : ""}Reveal it to copy the key.`),
         el("div", { class: "row" }, reveal, el("a", { class: "btn btn-ghost btn-sm", href: `#/${meta.route}` }, "Back to the list")))));
     form.reset();
   }));
-  setChildren(slot, form, result);
 }
 
 // ── Bulk ────────────────────────────────────────────────────────────────────
@@ -198,16 +246,15 @@ export async function renderBulk(root, ctx, kind) {
   const settingsSlot = el("div", {});
   const rowsSlot = el("div", {});
   const runSlot = el("div", {});
+  const scope = foundryModels(ctx, kind);
   addChildren(root,
-    el("section", { class: "card", "aria-labelledby": settingsId }, el("h2", { class: "card-title", id: settingsId }, "1. Settings for every key"), settingsSlot),
-    el("section", { class: "card", "aria-labelledby": rowsId }, el("h2", { class: "card-title", id: rowsId }, `2. Who each key is issued to, and its ${kind === "jwt" ? "subject" : "name"}`), rowsSlot),
+    el("section", { class: "card", "aria-labelledby": settingsId }, el("h2", { class: "card-title", id: settingsId }, "1. Settings for every key"), scope.chooser.wrap, settingsSlot),
+    el("section", { class: "card", "aria-labelledby": rowsId, "data-help": "bulk-rows" },
+      el("h2", { class: "card-title", id: rowsId }, `2. Who each key is issued to, and its ${kind === "jwt" ? "subject" : "name"}`), rowsSlot),
     runSlot);
-  const options = await loadOptions(ctx, kind, settingsSlot);
-  if (!options) return;
-  const picker = modelPicker(kind, options);
   const fields = settingsFields(kind);
   const preview = kind === "jwt" ? windowPreview(fields) : null;
-  const settingsGrid = el("div", { class: "form-grid" }, el("div", { class: "span-all" }, picker.wrap), Object.values(fields).map((f) => f.wrap), preview?.line);
+  const settingsGrid = el("div", { class: "form-grid" }, scope.slot, Object.values(fields).map((f) => f.wrap), preview?.line);
   if (preview) settingsGrid.addEventListener("focusin", preview.update);
   setChildren(settingsSlot, settingsGrid);
 
@@ -268,20 +315,23 @@ export async function renderBulk(root, ctx, kind) {
   }
 
   async function start(entries) {
+    const chosen = ready(scope, "these keys are for");
+    if (!chosen) return;
+    const { account, picker } = chosen;
     const settings = validateSettings(kind, readValues(fields, picker));
     if (!showErrors({ ...fields, models: picker }, settings.errors)) return;
-    const b = settings.body;
+    const b = scope.choice.body(settings.body);
     const batches = Math.ceil(entries.length / BATCH_SIZE);
     const ok = await confirmDialog({
       title: `Issue ${fmtInt(entries.length)} ${meta.noun}s?`, tone: "primary", confirmLabel: "Issue keys",
       message: `They are sent in ${fmtInt(batches)} ${batches === 1 ? "batch" : "batches"} of up to ${BATCH_SIZE}, one after another. Afterwards you download keys.csv, which holds every key.`,
-      points: [`Models: ${b.models.join(", ")}`, kind === "jwt"
+      points: [`Foundry: ${account.name}${scope.gatewayUrl ? ` (${scope.gatewayUrl})` : ""}`, `Models: ${b.models.join(", ")}`, kind === "jwt"
         ? `Budget ${fmtInt(b.budget)} tokens. ${b.startInHours ? `Starts ${b.startInHours} hours from now` : "Starts immediately"}, valid ${b.hours} hours.`
         : `${fmtInt(b.monthlyTokens)} tokens a month${b.rotateDays ? `, rotates every ${b.rotateDays} days` : ""}${b.expiresDays ? `, expires after ${b.expiresDays} days` : ""}`],
     });
     if (!ok) return;
     const csv = createBulkCsv(kind);
-    const run = { kind, csv, total: entries.length, done: 0, issued: [], failed: [], unsent: [], error: null, running: true, stop: false, onChange: null };
+    const run = { kind, csv, foundry: account.name, total: entries.length, done: 0, issued: [], failed: [], unsent: [], error: null, running: true, stop: false, onChange: null };
     runs[kind] = run;
     // The rows are spent: clear them so the same rows cannot be issued twice by accident.
     checked = null;
@@ -406,6 +456,7 @@ function runCard(ctx, run, close) {
   }));
   return el("section", { class: "card", "aria-labelledby": titleId },
     el("h2", { class: "card-title", id: titleId }, "3. Progress and results"),
+    run.foundry ? el("p", { class: "field-hint" }, `Foundry: ${run.foundry}. Every key in this run calls only its models.`) : null,
     el("p", { class: "run-status", role: "status" }, status),
     progress,
     run.error ? el("div", { class: "callout callout-bad" }, icon("alert", "icon callout-icon"),

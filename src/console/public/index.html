@@ -12,11 +12,15 @@
   <link rel="modulepreload" href="/dom.js">
   <link rel="modulepreload" href="/charts.js">
   <link rel="modulepreload" href="/secret.js">
+  <link rel="modulepreload" href="/foundry.js">
+  <link rel="modulepreload" href="/foundry-picker.js">
+  <link rel="modulepreload" href="/help.js">
   <link rel="modulepreload" href="/views-drawer.js">
   <link rel="modulepreload" href="/views-issue.js">
   <link rel="modulepreload" href="/views-keys.js">
   <link rel="modulepreload" href="/views-overview.js">
   <link rel="modulepreload" href="/views-admin.js">
+  <link rel="modulepreload" href="/views-foundry.js">
   <script type="module" src="/app.js"></script>
 </head>
 <body>
@@ -36,6 +40,7 @@
         <span class="brand-text"><span class="brand-name">Foundry Gateway</span><span class="brand-product">Key Dashboard</span></span>
       </a>
       <div class="topbar-tools">
+        <div id="help-slot"></div>
         <div id="theme-switch"></div>
         <p class="who"><span class="sr-only">Signed in as </span><span id="who-name" class="who-name"></span> <span id="who-role" class="role" hidden></span></p>
         <a class="signout" href="/.auth/logout">Sign out</a>

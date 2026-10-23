@@ -12,12 +12,19 @@
  *   status     active green, scheduled indigo-blue, suspended amber, revoked red, expired grey (filled,
  *              with a dot);
  *              archived is an outlined neutral. Badge text is ≥ 6.4:1 on its fill.
+ *   guide      help ring violet #7c3aed / #c4a5ff (5.7 / 8.4:1 on the card, never the blue of keyboard
+ *              focus); its step label is white / near-black on the ring (5.7 / 9.1:1). Checked by
+ *              tests/console-foundry-ui.test.mjs.
  * Theme: `color-scheme` plus light-dark(), so the system theme applies before any script runs;
  * [data-theme] (set from the header switch) forces one. Charts colour with currentColor and these
  * tokens, so they follow the theme without redrawing.
  * Layout: brand bar, section nav, then cards in a 1440px column. Tables scroll inside their card.
+ * The setup guide docks beside the content from 900px (a grid on body.help-open) and is a bottom
+ * sheet below that. A highlighted section gets an outline, a step label from data-help-label and
+ * two soft pulses; with reduced motion, no pulse and no smooth scrolling.
  * Components: buttons, segmented radios, fields, model picker, badges, chips, KPI cards, SVG
- * charts, drawer, dialogs, secret panel, toasts, skeletons, empty and error states.
+ * charts, drawer, dialogs, secret panel, toasts, skeletons, empty and error states, Foundry
+ * account and issue-form choice cards, account subsections, the guide panel and highlights.
  */
 
 :root {
@@ -79,6 +86,10 @@
   --topbar-admin: light-dark(#7a2f6b, #5a2d6e);
   --topbar-line: light-dark(#3a5a7d, #30363d);
   --brand-mark: light-dark(#0f6cbd, #1f6feb);
+  --help-ring: light-dark(#7c3aed, #c4a5ff);
+  --on-help: light-dark(#ffffff, #0b1220);
+  --help-glow: light-dark(rgb(124 58 237 / 0.16), rgb(196 165 255 / 0.2));
+  --help-width: clamp(300px, 30vw, 380px);
   --backdrop: light-dark(rgb(15 20 25 / 0.45), rgb(0 0 0 / 0.6));
   --shadow-sm: 0 1px 2px light-dark(rgb(16 24 40 / 0.06), rgb(0 0 0 / 0.35));
   --shadow-lg: 0 12px 32px light-dark(rgb(16 24 40 / 0.18), rgb(0 0 0 / 0.55));
@@ -457,6 +468,70 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--primary); }
 .action-row > div { display: grid; gap: 2px; max-width: 70ch; }
 .action-danger .section-title { color: var(--danger); }
 
+/* ── Foundry & models, the issue forms' Foundry choice ────────────────── */
+
+.choice-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr)); gap: 8px; min-width: 0; margin: 0; padding: 0; border: 0; }
+.choice-card { display: flex; align-items: flex-start; gap: 10px; min-width: 0; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); cursor: pointer; }
+.choice-card:hover { background: var(--row-hover); }
+.choice-card:has(:checked) { border-color: var(--primary); background: var(--selected-bg); box-shadow: inset 0 0 0 1px var(--primary); }
+.choice-card.is-error { border-style: dashed; }
+.choice-input { flex: none; width: 16px; height: 16px; margin: 3px 0 0; }
+.choice-text { display: grid; flex: 1; gap: 2px; min-width: 0; }
+.choice-name { font-weight: 650; overflow-wrap: anywhere; }
+.choice-meta { color: var(--ink-muted); font-size: 12.5px; overflow-wrap: anywhere; }
+.choice-error { color: var(--danger); }
+.choice-badges { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.subsection { display: grid; gap: 8px; min-width: 0; padding: 12px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2); }
+.subsection-body { display: grid; gap: 8px; min-width: 0; }
+.subsection-body p { margin: 0; }
+.subsection .snippet-code { border: 1px solid var(--border); background: var(--surface); }
+.subsection select.input { max-width: 100%; }
+.id-text { font-size: 12px; overflow-wrap: anywhere; word-break: break-all; }
+.test-box { display: grid; gap: 8px; padding-top: 10px; border-top: 1px solid var(--border); }
+.network-setup { padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+.network-setup.is-suggested { border-color: var(--warn); box-shadow: inset 4px 0 0 var(--warn); }
+.network-setup > div { padding-top: 4px; }
+.network-setup p { margin: 0; }
+.test-title { margin: 0; font-size: 13px; font-weight: 650; }
+.callout-detail { overflow-wrap: anywhere; }
+.cell-why { max-width: 42ch; white-space: normal; }
+.row-muted > th, .row-muted > td { color: var(--ink-muted); }
+.foundry-choice { display: grid; gap: 10px; min-width: 0; margin: 0; padding: 12px 14px 14px; border: 1px solid var(--border); border-radius: 10px; }
+.foundry-choice > legend { padding: 0 6px; }
+.foundry-choice.is-invalid { border-color: var(--danger); }
+.foundry-target { margin: 0; padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); font-weight: 600; overflow-wrap: anywhere; }
+
+/* ── Setup guide and highlights ────────────────────────────────────────── */
+
+.help-toggle { display: inline-flex; align-items: center; gap: 6px; min-height: 30px; padding: 4px 10px; border: 1px solid var(--topbar-line); border-radius: 8px; background: transparent; color: var(--topbar-fg); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+.help-toggle:hover, .help-toggle[aria-expanded="true"] { background: var(--topbar-chip); }
+.help-panel { display: grid; align-content: start; gap: 12px; padding: 16px 18px 24px; border-left: 1px solid var(--border); background: var(--surface); color: var(--ink); box-shadow: var(--shadow-lg); overflow-y: auto; overscroll-behavior: contain; }
+.help-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.help-title { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 17px; font-weight: 650; }
+.help-title .icon { color: var(--help-ring); }
+.help-intro { margin: 0; color: var(--ink-muted); font-size: 13px; }
+.help-steps { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.help-step { border: 1px solid var(--border); border-radius: 10px; }
+.help-step.is-current { border-color: var(--help-ring); box-shadow: inset 0 0 0 1px var(--help-ring); }
+.help-step-title { margin: 0; font-size: 14px; }
+.help-step-head { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 10px; border: 0; border-radius: 9px; background: transparent; color: var(--ink); font: inherit; font-weight: 600; text-align: left; cursor: pointer; }
+.help-step-head:hover { background: var(--row-hover); }
+.help-step-num { display: inline-grid; flex: none; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--surface-3); color: var(--ink); font-size: 12px; font-weight: 700; }
+.is-current .help-step-num { background: var(--help-ring); color: var(--on-help); }
+.help-step-body { display: grid; gap: 10px; padding: 0 12px 12px 42px; }
+.help-step-text { display: grid; gap: 6px; }
+.help-step-text p { margin: 0; font-size: 13px; }
+.help-step-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.help-where { color: var(--ink-muted); font-size: 12.5px; }
+.help-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.help-foot .btn[aria-disabled="true"] { opacity: 0.5; cursor: not-allowed; }
+.help-position { margin: 0; color: var(--ink-muted); font-size: 13px; }
+.help-notes summary { font-size: 13px; }
+.help-note-list { display: grid; gap: 6px; margin: 0; padding-left: 18px; color: var(--ink-muted); font-size: 13px; }
+.help-target { position: relative; outline: 3px solid var(--help-ring); outline-offset: 4px; box-shadow: 0 0 0 9px var(--help-glow); scroll-margin: 96px 0; animation: help-pulse 1.4s ease-out 2; }
+.help-target::before { content: attr(data-help-label); position: absolute; top: -13px; left: 14px; z-index: 3; max-width: calc(100% - 28px); padding: 0 10px; border-radius: 999px; background: var(--help-ring); color: var(--on-help); font-size: 12px; font-weight: 650; line-height: 20px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
+@keyframes help-pulse { from { box-shadow: 0 0 0 0 var(--help-glow); } 60% { box-shadow: 0 0 0 16px var(--help-glow); } }
+
 /* ── States, toasts ────────────────────────────────────────────────────── */
 
 .state { padding: 16px; }
@@ -489,6 +564,18 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--primary); }
 @media (max-width: 1100px) {
   .usage-grid { grid-template-columns: minmax(0, 1fr); }
 }
+@media (min-width: 900px) {
+  .help-open { display: grid; grid-template-columns: minmax(0, 1fr) var(--help-width); grid-template-rows: auto auto 1fr; grid-template-areas: "banner banner" "top top" "main help"; }
+  .help-open > .banner { grid-area: banner; }
+  .help-open > .topbar { grid-area: top; }
+  .help-open > main { grid-area: main; width: 100%; min-width: 0; }
+  .help-open > .help-panel { grid-area: help; position: sticky; top: 0; align-self: start; max-height: 100vh; }
+  .help-open > .toasts { right: calc(var(--help-width) + 16px); }
+}
+@media (max-width: 899.98px) {
+  .help-panel { position: fixed; inset: auto 0 0 0; z-index: 50; max-height: 55vh; border-top: 1px solid var(--border); border-left: 0; border-radius: 14px 14px 0 0; }
+  .help-open > main { padding-bottom: 58vh; }
+}
 @media (max-width: 900px) {
   main { padding: 16px 16px 48px; }
   .topbar-inner { flex-wrap: wrap; padding: 8px 16px; }
@@ -500,9 +587,13 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--primary); }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+  .help-target, .help-target::before { animation: none; }
 }
 @media (forced-colors: active) {
   .badge, .chip, .kpi, .card, .toast { border: 1px solid CanvasText; }
   .seg-input:checked + .seg-face { outline: 2px solid Highlight; }
   .chart-line, .donut-seg, .barlist-fill { forced-color-adjust: none; }
+  .help-target { outline-color: Highlight; }
+  .help-target::before { forced-color-adjust: none; background: Highlight; color: HighlightText; }
+  .choice-card:has(:checked) { outline: 2px solid Highlight; }
 }

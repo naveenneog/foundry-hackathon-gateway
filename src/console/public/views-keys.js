@@ -12,10 +12,14 @@ import {
   STATUSES, withUsage,
 } from "./lib.js";
 import { revealKey } from "./secret.js";
+import { keyFoundry } from "./foundry.js";
 import { openKeyDrawer } from "./views-drawer.js";
 import { renderBulk, renderIssue } from "./views-issue.js";
 
 const PAGE = 100;
+
+/** The key's models, and the Foundry they belong to (the default for keys issued before ADR-0017). */
+const modelsCell = (k) => el("td", {}, modelChips(k.models), el("span", { class: "cell-sub" }, "Foundry: ", keyFoundry(k).name));
 
 // Kept for the page's lifetime, so coming back to a view keeps its filters and sort.
 const prefs = {
@@ -54,7 +58,7 @@ export function renderKeysView(root, ctx, kind, sub) {
   const listSlot = el("div", {});
   const countText = el("p", { class: "count", "aria-live": "polite" });
   const selectionBar = el("div", { class: "selection-bar", hidden: true });
-  const search = el("input", { type: "search", class: "input", placeholder: "Search name, issued to, label or model", value: p.query, "aria-label": `Search ${meta.title.toLowerCase()}` });
+  const search = el("input", { type: "search", class: "input", placeholder: "Search name, issued to, label, Foundry or model", value: p.query, "aria-label": `Search ${meta.title.toLowerCase()}` });
   const only = el("select", { class: "input", "aria-label": "Status" });
   const listCard = el("section", { class: "card", "aria-labelledby": listId },
     el("div", { class: "card-head" }, el("h2", { class: "card-title", id: listId }, "Keys"),
@@ -260,7 +264,7 @@ export function renderKeysView(root, ctx, kind, sub) {
         k.rotatedAt ? el("span", { class: "cell-sub nowrap", title: fmtDateTime(k.rotatedAt) }, `rotated ${fmtRelative(k.rotatedAt)}`) : null,
         k.expires ? el("span", { class: "cell-sub nowrap" }, `expires ${fmtDate(k.expires)}`) : null);
     return el("tr", {}, check, keyCell(k), ownerCell(k),
-      el("td", {}, modelChips(k.models)),
+      modelsCell(k),
       el("td", { class: "num", title: kind === "jwt" ? `${fmtInt(k.budget)} tokens over the key's life` : `${fmtInt(k.monthlyTokens)} tokens a month` },
         kind === "jwt" ? fmtCompact(k.budget) : k.monthlyTokens ? `${fmtCompact(k.monthlyTokens)}/mo` : "—"),
       usageCell(k), timing, el("td", {}, statusBadge(k.status)),
@@ -283,7 +287,7 @@ export function renderKeysView(root, ctx, kind, sub) {
       toast(`Deleted ${keyTitle(k)}.`);
       await changed();
     }));
-    return el("tr", {}, keyCell(k), ownerCell(k), el("td", {}, modelChips(k.models)), el("td", {}, statusBadge(k.status)),
+    return el("tr", {}, keyCell(k), ownerCell(k), modelsCell(k), el("td", {}, statusBadge(k.status)),
       el("td", {}, k.archivedAt ? el("span", { title: fmtDateTime(k.archivedAt) }, fmtDate(k.archivedAt)) : "—"),
       el("td", {}, when ? el("span", { title: fmtDateTime(when) }, fmtDate(when), el("span", { class: "cell-sub" }, fmtRelative(when))) : "—"),
       el("td", { class: "actions" }, el("div", { class: "row row-tight" }, details, del)));

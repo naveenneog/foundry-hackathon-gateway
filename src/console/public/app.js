@@ -1,14 +1,17 @@
-// Key Dashboard — entry point: sign-in check (admins only, ADR-0016), theme, navigation, routing.
+// Key Dashboard — entry point: sign-in check (admins only, ADR-0016), theme, navigation, routing,
+// and the setup guide (help.js), which hears about every route.
 //
 // CSP: script-src 'self' with no inline script, and every view builds its DOM with createElement
 // and textContent (dom.js). Nothing polls: data loads when a view opens, when the period changes
 // or on Refresh. The theme preference is the only thing kept in the browser.
 
-import { ApiError, cachedGet, get } from "./api.js";
-import { confirmDialog, el, errorState, icon, reportError, segmented, setChildren } from "./dom.js";
+import { ApiError, apiPath, cachedGet, get } from "./api.js";
+import { addChildren, confirmDialog, el, errorState, icon, reportError, segmented, setChildren } from "./dom.js";
+import { createGuide } from "./help.js";
 import { keyTitle } from "./lib.js";
 import { closeSecrets, pendingSecrets } from "./secret.js";
-import { renderExport, renderModels, renderSigning } from "./views-admin.js";
+import { renderExport, renderSigning } from "./views-admin.js";
+import { renderFoundry } from "./views-foundry.js";
 import { renderKeysView } from "./views-keys.js";
 import { renderOverview } from "./views-overview.js";
 
@@ -16,7 +19,7 @@ const ROUTES = [
   { id: "overview", label: "Overview", render: (root, ctx) => renderOverview(root, ctx) },
   { id: "short-lived", label: "Short-lived keys", subs: ["issue", "bulk"], render: (root, ctx, sub) => renderKeysView(root, ctx, "jwt", sub) },
   { id: "product", label: "Product keys", subs: ["issue", "bulk"], render: (root, ctx, sub) => renderKeysView(root, ctx, "product", sub) },
-  { id: "models", label: "Models", render: (root) => renderModels(root) },
+  { id: "models", label: "Foundry & models", render: (root, ctx) => renderFoundry(root, ctx) },
   { id: "export", label: "Export", render: (root, ctx) => renderExport(root, ctx) },
   { id: "signing", label: "Signing", render: (root) => renderSigning(root) },
 ];
@@ -73,7 +76,12 @@ function createContext(me) {
       ctx.selection.clear();
       showCount();
     },
-    config: () => cachedGet("/api/config", { ttl: Infinity }),
+    /** One Foundry's config (its models and base URL); without an id, the default Foundry's. */
+    config: (foundryId) => cachedGet(apiPath("/api/config", { foundryId }), { ttl: Infinity }),
+    /** Every Foundry account in the subscription; `fresh` re-reads Azure. */
+    foundries: ({ fresh = false } = {}) => cachedGet("/api/foundries", { ttl: Infinity, fresh }),
+    /** Set in start(): opens the setup guide at a step and highlights it on this page. */
+    help: null,
     go(hash) {
       location.hash = hash;
     },
@@ -105,6 +113,8 @@ function parseHash() {
 /** The route on screen, so a refused navigation can put the address back. */
 let shown = "";
 let asking = false;
+/** The setup guide, created once the admin is signed in. */
+let guide = null;
 
 function route(ctx, moveFocus) {
   closeSecrets();
@@ -128,6 +138,8 @@ function route(ctx, moveFocus) {
   setChildren(document.getElementById("main"), view);
   r.render(view, ctx, sub);
   if (moveFocus) view.querySelector(".view-title")?.focus();
+  // Last, so a highlight the guide was waiting for can take focus from the title.
+  guide?.routed(view, sub ? `${r.id}/${sub}` : r.id);
 }
 
 /**
@@ -192,6 +204,10 @@ async function start() {
 
   if (me?.role !== "admin") return adminsOnly();
   const ctx = createContext(me);
+  guide = createGuide(ctx);
+  ctx.help = (step, opener) => guide.open(step, opener, { highlight: true });
+  setChildren(document.getElementById("help-slot"), guide.button);
+  addChildren(document.body, guide.panel);
   document.getElementById("who-name").textContent = me.name ?? "";
   const role = document.getElementById("who-role");
   role.textContent = "admin";

@@ -42,9 +42,13 @@ test("account lookup validates subscription and resource type before making any 
 });
 
 test("discovery rejects an untrusted pagination origin and does not treat denied account listing as empty", async () => {
-  const f = foundryDirectory({ accountId: ID, getToken: token, fetchImpl: async () =>
-    Response.json({ value: [], nextLink: "https://evil.test/steal" }) });
+  const contacted = [];
+  const f = foundryDirectory({ accountId: ID, getToken: token, fetchImpl: async (url) => {
+    contacted.push(url);
+    return Response.json({ value: [], nextLink: "https://evil.test/steal" });
+  } });
   await assert.rejects(f.listAccounts(), /pagination/);
+  assert.ok(contacted.every((url) => new URL(url).origin === "https://management.azure.com"), "never send a token-bearing request to the rejected origin");
   const denied = foundryDirectory({ accountId: ID, getToken: token, fetchImpl: async () =>
     Response.json({ error: { code: "AuthorizationFailed" } }, { status: 403 }) });
   await assert.rejects(denied.listAccounts(), /AuthorizationFailed/);

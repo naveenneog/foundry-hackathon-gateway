@@ -26,7 +26,8 @@ export function accountEndpoints(account) {
   return {
     openai: `https://${domain}.openai.azure.com/openai/v1`,
     claude: `https://${domain}.services.ai.azure.com/anthropic`,
-    audience: account.kind === "OpenAI" ? "https://cognitiveservices.azure.com" : "https://ai.azure.com",
+    // Current /openai/v1 SDK samples use ai.azure.com for Azure OpenAI as well as Foundry.
+    audience: "https://ai.azure.com",
   };
 }
 

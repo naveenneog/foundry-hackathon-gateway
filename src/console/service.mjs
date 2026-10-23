@@ -41,7 +41,6 @@ const kindOf = (s) => s?.tags?.kind === "jwt" ? "jwt"
 export function createService({ vault, arm, foundry = null, packTemplate: initialTemplate = null, connectionTemplates = null,
   inferenceFetch = fetch, clock = Date.now, log = () => {}, gatewayUrl }) {
   let packTemplate = initialTemplate;
-  const gwBase = String(gatewayUrl ?? "").replace(/\/+$/, "");
   const audit = (actor, action, fields = {}) =>
     log({ at: new Date(clock()).toISOString(), actor: typeof actor === "string" ? actor : actor?.name, action, ...fields });
 
@@ -76,16 +75,21 @@ export function createService({ vault, arm, foundry = null, packTemplate: initia
   const connections = foundriesApi({ vault, arm, foundry, gatewayUrl, connectionTemplates, inferenceFetch, clock, requireAdmin, audit, guard, ServiceError });
   const models = modelsApi({ arm, connections, requireAdmin, audit, guard });
 
-  async function config() {
-    const [m, c, products, deployments] = await Promise.all([arm.getNamedValue(NV.models), arm.getNamedValue(NV.claude), arm.listProducts(),
-      models.grantableDeployments()]);
-    const claude = parseMap(c?.value);
-    return {
-      gatewayUrl,
-      models: { openai: parseMap(m?.value), claude },
-      products: products.map((p) => p.id).filter((id) => id.startsWith("poc-")),
+  async function configuration(foundryId) {
+    const connection = await connections.connectionFor(foundryId);
+    const [m, c, products, deployments] = await Promise.all([arm.getNamedValue(connection.mapNames.openai), arm.getNamedValue(connection.mapNames.claude), arm.listProducts(),
+      models.grantableDeployments(foundryId)]);
+    return { connection, cfg: {
+      gatewayUrl: connection.gatewayUrl, foundryId: connection.foundryId, foundryName: connection.name,
+      models: { openai: parseMap(m?.value), claude: parseMap(c?.value) },
+      products: connection.id === "default" ? products.map((p) => p.id).filter((id) => id.startsWith("poc-")) : [],
       deployments,
-    };
+    } };
+  }
+
+  async function config({ foundryId } = {}) {
+    const { cfg } = await configuration(foundryId);
+    return { ...cfg, foundries: (await connections.discoverFoundries()).accounts };
   }
 
   async function signingStatus(actor) {
@@ -133,26 +137,28 @@ export function createService({ vault, arm, foundry = null, packTemplate: initia
     return secret;
   }
 
-  async function mintAndStore(actor, req, secret) {
+  async function mintAndStore(actor, req, secret, connection) {
     const notBefore = clock() + Math.round(req.startInHours * 3_600_000);
     const expiresAt = notBefore + Math.round(req.hours * 3_600_000);
-    const { token, jti } = mintKey({ secret: secret.value, subject: req.subject, models: req.models, budget: req.budget, notBefore, expiresAt, label: req.label });
+    const { token, jti } = mintKey({ secret: secret.value, subject: req.subject, models: req.models, budget: req.budget,
+      notBefore, expiresAt, label: req.label, audience: connection.audience });
     const name = `jwt-${jti.replace("_", "-")}`;
     await vault.setSecret(name, token, {
       contentType: "application/jwt",
       tags: { kind: "jwt", jti, owner: req.owner, subject: req.subject, models: req.models.join(","), budget: String(req.budget),
-        notBefore: new Date(notBefore).toISOString(), expires: new Date(expiresAt).toISOString(), revoked: "false", issuedBy: actor.name, ...(req.label ? { label: req.label } : {}) },
+        notBefore: new Date(notBefore).toISOString(), expires: new Date(expiresAt).toISOString(), revoked: "false", issuedBy: actor.name,
+        foundry: connection.id, foundryName: connection.name, ...(req.label ? { label: req.label } : {}) },
     });
     return { name, jti, token, notBefore, expiresAt };
   }
 
   async function issueJwt(actor, body) {
     requireAdmin(actor);
-    const cfg = await config();
+    const { cfg, connection } = await configuration(body?.foundryId);
     const req = await guard(async () => validateJwtRequest(body, { allowedModels: [...cfg.models.openai, ...cfg.models.claude] }));
-    const { name, jti, token, notBefore, expiresAt } = await mintAndStore(actor, req, await signingSecret());
+    const { name, jti, token, notBefore, expiresAt } = await mintAndStore(actor, req, await signingSecret(), connection);
     audit(actor, "issue-jwt", { jti, owner: req.owner, subject: req.subject, models: req.models.join(","), budget: req.budget, startInHours: req.startInHours });
-    return { name, jti, token, notBefore, expiresAt, handout: jwtHandout({ gatewayUrl, token, models: req.models, claudeModels: cfg.models.claude }) };
+    return { name, jti, token, notBefore, expiresAt, handout: jwtHandout({ gatewayUrl: cfg.gatewayUrl, token, models: req.models, claudeModels: cfg.models.claude }) };
   }
 
   const entriesOf = (body) => {
@@ -168,7 +174,7 @@ export function createService({ vault, arm, foundry = null, packTemplate: initia
   async function issueJwtBulk(actor, body) {
     requireAdmin(actor);
     const entries = entriesOf(body);
-    const cfg = await config();
+    const { cfg, connection } = await configuration(body?.foundryId);
     const allowedModels = [...cfg.models.openai, ...cfg.models.claude];
     const common = { models: body.models, budget: body.budget, hours: body.hours, startInHours: body.startInHours, label: body.label };
     await guard(async () => validateJwtRequest({ ...common, owner: "check@example.com", subject: "check" }, { allowedModels }));
@@ -178,11 +184,11 @@ export function createService({ vault, arm, foundry = null, packTemplate: initia
     for (const [index, row] of entries.entries()) {
       try {
         const req = validateJwtRequest({ ...common, owner: row?.owner, subject: row?.subject }, { allowedModels });
-        const k = await mintAndStore(actor, req, secret);
+        const k = await mintAndStore(actor, req, secret, connection);
         const claude = req.models.filter((m) => cfg.models.claude.includes(m));
         issued.push({ name: k.name, owner: req.owner, subject: req.subject, jti: k.jti, token: k.token, models: req.models, budget: req.budget,
           notBefore: k.notBefore, expiresAt: k.expiresAt,
-          openaiBaseUrl: req.models.length > claude.length ? `${gwBase}/v1` : "", anthropicBaseUrl: claude.length ? `${gwBase}/claude` : "", anthropicModel: claude[0] ?? "" });
+          openaiBaseUrl: req.models.length > claude.length ? `${cfg.gatewayUrl}/v1` : "", anthropicBaseUrl: claude.length ? `${cfg.gatewayUrl}/claude` : "", anthropicModel: claude[0] ?? "" });
       } catch (e) {
         if (!(e instanceof InputError)) throw e;
         failed.push({ index, error: e.message });
@@ -196,13 +202,16 @@ export function createService({ vault, arm, foundry = null, packTemplate: initia
     requireAdmin(actor);
     const s = await visibleKey(actor, name);
     audit(actor, "reveal", { name });
-    const kind = kindOf(s);
-    if (kind === "jwt") {
-      const cfg = await config();
-      const models = String(s.tags.models ?? "").split(",").filter(Boolean);
-      return { name, kind, value: s.value, tags: s.tags, handout: jwtHandout({ gatewayUrl, token: s.value, models, claudeModels: cfg.models.claude }) };
-    }
-    return { name, kind, value: s.value, tags: s.tags, handout: productHandout({ gatewayUrl, key: s.value }) };
+    return { name, kind: kindOf(s), value: s.value, tags: s.tags, handout: await keyHandout(s) };
+  }
+
+  async function keyHandout(s) {
+    const connection = await connections.connectionForKey(s.tags);
+    const { cfg } = await configuration(connection.foundryId);
+    const grant = String(s.tags.models ?? "").split(",").filter(Boolean);
+    return kindOf(s) === "jwt" ? jwtHandout({ gatewayUrl: cfg.gatewayUrl, token: s.value, models: grant, claudeModels: cfg.models.claude })
+      : productHandout({ gatewayUrl: cfg.gatewayUrl, key: s.value, models: s.tags.models ? grant : undefined,
+        claudeModels: cfg.deployments.filter((d) => d.route === "claude").map((d) => d.deployment) });
   }
 
   async function revokeJwt(actor, name) {
@@ -220,22 +229,22 @@ export function createService({ vault, arm, foundry = null, packTemplate: initia
     return { revoked: true, jti: s.tags.jti };
   }
 
-  async function productGrant(req) {
+  async function productGrant(req, connection) {
     if (!req.models) return { product: req.product, grantTags: {} };
-    const grant = await guard(async () => resolveGrant(req.models, await models.grantableDeployments()));
+    const grant = await guard(async () => resolveGrant(req.models, await models.grantableDeployments(connection.foundryId)));
     if (!packTemplate) throw new ServiceError(500, "The product policy template is not loaded.");
-    const product = (await ensurePack(arm, packTemplate, { grant, monthlyTokens: req.monthlyTokens })).id;
+    const product = (await ensurePack(arm, packTemplate, { grant, monthlyTokens: req.monthlyTokens, connection })).id;
     return { product, grantTags: { models: grant.map((g) => g.deployment).join(","), monthlyTokens: String(req.monthlyTokens) } };
   }
 
-  async function createProductKey(actor, req, { product, grantTags }) {
+  async function createProductKey(actor, req, { product, grantTags }, connection) {
     if (await arm.getSubscription(req.subscriptionId) || await vault.getSecret(req.secretName)) {
       throw new ServiceError(409, `A product key named ${req.name} already exists.`);
     }
     await arm.createSubscription(req.subscriptionId, { productId: product, displayName: `${req.name} (${req.owner})` });
     const keys = await arm.listSubscriptionSecrets(req.subscriptionId);
     const tags = { kind: "product", slot: "primary", subscription: req.subscriptionId, product, owner: req.owner,
-      rotatedAt: new Date(clock()).toISOString(), state: "active", ...grantTags,
+      rotatedAt: new Date(clock()).toISOString(), state: "active", ...grantTags, foundry: connection.id, foundryName: connection.name,
       ...(req.expiresDays ? { expires: new Date(clock() + req.expiresDays * 86_400_000).toISOString() } : {}),
       ...(req.rotateDays ? { rotateDays: String(req.rotateDays) } : {}) };
     await vault.setSecret(req.secretName, keys.primaryKey, { contentType: PRODUCT_CONTENT_TYPE, tags });
@@ -244,10 +253,10 @@ export function createService({ vault, arm, foundry = null, packTemplate: initia
 
   async function issueProductKey(actor, body) {
     requireAdmin(actor);
-    const cfg = await config();
+    const { cfg, connection } = await configuration(body?.foundryId);
     const req = await guard(async () => validateProductKeyRequest(body, { products: cfg.products }));
-    const grant = await productGrant(req);
-    const { key: _key, ...out } = await createProductKey(actor, req, grant);
+    const grant = await productGrant(req, connection);
+    const { key: _key, ...out } = await createProductKey(actor, req, grant, connection);
     audit(actor, "issue-product", { name: req.secretName, product: grant.product, owner: req.owner, models: grant.grantTags.models, rotateDays: req.rotateDays });
     return out;
   }
@@ -255,22 +264,22 @@ export function createService({ vault, arm, foundry = null, packTemplate: initia
   async function issueProductBulk(actor, body) {
     requireAdmin(actor);
     const entries = entriesOf(body);
-    const cfg = await config();
+    const { cfg, connection } = await configuration(body?.foundryId);
     const common = { models: body.models, monthlyTokens: body.monthlyTokens, rotateDays: body.rotateDays, expiresDays: body.expiresDays, product: body.product };
     const first = await guard(async () => validateProductKeyRequest({ ...common, owner: "check@example.com", name: "check" }, { products: cfg.products }));
-    const grant = await productGrant(first);
+    const grant = await productGrant(first, connection);
     const granted = (grant.grantTags.models ?? "").split(",");
-    const routes = new Set((await models.grantableDeployments()).filter((d) => granted.includes(d.deployment)).map((d) => d.route));
+    const routes = new Set(cfg.deployments.filter((d) => granted.includes(d.deployment)).map((d) => d.route));
     const issued = [];
     const failed = [];
     for (const [index, row] of entries.entries()) {
       try {
         const req = validateProductKeyRequest({ ...common, owner: row?.owner, name: row?.name }, { products: cfg.products });
-        const k = await createProductKey(actor, req, grant);
+        const k = await createProductKey(actor, req, grant, connection);
         issued.push({ name: k.name, label: req.name, owner: req.owner, subscriptionId: k.subscriptionId, key: k.key,
           models: (grant.grantTags.models ?? "").split(",").filter(Boolean), monthlyTokens: req.monthlyTokens ?? null,
           expiresAt: req.expiresDays ? clock() + req.expiresDays * 86_400_000 : null,
-          anthropicBaseUrl: !grant.grantTags.models || routes.has("claude") ? `${gwBase}/poc/claude` : "", openaiBaseUrl: routes.has("openai") ? `${gwBase}/poc/v1` : "" });
+          anthropicBaseUrl: !grant.grantTags.models || routes.has("claude") ? `${cfg.gatewayUrl}/poc/claude` : "", openaiBaseUrl: routes.has("openai") ? `${cfg.gatewayUrl}/poc/v1` : "" });
       } catch (e) {
         if (!(e instanceof InputError) && !(e instanceof ServiceError && e.status === 409)) throw e;
         failed.push({ index, error: e.message });
@@ -354,14 +363,12 @@ export function createService({ vault, arm, foundry = null, packTemplate: initia
     if (!Array.isArray(names) || names.length === 0 || names.length > EXPORT_MAX) throw new ServiceError(400, `Choose 1–${EXPORT_MAX} keys to export.`);
     const who = String(recipient ?? "").trim();
     if (!who || who.length > 120) throw new ServiceError(400, "Name the recipient (up to 120 characters).");
-    const cfg = await config();
     const keys = [];
     for (const name of names) {
       const s = await visibleKey(actor, name);
       const kind = kindOf(s);
-      const models = String(s.tags.models ?? "").split(",").filter(Boolean);
       keys.push({ name, kind, value: s.value, tags: s.tags,
-        handout: kind === "jwt" ? jwtHandout({ gatewayUrl, token: s.value, models, claudeModels: cfg.models.claude }) : productHandout({ gatewayUrl, key: s.value }) });
+        handout: await keyHandout(s) });
     }
     const generated = passphrase ? undefined : generatePassphrase();
     const { kid } = await ensureBundleKey();

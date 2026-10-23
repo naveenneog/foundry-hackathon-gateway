@@ -17,8 +17,8 @@ export const POOL_TOKENS = 2_000_000_000;
 export const DEFAULT_TPM = 20_000;
 const fail = (m) => { throw new InputError(m); };
 
-export function packId(models, monthlyTokens) {
-  const key = `${[...new Set(models)].sort().join(",")}|${monthlyTokens}`;
+export function packId(models, monthlyTokens, connectionId = "default") {
+  const key = `${[...new Set(models)].sort().join(",")}|${monthlyTokens}${connectionId === "default" ? "" : `|${connectionId}`}`;
   return `pk-${createHash("sha256").update(key).digest("hex").slice(0, 12)}`;
 }
 
@@ -43,8 +43,9 @@ export function renderPackPolicy(template, { models, keyTokens, poolTokens, tpm 
   return xml;
 }
 
-export function packRoutes(grant) {
-  return [...new Set(grant.map((g) => ROUTE_API[g.route]).filter(Boolean)), PROBE_API].sort();
+export function packRoutes(grant, connection) {
+  const routes = connection ? { openai: connection.apiIds.productOpenai, claude: connection.apiIds.productClaude } : ROUTE_API;
+  return [...new Set(grant.map((g) => routes[g.route]).filter(Boolean)), PROBE_API].sort();
 }
 
 /**
@@ -53,9 +54,9 @@ export function packRoutes(grant) {
  * limit) must not be reused as it is. APIs are linked last, so a pack without its policy is
  * unreachable.
  */
-export async function ensurePack(arm, template, { grant, monthlyTokens, tpm = DEFAULT_TPM }) {
+export async function ensurePack(arm, template, { grant, monthlyTokens, tpm = DEFAULT_TPM, connection }) {
   const models = grant.map((g) => g.deployment);
-  const id = packId(models, monthlyTokens);
+  const id = packId(models, monthlyTokens, connection?.id);
   const exists = Boolean(await arm.getProduct(id));
   if (!exists) {
     await arm.createProduct(id, {
@@ -64,6 +65,6 @@ export async function ensurePack(arm, template, { grant, monthlyTokens, tpm = DE
     });
   }
   await arm.setProductPolicy(id, renderPackPolicy(template, { models, keyTokens: monthlyTokens, poolTokens: POOL_TOKENS, tpm }));
-  for (const api of packRoutes(grant)) await arm.linkProductApi(id, api);
+  for (const api of packRoutes(grant, connection)) await arm.linkProductApi(id, api);
   return { id, created: !exists };
 }

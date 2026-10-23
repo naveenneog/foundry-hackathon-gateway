@@ -33,7 +33,7 @@ test("backend hosts derive from ARM custom subdomain, not account name or submit
     claude: "https://published-name.services.ai.azure.com/anthropic",
     audience: "https://ai.azure.com",
   });
-  assert.equal(accountEndpoints({ ...account, kind: "OpenAI" }).audience, "https://cognitiveservices.azure.com");
+  assert.equal(accountEndpoints({ ...account, kind: "OpenAI" }).audience, "https://ai.azure.com");
   assert.throws(() => accountEndpoints({ ...account, properties: { customSubDomainName: "evil.test/steal" } }), /subdomain/);
   assert.throws(() => accountEndpoints({ ...account, kind: "SpeechServices" }), /Foundry or Azure OpenAI/);
 });

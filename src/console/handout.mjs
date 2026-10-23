@@ -30,15 +30,17 @@ export function jwtHandout({ gatewayUrl, token, models, claudeModels = [] }) {
   return { env, opencode, claudeSettings };
 }
 
-export function productHandout({ gatewayUrl, key, claudeModel = "claude-haiku-4-5" }) {
+export function productHandout({ gatewayUrl, key, claudeModel = "claude-haiku-4-5", models, claudeModels = [] }) {
   const gw = trim(gatewayUrl);
+  const claude = models ? models.filter((m) => claudeModels.includes(m)) : [claudeModel];
+  const openai = models ? models.filter((m) => !claudeModels.includes(m)) : ["deepseek-v4-flash"];
   return {
     env: { POC_GATEWAY: gw, POC_KEY: key },
     // The POC Claude route reads the subscription key from x-api-key, which ANTHROPIC_API_KEY sends.
-    claudeSettings: {
-      env: { ANTHROPIC_BASE_URL: `${gw}/poc/claude`, ANTHROPIC_API_KEY: key, ANTHROPIC_MODEL: claudeModel },
-    },
-    curl: `curl -sS "${gw}/poc/v1/chat/completions" -H "api-key: ${key}" -H "content-type: application/json" ` +
-      `-d '{"model":"deepseek-v4-flash","messages":[{"role":"user","content":"ping"}],"max_tokens":16}'`,
+    claudeSettings: claude.length ? {
+      env: { ANTHROPIC_BASE_URL: `${gw}/poc/claude`, ANTHROPIC_API_KEY: key, ANTHROPIC_MODEL: claude[0] },
+    } : null,
+    curl: openai.length ? `curl -sS "${gw}/poc/v1/chat/completions" -H "api-key: ${key}" -H "content-type: application/json" ` +
+      `-d '${JSON.stringify({ model: openai[0], messages: [{ role: "user", content: "ping" }], max_tokens: 16 })}'` : null,
   };
 }

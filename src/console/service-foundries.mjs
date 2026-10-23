@@ -50,8 +50,7 @@ export function foundriesApi({ foundry, vault, arm, gatewayUrl, connectionTempla
     return `pwsh scripts/Connect-Foundry.ps1 -Subscription '${foundry?.subscriptionId ?? ""}' -ResourceGroup '${apim[4] ?? ""}' -ApimName '${apim[8] ?? ""}' -FoundryAccountId '${id}'`;
   };
 
-  async function listFoundries(actor) {
-    requireAdmin(actor);
+  async function discoverFoundries() {
     if (!foundry?.listAccounts) return { accounts: [], defaultFoundryId: defaultId ?? null, note: "Subscription discovery is not configured." };
     const [accounts, secrets] = await Promise.all([foundry.listAccounts(), vault.listSecrets()]);
     const saved = new Set(secrets.filter((s) => s.tags?.kind === "foundry-connection").map((s) => s.name));
@@ -64,6 +63,23 @@ export function foundriesApi({ foundry, vault, arm, gatewayUrl, connectionTempla
           deployments: a.deployments.length, ...(a.error ? { error: a.error } : {}), setupCommand: setupCommand(a.id) };
       }),
     };
+  }
+
+  async function listFoundries(actor) {
+    requireAdmin(actor);
+    return discoverFoundries();
+  }
+
+  async function connectionForKey(tags) {
+    if (!tags?.foundry || tags.foundry === "default") return connectionFor();
+    if (!/^f[0-9a-f]{12}$/.test(tags.foundry)) throw new ServiceError(500, "Invalid key Foundry metadata.");
+    const saved = await vault.getSecret(`${PREFIX}${tags.foundry}`);
+    if (!saved) throw new ServiceError(409, "This key's Foundry connection is missing; reattach that account.");
+    let account;
+    try { account = JSON.parse(saved.value); } catch { throw new ServiceError(500, "Unreadable Foundry metadata."); }
+    const c = await connectionFor(account.id);
+    if (c.id !== tags.foundry) throw new ServiceError(500, "Key Foundry metadata does not match its connection.");
+    return c;
   }
 
   async function attachFoundry(actor, { foundryId } = {}) {
@@ -111,5 +127,5 @@ export function foundriesApi({ foundry, vault, arm, gatewayUrl, connectionTempla
       : `Gateway returned ${response.status}. Check model pins, APIM inference permission, private networking and DNS; wait for APIM/RBAC propagation before retrying.` };
   }
 
-  return { connectionFor, getAccount, setupCommand, listFoundries, attachFoundry, testFoundry };
+  return { connectionFor, connectionForKey, getAccount, setupCommand, discoverFoundries, listFoundries, attachFoundry, testFoundry };
 }

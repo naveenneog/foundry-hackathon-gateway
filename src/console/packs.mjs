@@ -60,7 +60,9 @@ export async function ensurePack(arm, template, { grant, monthlyTokens, tpm = DE
   const exists = Boolean(await arm.getProduct(id));
   if (!exists) {
     await arm.createProduct(id, {
-      displayName: `Key Dashboard: ${models.join(", ")}`.slice(0, 300),
+      // APIM also requires distinct display names: equal models on another account/budget
+      // must not collide. Keep the stable product id before the truncatable model description.
+      displayName: `Key Dashboard [${id}] ${connection?.name ?? ""}: ${models.join(", ")}`.slice(0, 300),
       description: `Created by the Key Dashboard. Models: ${models.join(", ")}. ${monthlyTokens} tokens per key each calendar month (UTC).`.slice(0, 1000),
     });
   }

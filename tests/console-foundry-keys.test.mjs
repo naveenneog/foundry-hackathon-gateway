@@ -57,6 +57,10 @@ test("product packs cannot mix accounts even when deployment names and budgets a
   const selected = await h.service.issueProductKey(ADMIN, { ...common, foundryId: h.id, name: "secondary-prod" });
   const legacy = await h.service.issueProductKey(ADMIN, { ...common, name: "primary-prod" });
   assert.notEqual(selected.product, legacy.product);
+  assert.notEqual(h.arm.products.get(selected.product).displayName, h.arm.products.get(legacy.product).displayName,
+    "APIM rejects duplicate product display names even when product IDs differ");
+  const budgetVariant = await h.service.issueProductKey(ADMIN, { ...common, foundryId: h.id, name: "other-budget", monthlyTokens: 1001 });
+  assert.notEqual(h.arm.products.get(selected.product).displayName, h.arm.products.get(budgetVariant.product).displayName);
   const apis = h.arm.products.get(selected.product).apis;
   assert.ok(apis.every((a) => a === "poc-probe" || a.includes(h.connection.connectionId)));
   assert.ok(!apis.includes("poc-openai"));

@@ -146,6 +146,7 @@ export function apim({ apimId, getToken, fetchImpl = fetch, sleep = defaultSleep
   }
 
   return {
+    resourceId: apimId,
     async getNamedValue(name) {
       const r = await call("GET", url(`/namedValues/${seg(name)}`), { allow404: true });
       if (!r) return null;

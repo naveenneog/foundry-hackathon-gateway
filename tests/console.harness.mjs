@@ -4,6 +4,7 @@
  */
 
 import { generateKeyPairSync, randomBytes, sign as nodeSign, createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { createService } from "../src/console/service.mjs";
 
 export function fakeVault() {
@@ -79,6 +80,7 @@ export function fakeArm({ signingKey = randomBytes(32).toString("base64") } = {}
   };
   return {
     namedValues,
+    resourceId: "/subscriptions/s/resourceGroups/rg-test/providers/Microsoft.ApiManagement/service/apim-test",
     subscriptions,
     products,
     calls,
@@ -159,20 +161,32 @@ const deployment = (name, format, state = "Succeeded") => ({ name, properties: {
 
 /** The Foundry account the gateway serves, as the ARM adapter returns it. */
 export function fakeFoundry() {
+  const primary = "/subscriptions/s/resourceGroups/rg-test/providers/Microsoft.CognitiveServices/accounts/aif-test";
+  const secondary = primary.replace("/aif-test", "/aif-secondary");
+  const accounts = new Map([
+    [primary, { id: primary, name: "aif-test", kind: "AIServices", resourceGroup: "rg-test", location: "eastus2",
+      properties: { customSubDomainName: "aif-test" }, deployments: [
+        deployment("deepseek-v4-flash", "DeepSeek"), deployment("claude-haiku-4-5", "Anthropic"),
+        deployment("claude-sonnet-5", "Anthropic"), deployment("gpt-pending", "OpenAI", "Creating"), deployment("mystery", "Unheard"),
+      ] }],
+    [secondary, { id: secondary, name: "aif-secondary", kind: "AIServices", resourceGroup: "rg-test", location: "westus",
+      properties: { customSubDomainName: "aif-secondary" }, deployments: [
+        deployment("deepseek-v4-flash", "DeepSeek"), deployment("claude-haiku-4-5", "Anthropic"),
+      ] }],
+  ]);
   return {
-    async getAccount() {
-      return { name: "aif-test", resourceGroup: "rg-test", location: "eastus2", deployments: [
-        deployment("deepseek-v4-flash", "DeepSeek"),
-        deployment("claude-haiku-4-5", "Anthropic"),
-        deployment("claude-sonnet-5", "Anthropic"),
-        deployment("gpt-pending", "OpenAI", "Creating"),
-        deployment("mystery", "Unheard"),
-      ] };
+    accounts,
+    defaultAccountId: primary,
+    subscriptionId: "s",
+    async getAccount(id = primary) {
+      if (!accounts.has(id)) throw Object.assign(new Error("No account"), { status: 404 });
+      return structuredClone(accounts.get(id));
     },
+    async listAccounts() { return structuredClone([...accounts.values()]); },
   };
 }
 
-export function harness({ now = Date.parse("2026-10-16T09:00:00Z") } = {}) {
+export function harness({ now = Date.parse("2026-10-16T09:00:00Z"), inferenceFetch } = {}) {
   const vault = fakeVault();
   const arm = fakeArm();
   const foundry = fakeFoundry();
@@ -180,6 +194,12 @@ export function harness({ now = Date.parse("2026-10-16T09:00:00Z") } = {}) {
   const clock = { now };
   const service = createService({
     vault, arm, foundry,
+    inferenceFetch,
+    connectionTemplates: Object.fromEntries([
+      ["openai", "infra/policy.xml"], ["claude", "infra/policy-claude.xml"],
+      ["productOpenai", "poc/products-keyvault/infra/api-openai-policy.xml"],
+      ["productClaude", "poc/products-keyvault/infra/api-claude-policy.xml"],
+    ].map(([k, p]) => [k, readFileSync(new URL(`../${p}`, import.meta.url), "utf8")])),
     clock: () => clock.now,
     log: (event) => audit.push(event),
     gatewayUrl: "https://gw.example.net",

@@ -17,6 +17,7 @@ import { resolveGrant, ensurePack } from "./packs.mjs";
 import { lifecycleApi } from "./service-lifecycle.mjs";
 import { usageApi } from "./service-usage.mjs";
 import { keysCsv, indexCsv } from "./csv.mjs";
+import { foundriesApi } from "./service-foundries.mjs";
 
 export class ServiceError extends Error {
   constructor(status, message) {
@@ -37,7 +38,8 @@ const parseMap = (value) => String(value ?? "").split(";").map((e) => e.split("=
 const kindOf = (s) => s?.tags?.kind === "jwt" ? "jwt"
   : s?.tags?.kind === "product" || s?.contentType === PRODUCT_CONTENT_TYPE ? "product" : null;
 
-export function createService({ vault, arm, foundry = null, packTemplate: initialTemplate = null, clock = Date.now, log = () => {}, gatewayUrl }) {
+export function createService({ vault, arm, foundry = null, packTemplate: initialTemplate = null, connectionTemplates = null,
+  inferenceFetch = fetch, clock = Date.now, log = () => {}, gatewayUrl }) {
   let packTemplate = initialTemplate;
   const gwBase = String(gatewayUrl ?? "").replace(/\/+$/, "");
   const audit = (actor, action, fields = {}) =>
@@ -71,7 +73,8 @@ export function createService({ vault, arm, foundry = null, packTemplate: initia
     }
   };
 
-  const models = modelsApi({ arm, foundry, requireAdmin, audit, guard });
+  const connections = foundriesApi({ vault, arm, foundry, gatewayUrl, connectionTemplates, inferenceFetch, clock, requireAdmin, audit, guard, ServiceError });
+  const models = modelsApi({ arm, connections, requireAdmin, audit, guard });
 
   async function config() {
     const [m, c, products, deployments] = await Promise.all([arm.getNamedValue(NV.models), arm.getNamedValue(NV.claude), arm.listProducts(),
@@ -390,6 +393,7 @@ export function createService({ vault, arm, foundry = null, packTemplate: initia
   };
   const lifecycle = lifecycleApi({ vault, arm, clock, audit, requireAdmin, owns, kindOf, visibleKey, rotate, ServiceError, revokedName: NV.revoked, guard, revocations });
 
-  return { ...models, ...lifecycle, ...usageFns, setPackTemplate, config, signingStatus, migrateSigningSecret, pushSigningSecret, rotateSigningSecret, issueJwt, issueJwtBulk, issueProductBulk, revealKey,
+  return { ...models, ...lifecycle, ...usageFns, listFoundries: connections.listFoundries, attachFoundry: connections.attachFoundry,
+    testFoundry: connections.testFoundry, setPackTemplate, config, signingStatus, migrateSigningSecret, pushSigningSecret, rotateSigningSecret, issueJwt, issueJwtBulk, issueProductBulk, revealKey,
     revokeJwt, issueProductKey, rotateProductKey, setProductState, setAutomation, runRotationSweep, bundlePublicKey, exportBundle };
 }

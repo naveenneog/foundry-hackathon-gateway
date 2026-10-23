@@ -92,6 +92,26 @@ test("apim: a policy PUT that answers with the policy XML is a success, not a JS
   await apim({ apimId: APIM_ID, getToken: token, fetchImpl: s.fetchImpl, sleep: noSleep }).setProductPolicy("pk-1", xml);
 });
 
+test("apim: attach backend, API, operations, policy and key-free usage diagnostic", async () => {
+  const s = scripted([
+    ["PUT", /\/backends\/foundry-b\?/, 200, {}],
+    ["PUT", /\/apis\/account-api\?/, 200, {}],
+    ["PUT", /\/apis\/account-api\/operations\/messages\?/, 200, {}],
+    ["PUT", /\/apis\/account-api\/policies\/policy\?/, 200, "<policies/>"],
+    ["PUT", /\/apis\/account-api\/diagnostics\/applicationinsights\?/, 200, {}],
+  ]);
+  const a = apim({ apimId: APIM_ID, getToken: token, fetchImpl: s.fetchImpl, sleep: noSleep });
+  await a.putBackend("foundry-b", { protocol: "http", url: "https://ai.services.ai.azure.com/anthropic" });
+  await a.putApi("account-api", { path: "foundry/b/claude", protocols: ["https"], subscriptionRequired: false });
+  await a.putOperation("account-api", "messages", { method: "POST", urlTemplate: "/v1/messages", displayName: "messages" });
+  await a.setApiPolicy("account-api", "<policies/>");
+  await a.setApiDiagnostic("account-api", { metrics: true });
+  assert.equal(s.seen[0].body.properties.protocol, "http");
+  assert.equal(s.seen[1].body.properties.subscriptionRequired, false);
+  assert.equal(s.seen[3].body.properties.format, "rawxml");
+  assert.equal(s.seen[4].body.properties.loggerId, `${APIM_ID}/loggers/hackgw-appinsights`);
+});
+
 test("an error response that is not JSON still reports its status, without the body", async () => {
   const s = scripted([["PUT", /\/products\/pk-1\/policies\/policy\?/, 400, "<error>bad <policies> near secret</error>", { "content-type": "text/xml" }]]);
   await assert.rejects(apim({ apimId: APIM_ID, getToken: token, fetchImpl: s.fetchImpl, sleep: noSleep }).setProductPolicy("pk-1", "<p/>"),

@@ -215,6 +215,23 @@ export function apim({ apimId, getToken, fetchImpl = fetch, sleep = defaultSleep
     async setSubscriptionState(sid, state) {
       await call("PATCH", url(`/subscriptions/${seg(sid)}`), { body: { properties: { state } }, headers: { "If-Match": "*" } });
     },
+    async putBackend(id, properties) {
+      await untilDone(await call("PUT", url(`/backends/${seg(id)}`), { body: { properties } }));
+    },
+    async putApi(id, properties) {
+      await untilDone(await call("PUT", url(`/apis/${seg(id)}`), { body: { properties } }));
+    },
+    async putOperation(apiId, id, properties) {
+      await call("PUT", url(`/apis/${seg(apiId)}/operations/${seg(id)}`), { body: { properties } });
+    },
+    async setApiPolicy(id, xml) {
+      await call("PUT", url(`/apis/${seg(id)}/policies/policy`), { body: { properties: { format: "rawxml", value: xml } } });
+    },
+    async setApiDiagnostic(id, properties) {
+      await call("PUT", url(`/apis/${seg(id)}/diagnostics/applicationinsights`), {
+        body: { properties: { ...properties, loggerId: `${apimId}/loggers/hackgw-appinsights` } },
+      });
+    },
   };
 }
 

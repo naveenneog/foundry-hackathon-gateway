@@ -69,6 +69,8 @@ export function fakeArm({ signingKey = randomBytes(32).toString("base64") } = {}
   const subscriptions = new Map();
   const products = new Map(["poc-claude-pack", "poc-deepseek-pack", "poc-tiny-pack"].map((id) => [id, { displayName: id, apis: [], policy: "" }]));
   const calls = [];
+  const backends = new Map();
+  const apis = new Map();
   const newKey = () => randomBytes(16).toString("hex");
   const sub = (sid) => {
     const s = subscriptions.get(sid);
@@ -80,6 +82,15 @@ export function fakeArm({ signingKey = randomBytes(32).toString("base64") } = {}
     subscriptions,
     products,
     calls,
+    backends,
+    apis,
+    async putBackend(id, properties) { backends.set(id, properties); },
+    async putApi(id, properties) {
+      apis.set(id, { properties, operations: apis.get(id)?.operations ?? new Map() });
+    },
+    async putOperation(api, id, properties) { apis.get(api).operations.set(id, properties); },
+    async setApiPolicy(id, xml) { apis.get(id).policy = xml; },
+    async setApiDiagnostic(id, properties) { apis.get(id).diagnostic = properties; },
     async getNamedValue(name) {
       const nv = namedValues.get(name);
       if (!nv) return null;

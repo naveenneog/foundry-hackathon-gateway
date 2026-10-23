@@ -35,8 +35,8 @@ param clientId string
 @description('Gateway base URL put into client setup snippets.')
 param gatewayUrl string
 
-@description('The one address allowed to reach the dashboard, as CIDR: <ip>/32, or a narrow NAT pool. Everything else is refused.')
-param allowedCidr string
+@description('The one address allowed to reach the dashboard, as CIDR: <ip>/32, or a narrow NAT pool. Empty: no IP rule; sign-in still applies.')
+param allowedCidr string = ''
 
 @description('Existing Foundry (AIServices) account whose deployments the dashboard lists and pins.')
 param foundryAccountName string
@@ -163,8 +163,8 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
         targetPort: 8080
         transport: 'auto'
         allowInsecure: false
-        // One address only; with an Allow rule present every other address is refused.
-        ipSecurityRestrictions: [
+        // Optional. With an Allow rule present every other address is refused.
+        ipSecurityRestrictions: empty(allowedCidr) ? [] : [
           { name: 'allowed-ip', ipAddressRange: allowedCidr, action: 'Allow' }
         ]
       }

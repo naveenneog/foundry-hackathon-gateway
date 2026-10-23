@@ -16,7 +16,8 @@
        automation.
      - AppService: deploys infra/console-appservice.bicep (a web app and a Function App on one
        plan), then zip-deploys the dashboard and the Function App package.
-  5. Allows only -AllowedIp, points the redirect URI at the dashboard, and waits for /healthz.
+  5. With -AllowedIp, admits only that address (optional; without it, Entra sign-in alone guards
+     the dashboard). Points the redirect URI at the dashboard and waits for /healthz.
 
   Prints names and URLs only; no ids, keys or tokens.
 
@@ -29,7 +30,7 @@
 param(
     [Parameter(Mandatory)][string]$Subscription,
     [Parameter(Mandatory)][string]$ResourceGroup,
-    [Parameter(Mandatory)][string]$AllowedIp,
+    [string]$AllowedIp = '',
     [ValidateSet('ContainerApps', 'AppService')][string]$Hosting = 'ContainerApps',
     [string]$AppRegistrationName = 'hackgw-key-console',
     [string[]]$Users = @(),
@@ -38,18 +39,21 @@ param(
 )$ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 
-# One IPv4 address (made a /32). A CIDR is accepted only for a NAT pool that rotates the egress
-# address, at most a /24, and is reported as wider than one address.
-$addr, $prefix = $AllowedIp -split '/', 2
-$ip = $null
-if (-not [System.Net.IPAddress]::TryParse($addr, [ref]$ip) -or $ip.AddressFamily -ne [System.Net.Sockets.AddressFamily]::InterNetwork -or
-    $addr -notmatch '^\d{1,3}(\.\d{1,3}){3}$') {
-    throw "-AllowedIp must be one IPv4 address, such as 203.0.113.7."
+$allowedCidr = ''
+if ($AllowedIp) {
+    # One IPv4 address (made a /32). A CIDR is accepted only for a NAT pool that rotates the egress
+    # address, at most a /24, and is reported as wider than one address.
+    $addr, $prefix = $AllowedIp -split '/', 2
+    $ip = $null
+    if (-not [System.Net.IPAddress]::TryParse($addr, [ref]$ip) -or $ip.AddressFamily -ne [System.Net.Sockets.AddressFamily]::InterNetwork -or
+        $addr -notmatch '^\d{1,3}(\.\d{1,3}){3}$') {
+        throw "-AllowedIp must be one IPv4 address, such as 203.0.113.7."
+    }
+    $prefix = if ($null -eq $prefix) { 32 } else { [int]$prefix }
+    if ($prefix -lt 24 -or $prefix -gt 32) { throw "-AllowedIp: a CIDR must be /24 to /32." }
+    $script:allowedCidr = "$addr/$prefix"
+    if ($prefix -ne 32) { Write-Warning "-AllowedIp $allowedCidr admits $([math]::Pow(2, 32 - $prefix)) addresses, not one." }
 }
-$prefix = if ($null -eq $prefix) { 32 } else { [int]$prefix }
-if ($prefix -lt 24 -or $prefix -gt 32) { throw "-AllowedIp: a CIDR must be /24 to /32." }
-$allowedCidr = "$addr/$prefix"
-if ($prefix -ne 32) { Write-Warning "-AllowedIp $allowedCidr admits $([math]::Pow(2, 32 - $prefix)) addresses, not one." }
 if (-not $SubnetPrefix) { $SubnetPrefix = if ($Hosting -eq 'AppService') { '10.61.6.0/27' } else { '10.61.5.0/27' } }
 
 function Invoke-Az {
@@ -88,7 +92,7 @@ $suffix = ($apim.name -split '-')[-1]
 $appName = if ($Hosting -eq 'AppService') { "app-keys-$suffix" } else { "ca-console-$suffix" }
 $registry = "crconsole$suffix"
 Write-Host "  APIM $($apim.name), vault $vault, Foundry $($foundry.name), workspace $workspace, network $vnet"
-Write-Host "  hosting: $Hosting -> $appName, open to $allowedCidr only"
+Write-Host "  hosting: $Hosting -> $appName, open to $(if ($allowedCidr) { "$allowedCidr only" } else { "any address (sign-in required)" })"
 
 Write-Host "Ensuring app registration $AppRegistrationName..."
 $app = @(Invoke-Az ad app list --display-name $AppRegistrationName --query '[0]' -o json)[0]
@@ -226,10 +230,10 @@ else {
 }
 $null = Invoke-Az ad app update --id $app.appId --web-redirect-uris "$url/.auth/login/aad/callback" --enable-id-token-issuance true
 
-Write-Host "Waiting for $url/healthz (from this machine, which must be in $allowedCidr)..."
+Write-Host "Waiting for $url/healthz ..."
 $healthy = $false
 for ($i = 0; $i -lt 30 -and -not $healthy; $i++) {
     try { $healthy = (Invoke-WebRequest "$url/healthz" -TimeoutSec 20).StatusCode -eq 200 } catch { Start-Sleep 10 }
 }
-if (-not $healthy) { throw "$url/healthz did not answer 200 within five minutes (from outside $allowedCidr it is refused by design)." }
+if (-not $healthy) { throw "$url/healthz did not answer 200 within five minutes." }
 Write-Host "Key Dashboard ($Hosting): $url  (sign in as an assigned user; admins: open 'Signing secret' and migrate first)"

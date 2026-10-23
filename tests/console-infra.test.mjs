@@ -48,7 +48,9 @@ test("console image: distroless Node 24, non-root, runs the console entry point,
 });
 
 test("console infra (Container Apps): one allowed IP, a cron job for the automation, no in-process sweep", () => {
-  assert.match(bicep, /ipSecurityRestrictions: \[\n\s+\{ name: 'allowed-ip', ipAddressRange: allowedCidr, action: 'Allow' \}\n\s+\]/);
+  // Optional: no CIDR means no IP rule (owner's decision 2026-10-23); sign-in still applies.
+  assert.match(bicep, /ipSecurityRestrictions: empty\(allowedCidr\) \? \[\] : \[\n\s+\{ name: 'allowed-ip', ipAddressRange: allowedCidr, action: 'Allow' \}\n\s+\]/);
+  assert.match(bicep, /param allowedCidr string = ''/);
   assert.match(bicep, /resource job 'Microsoft\.App\/jobs@/);
   assert.match(bicep, /triggerType: 'Schedule'/);
   assert.match(bicep, /cronExpression: automationCron/);
@@ -87,12 +89,14 @@ test("console infra (App Service): web app and Function App on one plan, VNet-in
   assert.equal((appsvc.match(/serverFarmId: plan\.id/g) ?? []).length, 2, "both sites on the one plan");
   assert.equal((appsvc.match(/virtualNetworkSubnetId: subnet\.id/g) ?? []).length, 2);
   assert.match(appsvc, /serviceName: 'Microsoft\.Web\/serverFarms'/);
-  for (const s of ["httpsOnly: true", "ipSecurityRestrictionsDefaultAction: 'Deny'", "scmIpSecurityRestrictionsUseMain: true",
+  for (const s of ["httpsOnly: true", "scmIpSecurityRestrictionsUseMain: true",
     "ftpsState: 'Disabled'", "minTlsVersion: '1.2'", "alwaysOn: true", "vnetRouteAllEnabled: true"]) {
     assert.equal(appsvc.split(s).length - 1, 2, `${s} on both sites`);
   }
   assert.equal((appsvc.match(/ipAddress: allowedCidr/g) ?? []).length, 1, "one rule");
   assert.equal((appsvc.match(/ipSecurityRestrictions: ipRules/g) ?? []).length, 2, "used by both sites");
+  assert.equal((appsvc.match(/ipSecurityRestrictionsDefaultAction: empty\(allowedCidr\) \? 'Allow' : 'Deny'/g) ?? []).length, 2, "deny by default only when an address is given");
+  assert.match(appsvc, /var ipRules = empty\(allowedCidr\) \? \[\] : \[/);
   assert.equal((appsvc.match(/basicPublishingCredentialsPolicies/g) ?? []).length, 4, "ftp and scm basic auth off on both sites");
   assert.match(appsvc, /linuxFxVersion: 'NODE\|24-lts'/);
 });
@@ -124,7 +128,8 @@ test("function app: v4 Node model, a timer that runs the shared automation, no H
 
 test("deploy script: the hosting is chosen at install and only that path is deployed; one IPv4 is required", () => {
   assert.match(deploy, /\[ValidateSet\('ContainerApps', 'AppService'\)\]\[string\]\$Hosting = 'ContainerApps'/);
-  assert.match(deploy, /\[Parameter\(Mandatory\)\]\[string\]\$AllowedIp/);
+  assert.match(deploy, /\[string\]\$AllowedIp = ''/);
+  assert.doesNotMatch(deploy, /\[Parameter\(Mandatory\)\]\[string\]\$AllowedIp/);
   assert.match(deploy, /\[System\.Net\.IPAddress\]::TryParse/);
   assert.match(deploy, /prefix -lt 24/, "a CIDR, when given for a NAT pool, is at most a /24");
   assert.match(deploy, /allowedCidr=\$allowedCidr/);

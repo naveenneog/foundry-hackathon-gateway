@@ -39,8 +39,8 @@ param clientId string
 @description('Gateway base URL put into client setup snippets.')
 param gatewayUrl string
 
-@description('The one address allowed to reach both sites, as CIDR: <ip>/32, or a narrow NAT pool. Everything else is refused.')
-param allowedCidr string
+@description('The one address allowed to reach both sites, as CIDR: <ip>/32, or a narrow NAT pool. Empty: no IP rule; sign-in still applies.')
+param allowedCidr string = ''
 
 var roles = {
   keyVaultSecretsOfficer: 'b86a8fe4-44ce-4948-aee5-eccb2c155cd7'
@@ -94,7 +94,7 @@ var common = [
   { name: 'ROTATION_SWEEP_MINUTES', value: '0' }
 ]
 
-var ipRules = [
+var ipRules = empty(allowedCidr) ? [] : [
   { name: 'allowed-ip', action: 'Allow', priority: 100, ipAddress: allowedCidr }
 ]
 
@@ -124,7 +124,7 @@ resource web 'Microsoft.Web/sites@2024-04-01' = {
       minTlsVersion: '1.2'
       http20Enabled: true
       vnetRouteAllEnabled: true
-      ipSecurityRestrictionsDefaultAction: 'Deny'
+      ipSecurityRestrictionsDefaultAction: empty(allowedCidr) ? 'Allow' : 'Deny'
       ipSecurityRestrictions: ipRules
       scmIpSecurityRestrictionsUseMain: true
       healthCheckPath: '/healthz'
@@ -214,7 +214,7 @@ resource fn 'Microsoft.Web/sites@2024-04-01' = {
       ftpsState: 'Disabled'
       minTlsVersion: '1.2'
       vnetRouteAllEnabled: true
-      ipSecurityRestrictionsDefaultAction: 'Deny'
+      ipSecurityRestrictionsDefaultAction: empty(allowedCidr) ? 'Allow' : 'Deny'
       ipSecurityRestrictions: ipRules
       scmIpSecurityRestrictionsUseMain: true
       appSettings: concat(common, [

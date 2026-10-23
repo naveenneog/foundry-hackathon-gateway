@@ -81,3 +81,16 @@ test("bulk issue, owner change and usage over HTTP", async () => {
   const sweep = await (await post("/api/sweep", AS.admin, {})).json();
   assert.deepEqual(Object.keys(sweep).sort(), ["archived", "deleted", "failed", "rotated"]);
 });
+
+test("every browser module in public/ is served as JavaScript, and nothing else in src/ is", async () => {
+  const { readdirSync } = await import("node:fs");
+  const mods = readdirSync(new URL("../src/console/public/", import.meta.url)).filter((f) => f.endsWith(".js"));
+  assert.ok(mods.length >= 10);
+  for (const f of mods) {
+    const r = await get(`/${f}`, AS.alice);
+    assert.equal(r.status, 200, f);
+    assert.match(r.headers.get("content-type"), /^text\/javascript/, f);
+  }
+  assert.equal((await get("/service.mjs", AS.alice)).status, 404);
+  assert.equal((await get("/views-nope.js", AS.alice)).status, 404);
+});

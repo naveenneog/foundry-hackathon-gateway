@@ -51,18 +51,18 @@ assumption is only closed if it names its blast radius and the detector that wou
 | U38 | Does Key Vault's ES256 `sign` return a signature Node verifies as IEEE P1363 against the key's JWK? | RESOLVED |
 | U39 | Can a VNet-integrated App Service reach the POC's private vault through the existing private DNS zone link? | RESOLVED |
 | U40 | Is there App Service quota in eastus2 for the dashboard's App Service path? | MEASURED |
-| U41 | Does API Management accept `llm-emit-token-metric` in a product-scope policy? | OPEN |
-| U42 | Does a Node Functions app on a Linux dedicated plan run a v3-model timer (`function.json`, ES module, no npm packages)? | OPEN |
-| U43 | What is the largest `token-quota` that `llm-token-limit` accepts? | OPEN |
-| U44 | Does a Container Apps job in a VNet-injected environment get a managed identity endpoint and reach the private vault? | OPEN |
-| U45 | Is Log Analytics Reader on the workspace enough for a managed identity to query `AppMetrics` through `api.loganalytics.io`? | OPEN |
+| U41 | Does API Management accept `llm-emit-token-metric` in a product-scope policy? | RESOLVED |
+| U42 | Does a Node Functions app on a Linux dedicated plan run a v3-model timer (`function.json`, ES module, no npm packages)? | AVOIDED |
+| U43 | What is the largest `token-quota` that `llm-token-limit` accepts? | RESOLVED |
+| U44 | Does a Container Apps job in a VNet-injected environment get a managed identity endpoint and reach the private vault? | RESOLVED |
+| U45 | Is Log Analytics Reader on the workspace enough for a managed identity to query `AppMetrics` through `api.loganalytics.io`? | RESOLVED |
 
 ---
 
 
 ## Open
 
-**U41–U45 (P49–P54):** logged 2026-10-22 before implementation; each is closed by research or a live measurement.
+None.
 
 ---
 
@@ -73,6 +73,51 @@ instance of U23, from a VM inside its virtual network; the final run (`10111658`
 on 2026-10-12. U31–U33 (P43) were researched, and U34 measured, on 2026-10-12. U35 (P45) was
 resolved on 2026-10-13.
 
+### U45 — Is Log Analytics Reader on the workspace enough for a managed identity to query `AppMetrics`? — RESOLVED
+
+**A narrower role is enough: Log Analytics Data Reader.** Learn: "Provide the bare minimum
+permissions needed to run queries and see metadata with the Log Analytics Data Reader role"
+([manage access](https://learn.microsoft.com/azure/azure-monitor/logs/manage-access), updated
+2026-09-21, read 2026-10-22). Log Analytics Reader adds `*/read` across resources, which the
+dashboard does not need. Measured 2026-10-22: with only Log Analytics Data Reader on the gateway
+workspace, the dashboard's `/api/usage?kind=jwt&days=30` returned 200 with 4,625 tokens over 22
+requests.
+
+### U44 — Does a Container Apps job in a VNet-injected environment get a managed identity and reach the private vault? — RESOLVED
+
+**Yes.** On 2026-10-22, `az containerapp job start` on `job-ca-console-*` ended `Succeeded`.
+`automation.mjs` exits 1 if the sweep throws or any key fails, so a success means the job's own
+identity listed the private vault's secrets and read APIM. Learn documents jobs as billed only
+while an execution runs, with no idle charge
+([billing](https://learn.microsoft.com/azure/container-apps/billing), updated 2026-03-25).
+
+### U43 — What is the largest `token-quota` that `llm-token-limit` accepts? — RESOLVED
+
+**Learn documents no maximum.** The page describes `token-quota` only as "The maximum number of
+tokens allowed during the time interval…" ([llm-token-limit](https://learn.microsoft.com/azure/api-management/llm-token-limit-policy),
+updated 2026-06-26, read 2026-10-22). The dashboard keeps its own ceiling of 100,000,000 tokens
+per key per month, and sets each `pk-` product's shared pool to 2,000,000,000, which fits a
+32-bit integer. The pool was accepted live in the `pk-` products created on 2026-10-22.
+
+### U42 — Does a Node Functions app on a dedicated plan run a v3-model timer with no npm packages? — AVOIDED
+
+**Not confirmed by Learn, so not relied on.** Learn lists the v3 model as "GA (maintenance)",
+with "New projects should use v4"
+([Node reference](https://learn.microsoft.com/azure/azure-functions/functions-reference-node),
+updated 2026-09-16). It gives no ES-module example for v3. The Function App uses the v4 model,
+with `@azure/functions` 4.16.5 pinned in `functions/package.json` and installed only into the
+deployment package. The repository keeps no runtime dependency. Timer triggers on a dedicated
+plan need Always On ([scale](https://learn.microsoft.com/azure/azure-functions/functions-scale),
+updated 2026-09-18), which the template sets. This is not run live here (U40).
+
+### U41 — Does API Management accept `llm-emit-token-metric` in a product-scope policy? — RESOLVED
+
+**Yes.** Learn lists the policy scopes as "global, workspace, product, API, operation"
+([llm-emit-token-metric](https://learn.microsoft.com/azure/api-management/llm-emit-token-metric-policy),
+updated 2026-09-17). Measured 2026-10-22: APIM accepted the policy on two `pk-` products. After
+three calls, `/api/usage?kind=product&days=1` showed 25 tokens over 2 requests for the
+multi-model key and 15 tokens over 1 request for the single-model key. Both were keyed by the
+subscription name, so `context.Subscription.Id` is the subscription's name.
 ### U40 — Is there App Service quota in eastus2 for the dashboard's App Service path? — MEASURED
 
 **No, in this subscription.** On 2026-10-22, `az appservice plan create --is-linux -l eastus2`

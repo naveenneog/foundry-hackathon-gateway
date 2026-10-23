@@ -19,6 +19,16 @@ const STATIC = {
   "/index.html": ["index.html", "text/html; charset=utf-8"],
   "/app.js": ["app.js", "text/javascript; charset=utf-8"],
   "/app.css": ["app.css", "text/css; charset=utf-8"],
+  "/lib.js": ["lib.js", "text/javascript; charset=utf-8"],
+  "/api.js": ["api.js", "text/javascript; charset=utf-8"],
+  "/dom.js": ["dom.js", "text/javascript; charset=utf-8"],
+  "/charts.js": ["charts.js", "text/javascript; charset=utf-8"],
+  "/secret.js": ["secret.js", "text/javascript; charset=utf-8"],
+  "/views-overview.js": ["views-overview.js", "text/javascript; charset=utf-8"],
+  "/views-keys.js": ["views-keys.js", "text/javascript; charset=utf-8"],
+  "/views-drawer.js": ["views-drawer.js", "text/javascript; charset=utf-8"],
+  "/views-issue.js": ["views-issue.js", "text/javascript; charset=utf-8"],
+  "/views-admin.js": ["views-admin.js", "text/javascript; charset=utf-8"],
 };
 const MAX_BODY = 64 * 1024;
 const SECURITY_HEADERS = {

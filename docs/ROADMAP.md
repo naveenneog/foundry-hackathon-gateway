@@ -251,64 +251,67 @@ Key Vault. Nothing here changes the gateway on `main`.
       image referenced once, PNG, alt text and names free of identifiers, provenance note) and
       the 28 document tests pass.
 
-- [ ] **P54** Key Dashboard: security testing and live bug bash
+- [x] **P54** Key Dashboard: security testing and live bug bash
       *Acceptance:* a security review of the dashboard and automation with every finding fixed
       or filed; repeated bug-bash rounds on the live deployment, with each bug fixed test-first;
-      private-network tests from the runner VM; results in STATUS. ADR-0015.
+      private-network tests from the runner VM; results in STATUS. ADR-0015/0016.
       *Why:* requested 2026-10-22.
 
-- [ ] **P53** Key Dashboard: choose the hosting at install, with single-IP access
-      *Acceptance:* `Deploy-Console.ps1 -Hosting AppService|ContainerApps -AllowedIp <ip>`
+- [x] **P53** Key Dashboard: choose the hosting at install, with optional IP restriction
+      *Acceptance:* `Deploy-Console.ps1 -Hosting AppService|ContainerApps [-AllowedIp <ip-or-cidr>]`
       deploys only the chosen path. AppService: a web app and a Function App (timer) on one plan,
-      VNet integration. ContainerApps: an app and a cron job. Both allow only `<ip>/32`
-      (everything else is refused), and both run `src/console/automation.mjs`. Container Apps is
-      deployed and measured live; App Service is checked by `bicep build` and what-if (U40).
+      VNet integration. ContainerApps: an app and a cron job. If `-AllowedIp` is set it restricts
+      ingress; without it Entra sign-in and app-role assignment still guard the dashboard. Both run
+      `src/console/automation.mjs`. Container Apps is deployed and measured live. App Service
+      passes `bicep build`, but ARM validate/what-if is blocked by the zero quota (U40).
       *Why:* requested 2026-10-22.
 
-- [ ] **P52** Key Dashboard: usage per key, hackathon and product, with charts
+- [x] **P52** Key Dashboard: usage per key, short-lived and product, with charts
       *Acceptance:* usage per key (tokens, requests, by model, by day) from `AppMetrics`, shown
-      separately for hackathon and product keys. Users see only their own. Product routes emit
-      per-subscription token metrics. SVG charts in light and dark themes. Live: a call shows up
+      separately for short-lived and product keys. Admins see all. Product routes emit
+      per-subscription token metrics. SVG charts in light and dark themes. Live: calls show up
       under its key.
       *Why:* requested 2026-10-22.
 
-- [ ] **P51** Key Dashboard: archive, deletion and an unlimited number of keys
-      *Acceptance:* expired or revoked hackathon keys, and expired product keys (suspended
+- [x] **P51** Key Dashboard: archive, deletion and an unlimited number of keys
+      *Acceptance:* expired or revoked short-lived keys, and expired product keys (suspended
       first), are archived by the automation. Lists show active keys, with the archive in its own
       view. An admin can delete an archived key; the automation deletes archived keys 30 days
       after archiving. Revocation entries for expired keys are pruned. Bulk issuance of both key
-      types takes any number of rows, in batches. Owners and labels can be edited (absorbs P48).
+      types takes any number of rows, in batches of 50. The owner tag is attribution only.
       *Why:* requested 2026-10-22.
 
-- [ ] **P50** Key Dashboard: one model or several, chosen at issue, for both key types
+- [x] **P50** Key Dashboard: one model or several, chosen at issue, for both key types
       *Acceptance:* the issue form asks for one model or several, explicitly. Product keys get a
       per-model-set product (`pk-<hash>`) created from the POC product policy. A key refuses
       every model it was not given (live 403).
       *Why:* requested 2026-10-22.
 
-- [ ] **P49** Key Dashboard: Foundry deployments and model pinning in the console
+- [x] **P49** Key Dashboard: Foundry deployments and model pinning in the console
       *Acceptance:* the Models page lists the Foundry account's deployments with their wire
       format and route, and pins or unpins aliases through `canPin` and `buildModelMap` (the
       scripts' canonical code). A cross-route pin is refused.
       *Why:* requested 2026-10-22.
-- [ ] **P48** Key Console: give owners to keys issued before the console
+- [x] **P48** Key Console: give owners to keys issued before the console
       *Acceptance:* an admin can set the owner of an existing product key (for example, the POC's
-      `poc-key-alice-*` keys, which show owner "—"), and the owner then sees it as a
-      `Console.User`; the change is audited.
+      `poc-key-alice-*` keys, which show owner "—"). The new owner is displayed as **Issued to**
+      and used for attribution and usage only; it grants no dashboard access (ADR-0016). The
+      change is audited.
       *Why:* found in the P46 live run. Keys from the POC runner carry no owner tag, so no user
       can see them.
 
 - [ ] **P47** Key Console: sign-in consent for users other than the deployer
-      *Acceptance:* in a tenant that blocks user consent, a `-Users` person can sign in after
-      `Deploy-Console.ps1`, or the script prints the single admin-consent step needed; measured
-      with a second account.
+      *Acceptance:* in a tenant that blocks user consent, a second `-Admins` person can sign in
+      after `Deploy-Console.ps1`, or the script prints the single admin-consent step needed;
+      measured with a second admin account.
       *Why:* P46 measured the per-user `oauth2PermissionGrant` only for the deployer's own
       account; creating one for someone else may need a directory role.
 
 - [x] **P46** Admin console: signed keys and product keys behind Entra roles (branch only)
       *Done 2026-10-17 on `feature/admin-console`, not merged.* Hosted on Container Apps
       (ADR-0014) because the App Service quota was 0. Live evidence in STATUS and
-      `docs/CONSOLE.md`.      *Acceptance:* a web app, deployed in the POC network, where a signed-in `Console.Admin`
+      `docs/CONSOLE.md`.
+      *Acceptance:* a web app, deployed in the POC network, where a signed-in `Console.Admin`
       issues and revokes signed (HS256) keys minted from a signing secret held in Key Vault,
       issues, suspends, resumes and rotates product keys, and switches per-key rotation
       automation on or off; a `Console.User` sees and reveals only their own keys and cannot

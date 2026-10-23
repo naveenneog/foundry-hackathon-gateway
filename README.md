@@ -200,23 +200,35 @@ success first and traffic used the private path again about 1–1½ minutes late
 Step-by-step portal and CLI instructions, verification and teardown:
 [docs/PRIVATE-ENDPOINT.md](docs/PRIVATE-ENDPOINT.md).
 
-### Key Console: a web app for admins and participants
+### Key Dashboard: admin-only key issue and distribution
 
-`admin.ps1` is for the operator at a terminal. The Key Console is a web app on Azure Container
-Apps, behind Entra sign-in with two app roles:
+The Key Dashboard is an Entra-protected web app for gateway administrators. Only `Console.Admin`
+can open it or use its APIs. The email under **Issued to** identifies who a key is for; it does
+not give that person access to the dashboard. Keys are distributed by an admin through direct
+copy, the script-compatible `keys.csv` / key-free `index.csv`, or an encrypted bundle.
 
-- `Console.Admin` issues signed keys and product keys, revokes, rotates, suspends and resumes
-  them, and switches rotation automation per key. The signing secret is held in Key Vault.
-- `Console.User` sees and reveals only their own keys.
-- Only admins export. An export is an encrypted bundle signed by a Key Vault key, which the
-  recipient opens with `scripts/open-bundle.mjs`.
+The dashboard keeps short-lived HS256 keys separate from long-lived APIM product keys. A
+short-lived key can start immediately or at a chosen hour in the future; its expiry window
+starts at activation. Product keys support one or several explicitly selected Foundry
+deployments, two-slot rotation and optional automation. Usage is reported per key and separately
+for each key type.
+
+The deployment reuses the existing APIM, private Key Vault, Foundry account, workspace and VNet.
+Choose the hosting path at install. Container Apps is the deployed path; App Service plus a
+Function App is available for subscriptions with quota. The IP rule is optional. Entra sign-in
+and admin-role assignment are always required.
 
 ```powershell
-pwsh scripts/Deploy-Console.ps1 -Subscription <subscription> -ResourceGroup <rg> -Users alice@contoso.com
+# No IP rule; Entra sign-in remains required
+pwsh scripts/Deploy-Console.ps1 -Subscription <subscription> -ResourceGroup <rg>
+
+# Optional fixed IP or narrow NAT range
+pwsh scripts/Deploy-Console.ps1 -Subscription <subscription> -ResourceGroup <rg> `
+  -AllowedIp 203.0.113.7
 ```
 
-Guide with screenshots: [docs/CONSOLE.md](docs/CONSOLE.md). This is branch
-`feature/admin-console` only and needs the proof of concept's vault and network.
+The [Key Dashboard guide](docs/CONSOLE.md) covers deployment, key issue and distribution,
+model pinning, usage, archive/deletion and bundle opening. Decisions: ADR-0013 through ADR-0016.
 
 ---
 
@@ -427,11 +439,13 @@ src/
   apim.mjs                   which API Management instance can host this, and the deployment plan
   foundry.mjs                the models in the subscription, and the route that serves each
   anthropic.mjs              the Anthropic error envelope and body rewrites
-  console/                   Key Console web app: roles, service, Azure adapters, bundles, UI
+  console/                   admin-only Key Dashboard: roles, usage, lifecycle, issue, bundles, UI
 infra/
   main.bicep                 gateway, observability, both APIs, policy, RBAC
-  console.bicep              Key Console on Container Apps, in the POC VNet, with Entra sign-in
-  console.Dockerfile         Key Console image (built by ACR Tasks)
+  console.bicep              Container Apps dashboard and scheduled job in the POC VNet
+  console-appservice.bicep   alternate App Service + Function App path
+  console-telemetry.bicep    usage diagnostics for the POC routes
+  console.Dockerfile         distroless Node dashboard image (built by ACR Tasks)
   policy.xml                 the governance policy, OpenAI route
   policy-claude.xml          the governance policy, Claude route
   examples/
@@ -444,15 +458,17 @@ scripts/
   Models.ps1                 model discovery and pinning
   Keys.ps1                   key issuance and handouts
   Test-Governance.ps1        proves each control fires, per route
-  Deploy-Console.ps1         deploys the Key Console: app registration, roles, image, Bicep
-  open-bundle.mjs            verifies and decrypts a Key Console export bundle
+  Deploy-Console.ps1         selects and deploys one dashboard hosting path
+  open-bundle.mjs            verifies and decrypts a Key Dashboard export bundle
+functions/
+  sweep.mjs                  App Service option: v4 timer function for key automation
 examples/
   claude-agent.ipynb         a tool-calling Claude agent, with a real recorded run
-tests/                       391 tests, including tamper and alg:none attacks
+tests/                       652 tests, including tamper and alg:none attacks
 docs/adr/                    architecture decisions and their reasoning
 docs/UNKNOWNS.md             what we did not know, and how each was closed
 docs/PRIVATE-ENDPOINT.md     Foundry behind a private endpoint: requirements, steps, evidence
-docs/CONSOLE.md              Key Console: deploy, roles, usage, bundles, measurements
+docs/CONSOLE.md              Key Dashboard: deploy, issue, CSV, usage, bundles, measurements
 ```
 
 `src/*.mjs` is the canonical statement of the rules; the policies and the PowerShell are
@@ -460,7 +476,7 @@ transcriptions of it. **Change one, change both** — the unit tests guard the m
 parity tests guard the transcriptions, and `Test-Governance.ps1` guards the deployed behaviour.
 
 ```powershell
-npm test                                  # 70 tests
+npm test                                  # 652 tests
 node .ironclad/gate.mjs --stage packet    # full quality gate
 ```
 

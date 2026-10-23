@@ -121,8 +121,8 @@ to the route its wire format allows, and nowhere else.
 + One codebase, two hosting paths. The owner picks per install.
 + Usage costs nothing extra beyond the existing workspace ingestion.
 + The revocation list stays bounded with an unlimited number of keys.
-− The App Service path cannot be deployed in this subscription's eastus2 until quota is
-  granted. It is checked with `az bicep build` and what-if here, and deployed live elsewhere.
+− The App Service template passes `az bicep build`, but this subscription's zero eastus2 quota
+  blocks ARM validate/what-if and live deployment. Its hosting path remains unverified here.
 − Per-model-set products add APIM products over time. Unused ones (no subscriptions) are
   removed by the automation.
 − `AppMetrics` arrive minutes after the call (ingestion latency), so usage is not real time.

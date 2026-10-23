@@ -6,6 +6,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · [Semantic Ve
 ## [Unreleased]
 
 ### Added
+- **Key Dashboard amendment, branch `feature/key-dashboard`: admin-only access, scheduled
+  short-lived keys and CSV distribution.** A participant's sign-in email is attribution only;
+  it does not grant dashboard access. Short-lived keys now have `startInHours`, matching
+  `scripts/Keys.ps1`; a future `nbf` is shown as Scheduled. Bulk issue returns the same
+  formula-escaped `keys.csv` and key-free `index.csv` as the terminal workflow. The UI drops
+  these from memory when the result closes or the view/page changes. Hosting can be deployed
+  with no IP rule (Entra sign-in and admin role remain required); `-AllowedIp` is optional.
+  Live deployment and checks recorded in `docs/STATUS.md`; operator guide in `docs/CONSOLE.md`.
+  ADR-0016 supersedes the earlier `Console.User` dashboard access.
 - **Branch `feature/admin-console` only: Key Console, a web app for issuing and managing
   keys.** It runs on Azure Container Apps inside the proof of concept's network, behind Entra
   sign-in, with two roles:

@@ -1,9 +1,80 @@
 # Status
 
-**Active packets:** P49–P54, the Key Dashboard (branch `feature/key-dashboard`, cut from
-`feature/admin-console` at `19a145c`; not pushed, not merged). Requirements of 2026-10-22 and
-the design: ADR-0015. U41–U45 are open. App Service has no quota in eastus2 (U40), so the live
-deployment uses the Container Apps path; the App Service path is checked by build and what-if.
+**Active packets:** none. P49–P54 are done on `feature/key-dashboard` (cut from
+`feature/admin-console`; local commits, not pushed or merged). Design: ADR-0015; owner amendment:
+ADR-0016. App Service quota in eastus2 is 0 (U40), so Container Apps is the live path. The App
+Service template builds; ARM validate/what-if is blocked by the zero quota. The live dashboard has no IP restriction; Entra
+sign-in and the admin role remain required.
+
+### P49–P54 — Key Dashboard — DONE (branch `feature/key-dashboard`)
+
+**Owner's amendment (2026-10-23, ADR-0016):** admin-only dashboard; owner is attribution, not
+access. Rename hackathon keys to short-lived keys, with the same `startInHours` activation delay
+as `scripts/Keys.ps1`. Key distribution remains administrator copy, `keys.csv` / `index.csv`,
+or the encrypted bundle. No participant is given dashboard access.
+
+**Implemented:**
+- Foundry deployment list and model pin/unpin, using the same `canPin`, `suggestAlias` and model
+  map serialization as the scripts.
+- One or several explicitly selected models per key. Short-lived keys use pinned aliases;
+  product keys use Foundry deployment names, enforced by a model-set product policy.
+- Separate short-lived and product views, usage by key/model/day, overview chart, light/dark
+  theme. Product usage was measured live at 40 tokens across two product keys (3 requests).
+- Unlimited listing via Key Vault pagination; expiry and revocation archive keys, product
+  subscriptions suspend on archive, and archived keys delete after 30 days. Admin bulk issuance
+  handles any number of rows in 50-row requests.
+- Hosting is selected at install: Container Apps (live) or App Service plus Function App. The
+  Container Apps deployment has a cron job for automation, scales the dashboard to zero, and
+  has no IP restriction. `-AllowedIp` is optional; Entra sign-in is always required.
+- Bulk keys go to the administrator's browser as the script-compatible `keys.csv` plus a
+  key-free `index.csv`. The UI does not show key values in the result table and drops the CSVs
+  on close, route change and pagehide.
+
+**Owner access decision:** only `Console.Admin` may use the dashboard. The service and the
+router both refuse non-admins with 403. A key's “Issued to” email is only an attribution tag.
+This supersedes the earlier `Console.User` visibility behaviour in P46/ADR-0013.
+
+**Live deployment checks (2026-10-23):**
+- The IP restriction is absent (`ipSecurityRestrictions: []`); `/healthz` returned 200 on five
+  consecutive requests from the workstation and on the private runner VM.
+- `/api/me` returned 200 for the assigned admin; unauthenticated `/api/me` returned 401.
+- Bulk short-lived issuance with a one-hour delay returned a key whose JWT `nbf` was in the
+  future, listed with status `scheduled`. `keys.csv` contained the key and `index.csv` did not.
+  Revoke returned 200.
+- Product bulk issuance returned `keys.csv` and a key-free `index.csv`; archive and delete each
+  returned 200.
+- Private runner VM resolved the vault to `10.61.2.7` and Foundry to `10.61.2.4`; unauthenticated
+  data-plane calls returned the expected 401/404 rather than network failures. Dashboard
+  `/healthz` returned 200 and `/api/me` returned 401 from inside the VNet.
+- The automation job completed successfully in the VNet. Product usage matched the two live
+  product keys. Earlier live checks covered gateway enforcement, model pinning and two-slot
+  product rotation.
+
+**Security and bug bash:** security review found no browser UI vulnerabilities. The backend
+review's finding that archiving a live signed key did not revoke its self-contained JWT was
+fixed in `49c2f0a`; tests now require revoke-before-delete. Live issuance tests covered the one-
+and two-model product grants, a wrong model (403), short-lived `nbf`, the CSV contents and
+archive/delete. UI interaction checks covered 27 browser flows; axe found no violations in
+light or dark mode. No live prompt or request body is logged.
+
+**Verification:** `npm test` (652 passed, 0 failed); `node --test tests/console-ui.test.mjs`
+(32 passed); `node --check` on 11 browser modules; both Bicep templates build; UI security review
+reported no findings; backend security finding fixed; pre-commit gate passes. The only gate
+warning is the existing credential-shaped test literal in `src/diagnose.mjs`.
+
+**Council — P49–P54, direct review, two security reviews and live checks.**
+
+| Seat | Verdict | Evidence |
+|---|---|---|
+| Architect | PASS | ADR-0015/0016 decisions are explicit; hosting is selectable; existing APIM, vault, Foundry and workspace are reused |
+| Coder | PASS | Service adapters isolate Azure; role checks are duplicated in router/service; bulk response follows the script's CSV contract |
+| QA | PASS | 652 tests; 32 UI tests; live delayed activation, CSV content, wrong-model refusal, archive/delete; private-network DNS and auth checks |
+| UX | PASS | Separate short-lived/product pages, light/dark charts, scheduled badge, admin-only state; 27 browser interactions and axe in both themes |
+| Security | PASS-WITH-NOTES | UI review found no issues; backend review's archive/revocation finding was fixed/tested. No IP restriction is deployed by owner decision; Entra and admin role remain required |
+
+Commit `c498193` contains the UI amendment; backend amendment `e0e795a`; optional IP rule
+`e78fdbb`. The live image is built from `c498193`. Nothing has been pushed or merged.
+
 ### P46 — Key Console — DONE (branch `feature/admin-console`)
 
 A web app (`src/console/`) on Azure Container Apps, in the POC VNet, behind Entra sign-in. Its
@@ -16,7 +87,8 @@ roles are `Console.Admin` and `Console.User`. It covers:
 
 Deploy: `scripts/Deploy-Console.ps1`. Guide: `docs/CONSOLE.md`. Decisions: ADR-0013, ADR-0014.
 App Service quota was 0 in eastus2, so hosting is Container Apps. U37, U38 and U39 are
-resolved.
+resolved. **Historical note:** P46's `Console.User` access was superseded by ADR-0016 on
+2026-10-23; the current dashboard is admin-only.
 
 **Live evidence (2026-10-16/17):**
 - **Signed key:** `/v1` (flash) returned 200 and `/claude` (haiku-4-5) returned 200. After

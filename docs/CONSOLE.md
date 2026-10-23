@@ -1,41 +1,37 @@
-# Key Console
+# Key Dashboard
 
-A web app for the people who run the gateway. One place to issue, reveal, revoke and rotate
-**both** kinds of participant key, behind Entra ID sign-in and two app roles:
+A web app for gateway administrators. It issues and manages two key types:
 
-- **Signed keys:** the gateway's original HS256 keys, each with an expiry, a model list and a
-  token budget. The console keeps the **signing secret in Key Vault** and mints the keys there.
-- **Product keys:** API Management subscription keys on a product pack. The value is stored in
-  Key Vault and rotated on a two-slot schedule. Per key, an admin can switch on **rotation
-  automation**.
+- **Short-lived keys:** signed HS256 keys, with a model allowlist, token budget, activation time
+  and expiry. The signing secret is held in Key Vault.
+- **Product keys:** API Management subscription keys held in Key Vault. They can be limited to
+  one or several Foundry deployments, rotated between two slots, suspended, and enrolled in
+  automatic rotation.
 
-Only admins can export. An export is an **encrypted bundle signed by a Key Vault key held for
-the admins**, so the recipient can check who sent it and that nobody changed it.
+The dashboard also shows per-key usage, separately for short-lived and product keys. Administrators
+distribute keys by copying a single key, downloading the script-compatible `keys.csv` and
+key-free `index.csv`, or creating an encrypted bundle signed by a Key Vault key.
 
-Decisions: [ADR-0013](adr/0013-admin-console.md) (design) and
-[ADR-0014](adr/0014-console-on-container-apps.md) (hosting on Azure Container Apps).
-
-> Branch `feature/admin-console` only. It builds on the proof of concept in
-> `poc/products-keyvault/`, and needs its private vault, network and product packs.
+Decisions: [ADR-0013](adr/0013-admin-console.md) (core design),
+[ADR-0014](adr/0014-console-on-container-apps.md) (Container Apps hosting),
+[ADR-0015](adr/0015-key-dashboard.md) (dashboard), and
+[ADR-0016](adr/0016-admin-only-short-lived-keys.md) (admin-only access and distribution).
 
 ---
 
-## Roles
+## Access
 
-| Can… | `Console.Admin` | `Console.User` |
-|---|---|---|
-| See keys | every key | only keys whose owner is their sign-in name |
-| Reveal a key and its client setup | any key | their own (another person's key returns 404) |
-| Issue signed or product keys, revoke, rotate, suspend or resume | yes | no (403) |
-| Switch rotation automation, run the sweep | yes | no (403) |
-| Manage the signing secret | yes | no (403) |
-| **Export a bundle** | yes | no (403) |
+**Only `Console.Admin` can open the dashboard.** It requires Entra sign-in and the `Console.Admin`
+app role. A signed-in person without that role gets 403 on every API; the UI displays
+"This dashboard is for administrators. Ask an admin for your key." The deploy script assigns
+the operator and optional `-Admins` entries. It does not assign `Console.User`.
 
-The role comes from the `roles` claim that Container Apps authentication puts in the
-`X-MS-CLIENT-PRINCIPAL` header. That header comes from the platform; the app trusts it only when
-authentication is enabled, and a request carrying a spoofed header is still refused (401). With
-neither role, the user is refused at sign-in, because the app registration requires an
-assignment.
+**Issued to** is the email address the administrator records for attribution and usage reporting.
+It does not grant dashboard access. The recipient does not sign in to reveal the key: the
+administrator copies it or distributes that recipient's row from `keys.csv`.
+
+The app role comes from the platform-authenticated `X-MS-CLIENT-PRINCIPAL` header. The app
+refuses a missing principal (401), a non-admin role (403) and a client-supplied principal header.
 
 ---
 
@@ -47,28 +43,45 @@ Prerequisites:
   resource group.
 
 ```powershell
+# Default path: Container Apps. No IP restriction; Entra sign-in is still required.
+pwsh scripts/Deploy-Console.ps1 -Subscription <subscription> -ResourceGroup <rg>
+
+# Optionally assign additional admins and/or restrict inbound access.
 pwsh scripts/Deploy-Console.ps1 -Subscription <subscription> -ResourceGroup <rg> `
-    -Users alice@contoso.com,bob@contoso.com
+    -Admins ops1@contoso.com,ops2@contoso.com -AllowedIp 203.0.113.7
+
+# Alternate path: App Service web app and Function App on one plan.
+pwsh scripts/Deploy-Console.ps1 -Subscription <subscription> -ResourceGroup <rg> `
+    -Hosting AppService
 ```
 
 The script, in order:
 
 1. Finds the APIM instance, the vault and the VNet in the resource group.
-2. Creates or updates the app registration `hackgw-key-console` with the roles `Console.Admin`
-   and `Console.User`, and sets "assignment required".
-3. Assigns you `Console.Admin` and each `-Users` entry `Console.User`.
-4. Grants sign-in consent (`openid profile email`) for each person as a per-user
+2. Creates or updates the app registration `hackgw-key-console`, ensures the admin role, and
+   sets "assignment required". The legacy `Console.User` role grants no dashboard access.
+3. Assigns the signed-in operator `Console.Admin` and each `-Admins` entry `Console.Admin`.
+4. Grants sign-in consent (`openid profile email`) for each administrator as a per-user
    `oauth2PermissionGrant`. This is for tenants that block user consent. If the grant fails, the
    script warns; then ask a tenant admin to grant admin consent once.
 5. Builds the image in Azure Container Registry with ACR Tasks. Docker is not needed locally,
    and the registry admin user stays off.
-6. Deploys `infra/console.bicep`, which creates:
-   - a Container Apps environment injected into a new subnet of the POC VNet, so the private
-     vault resolves and is reachable;
-   - the app, with built-in Entra authentication and HTTPS only;
-   - a managed identity with Key Vault Secrets Officer, Key Vault Crypto Officer and API
-     Management Service Contributor.
+6. Deploys only the selected hosting path:
+   - **ContainerApps** (default): `infra/console.bicep`, a scale-to-zero web app and a scheduled
+     job for automation;
+   - **AppService**: `infra/console-appservice.bicep`, a web app and a Function App timer on one
+     plan. This template builds, but the subscription's zero App Service quota in eastus2 blocks
+     ARM validate/what-if and live deployment.
+
+   Container Apps creates an environment injected into the POC VNet. App Service uses its
+   delegated VNet-integration subnet. Each path creates the dashboard with built-in Entra
+   authentication and HTTPS only, and a managed identity with Key Vault Secrets Officer,
+   Key Vault Crypto Officer and API Management Service Contributor.
 7. Sets the redirect URI, waits for `/healthz`, and prints the URL.
+
+`-AllowedIp` is optional. When supplied, it applies an inbound allow rule; omit it for Entra-only
+access. The live installation has no IP restriction because the administrator's NAT egress address
+rotates. The automation has no inbound endpoint.
 
 **First sign-in as admin:** open **Signing secret**, then click **Migrate from API Management**.
 This copies the gateway's current signing secret into Key Vault. Keys already issued keep
@@ -80,33 +93,65 @@ working.
 
 ### Keys
 
-![Keys tab as an admin: every key, export checkboxes, and per-key actions](images/console/console-keys.png)
+![Admin overview with separate active key counts and short-lived/product usage charts](images/console/console-overview.png)
 
-Admins see every key; a user sees only their own and no export column. For each key:
+![Short-lived key list and active/archived key actions](images/console/console-keys.png)
+
+The dashboard lists active keys by default, with a separate archived view. **Issued to** labels
+the intended holder; only administrators can see or reveal keys. For each key:
 
 - **Reveal** returns the value and a ready-to-paste client setup.
 - **Rotate** regenerates the slot not in use, then moves the stored value to it. The old value
   keeps working until the next rotation, so clients can switch without downtime.
 - **Suspend / Resume** turns the subscription off and on.
 - **Automation** sets "rotate every N days". Leave it blank to switch it off.
-- **Run rotation automation now** rotates every key that is due. The app also runs this sweep
-  on its own every `ROTATION_SWEEP_MINUTES` minutes (default 60, `0` turns it off).
+- **Run rotation automation now** rotates every key that is due.
+
+Expired short-lived keys, revoked keys and expired product keys move to the archive automatically.
+Product subscriptions are suspended before archiving. An admin can delete archived keys; the
+automation deletes them 30 days after archive. Deletion is a Key Vault soft delete, not a purge.
 
 A change to a product key reaches the gateway within about 20 seconds (16 s measured).
 
-### Issue a signed key
+### Issue a short-lived key
 
-![Issue a signed key: owner, subject, models, token budget and validity](images/console/console-issue-signed.png)
+![Issue a short-lived key: intended holder, subject, models, token budget, activation delay and validity](images/console/console-issue-signed.png)
 
-The key is minted with the secret in Key Vault. The gateway checks its expiry, its models and
-its token budget, exactly as for keys from `admin.ps1`. **Revoke** adds the key to the
-gateway's denylist, and both routes then return 403.
+The key is minted with the signing secret in Key Vault. Choose one or several pinned model aliases.
+**Starts in (hours from now)** defaults to 0; a future start is shown as **Scheduled**. The
+gateway checks `nbf`, expiry, the model allowlist and token budget. This matches
+`scripts/Keys.ps1`'s `Read-KeySettings`. **Revoke** adds the key ID to the gateway's denylist.
+
+### Bulk issue and distribute
+
+![Short-lived key form with activation delay and calculated validity window](images/console/console-issue-signed.png)
+
+![Bulk short-lived key form with model grant, start delay and CSV input rows](images/console/console-short-lived-bulk.png)
+
+The **Bulk issue** form accepts CSV rows (`owner,subject` for short-lived keys;
+`owner,name` for product keys). It submits at most 50 rows per request and displays names and
+owners, not key values.
+
+- **Download keys.csv** is the distribution file. It contains every key in the batch, with one
+  row per recipient and the base URL, model(s), budget and validity columns. Send each person only
+  their own row, then delete the file.
+- **Download index.csv** has the recipient and key identifier, but no keys; it can be shared with
+  co-organisers.
+- **Export as encrypted bundle** uses the signed, passphrase-encrypted format below.
+
+The browser keeps both CSV strings only in memory and discards them when the result closes, the
+view changes or the page unloads. The files are not written to browser storage.
 
 ### Issue a product key
 
 ![Issue a product key: owner, name, product pack and optional automatic rotation](images/console/console-issue-product.png)
 
-This creates an APIM subscription on the pack and stores its primary key in Key Vault.
+Choose one or several Foundry deployments. This creates/reuses a product whose policy allows
+exactly those deployments and stores each APIM subscription's primary key in Key Vault.
+
+![Product key issue form with Foundry deployments, monthly budget and rotation settings](images/console/console-issue-product.png)
+
+![Bulk product key form with model grant and CSV input rows](images/console/console-product-bulk.png)
 
 ### Client setup
 
@@ -178,10 +223,12 @@ shows whether the two copies match, and has three actions:
   - Secret values never reach the logs.
   - The app has no client secret and no registry password; it uses managed identities only.
   - Key Vault is reached only over the private network.
-- **Revoking access:** remove a person's app-role assignment in Entra. Their next request is
-  refused once their session ends.
+- **Dashboard access:** remove the administrator's app-role assignment in Entra. Keys are
+  distributed out-of-band by the administrator; the intended holder has no dashboard role.
+- **Network access:** the live deployment has no IP allowlist, because the administrator's public
+  egress IP changes. Entra authentication and the `Console.Admin` role are still required.
 
-## Measured on the deployment (2026-10-16 and 2026-10-17)
+## Measured on the deployment (2026-10-16 to 2026-10-23)
 
 **Signed keys:**
 - A console-issued key called `/v1` and `/claude` successfully (200).
@@ -200,4 +247,19 @@ shows whether the two copies match, and has three actions:
 - A bundle with an edited header was refused (bad signature).
 - A bundle with a flipped ciphertext byte was refused.
 
-**User role:** the user saw only their own keys. Every admin action returned 403.
+**Historical P46 role test:** before ADR-0016, `Console.User` saw only its own keys and every
+admin action returned 403. That behaviour was superseded: the dashboard is now admin-only, and
+owners cannot sign in to reveal keys.
+
+**ADR-0016 live checks (2026-10-23):**
+- No IP restrictions are configured. `/healthz` returned 200 from both the workstation and the
+  private runner VM; `/api/me` returned 401 without sign-in.
+- A bulk short-lived key with a one-hour delay had a future JWT `nbf`, appeared as `scheduled`,
+  and was included in `keys.csv`; its key-free index did not contain the key. Revoke returned 200.
+- A bulk product key appeared in `keys.csv`, not in `index.csv`; archive and delete both returned
+  200.
+- The runner VM resolved the vault to `10.61.2.7` and Foundry to `10.61.2.4`. The vault responded
+  over its private endpoint; dashboard traffic from the VM reached the app.
+
+The current-interface screenshots were captured from the live UI on 2026-10-23. The header
+account and the `Issued to` example values are generic examples; no key values are shown.

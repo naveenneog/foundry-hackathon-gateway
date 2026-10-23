@@ -49,3 +49,13 @@ test("discovery rejects an untrusted pagination origin and does not treat denied
     Response.json({ error: { code: "AuthorizationFailed" } }, { status: 403 }) });
   await assert.rejects(denied.listAccounts(), /AuthorizationFailed/);
 });
+
+test("malformed ARM success responses are errors, not a misleading empty model list", async () => {
+  for (const body of [{}, { value: "not-an-array" }]) {
+    const f = foundryDirectory({ accountId: ID, getToken: token, fetchImpl: async () => Response.json(body) });
+    await assert.rejects(f.listAccounts(), /ARM list response/);
+  }
+  const wrong = foundryDirectory({ accountId: ID, getToken: token, fetchImpl: async () =>
+    Response.json({ id: OTHER, name: "other", kind: "AIServices" }) });
+  await assert.rejects(wrong.getAccount(ID), /metadata does not match/);
+});

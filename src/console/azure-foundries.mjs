@@ -24,7 +24,8 @@ export function foundryDirectory({ accountId, getToken, fetchImpl = fetch, sleep
       if (new URL(url).origin !== "https://management.azure.com" || visited.has(url)) throw new AzureError(502, "Invalid ARM pagination link.");
       visited.add(url);
       const r = await call("GET", url);
-      out.push(...(r.json.value ?? []));
+      if (!Array.isArray(r.json.value)) throw new AzureError(502, "Unexpected ARM list response; account discovery is unavailable.");
+      out.push(...r.json.value);
       url = r.json.nextLink ?? null;
     }
     return out;
@@ -42,6 +43,7 @@ export function foundryDirectory({ accountId, getToken, fetchImpl = fetch, sleep
     async getAccount(id = accountId) {
       const m = validate(id);
       const r = await call("GET", `https://management.azure.com${id}?api-version=${API}`);
+      if (r.json.id?.toLowerCase() !== id.toLowerCase()) throw new AzureError(502, "Foundry account metadata does not match the requested resource.");
       if (!["AIServices", "OpenAI"].includes(r.json.kind)) throw new AzureError(400, "This account is not Foundry or Azure OpenAI.");
       return { ...shape(r.json, m), deployments: await deployments(id) };
     },

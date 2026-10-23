@@ -251,6 +251,12 @@ Key Vault. Nothing here changes the gateway on `main`.
       image referenced once, PNG, alt text and names free of identifiers, provenance note) and
       the 28 document tests pass.
 
+- [x] **P55** Key Dashboard release branch: README, install guide, architecture, local demo
+      *Acceptance:* `release/key-dashboard` on GitHub. The README leads with the dashboard:
+      architecture, a local try, the install commands and screenshots. `docs/INSTALL.md` covers
+      every install step through a first key in Claude Code. `npm run dashboard:demo` runs the
+      real UI on sample data on 127.0.0.1. Links and images are checked by tests.
+      *Why:* requested 2026-10-23.
 - [x] **P54** Key Dashboard: security testing and live bug bash
       *Acceptance:* a security review of the dashboard and automation with every finding fixed
       or filed; repeated bug-bash rounds on the live deployment, with each bug fixed test-first;

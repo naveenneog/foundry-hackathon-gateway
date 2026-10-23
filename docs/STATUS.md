@@ -1,11 +1,28 @@
 # Status
 
-**Active packets:** none. P49–P54 are done on `feature/key-dashboard` (cut from
+**Active packets:** none. P55 (release branch) and P49–P54 are done on `feature/key-dashboard` (cut from
 `feature/admin-console`; local commits, not pushed or merged). Design: ADR-0015; owner amendment:
 ADR-0016. App Service quota in eastus2 is 0 (U40), so Container Apps is the live path. The App
 Service template builds; ARM validate/what-if is blocked by the zero quota. The live dashboard has no IP restriction; Entra
 sign-in and the admin role remain required.
 
+### P55 — release branch, README, install guide, local demo — DONE
+
+`release/key-dashboard` is cut from `feature/key-dashboard` and pushed to GitHub; nothing is
+merged to `main`. The README leads with the Key Dashboard, and `docs/INSTALL.md` is the install
+and setup guide. `scripts/dashboard-demo.mjs` (`npm run dashboard:demo`) runs the real server and
+UI on the unit-test fakes with seeded data, bound to 127.0.0.1. The owner's architecture
+illustration shows recipients obtaining Entra tokens; the README and the guide state beside it
+that recipients use dashboard-issued keys instead.
+
+Verified:
+- `npm test` 657/657.
+- New tests: every README and INSTALL link and image resolves; the demo binds to 127.0.0.1 and
+  serves seeded keys and usage.
+- Each new check was negative-tested: a broken image link and a `0.0.0.0` bind each failed the
+  suite.
+- Before the push: the 23 commits being published contain no tenant ids, resource suffixes or
+  personal emails. The subscription name in STATUS is already on `main`.
 ### P49–P54 — Key Dashboard — DONE (branch `feature/key-dashboard`)
 
 **Owner's amendment (2026-10-23, ADR-0016):** admin-only dashboard; owner is attribution, not

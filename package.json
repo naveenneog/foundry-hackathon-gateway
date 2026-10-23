@@ -10,7 +10,8 @@
   "scripts": {
     "test": "node --test \"tests/**/*.test.mjs\"",
     "test:watch": "node --test --watch \"tests/**/*.test.mjs\"",
-    "gate": "node .ironclad/gate.mjs --stage packet"
+    "gate": "node .ironclad/gate.mjs --stage packet",
+    "dashboard:demo": "node scripts/dashboard-demo.mjs"
   },
   "license": "MIT",
   "devDependencies": {

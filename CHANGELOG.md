@@ -6,6 +6,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · [Semantic Ve
 ## [Unreleased]
 
 ### Added
+- **Release branch `release/key-dashboard`: install guide, architecture and a local demo.**
+  The README now opens with the Key Dashboard: an architecture illustration with a note on how
+  recipients authenticate, a one-minute local try (`npm run dashboard:demo`, sample data, no
+  Azure, `127.0.0.1` only), the four install commands and annotated screenshots.
+  `docs/INSTALL.md` is the full install and setup guide: requirements, each step and what it
+  creates, the first sign-in, a first key in Claude Code, troubleshooting and removal. Tests check
+  that every link and image in both files resolves. (P55)
 - **Key Dashboard amendment, branch `feature/key-dashboard`: admin-only access, scheduled
   short-lived keys and CSV distribution.** A participant's sign-in email is attribution only;
   it does not grant dashboard access. Short-lived keys now have `startInHours`, matching

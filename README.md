@@ -1,19 +1,98 @@
 # Foundry Hackathon Gateway
 
-Hand out **time-bound, spend-capped API keys** for models on Microsoft Foundry, so hackathon
-participants can build real apps with **opencode** and **Claude Code** — and nobody holds a model
-credential or can overspend.
+Hand out **time-bound, spend-capped API keys** for models on Microsoft Foundry, so participants
+and applications can use Claude, DeepSeek and other models through **Claude Code**, **opencode**
+or any SDK. Nobody holds a model credential or can overspend.
 
-One interactive script does everything.
+Two ways to run it, on the same gateway:
 
-```powershell
-./admin.ps1
-```
-
-![Admin console](docs/images/admin-menu.png)
+| | **Key Dashboard** (web app) | **`admin.ps1`** (terminal) |
+|---|---|---|
+| For | Administrators, in a browser | One operator at a terminal |
+| Keys | Short-lived keys **and** long-lived product keys | Short-lived keys |
+| Also | Usage charts, model pinning, archive, rotation automation, encrypted bundles | Gateway deploy, model deploy, key diagnosis |
+| Guide | [Install](docs/INSTALL.md) · [Use](docs/CONSOLE.md) | [Runbook](docs/RUNBOOK.md) |
 
 ---
 
+## Key Dashboard
+
+An admin-only web app on Azure that issues, distributes and tracks two kinds of key:
+
+- **Short-lived keys:** signed HS256 keys with a start time, an expiry, one or several models and
+  a token budget. The signing secret is held in Key Vault.
+- **Product keys:** API Management subscription keys held in Key Vault, limited to one or several
+  Foundry deployments, with a monthly budget, two-slot rotation and optional automatic rotation.
+
+Only `Console.Admin` can open it. **Issued to** records who a key is for, for attribution and
+usage. That person gets no dashboard access. Administrators hand keys over by copy, as a
+`keys.csv` from bulk issue, or as an encrypted bundle signed by a Key Vault key
+([ADR-0016](docs/adr/0016-admin-only-short-lived-keys.md)).
+
+### Architecture
+
+![Key Dashboard architecture on Azure: admin dashboard and automation in the gateway's VNet, Key Vault and Foundry behind private endpoints, APIM Standard v2 as the public gateway, usage from Application Insights and Log Analytics](docs/images/architecture-key-dashboard.png)
+
+In this design, key recipients **do not** sign in to Entra ID: flow 7 and "Entra ID
+authentication" on APIM in the illustration do not apply. A recipient sends the key an
+administrator gave them, and APIM checks it:
+- a short-lived key as `Authorization: Bearer`;
+- a product key as `x-api-key` or `api-key`.
+
+Entra ID signs in administrators to the dashboard. The dashboard and the automation reach Key
+Vault, API Management and Foundry with managed identities, and APIM does not call Key Vault per
+request. A text version of the diagram is in [docs/INSTALL.md](docs/INSTALL.md#architecture).
+
+### Try it in one minute (no Azure)
+
+```powershell
+git clone -b release/key-dashboard https://github.com/naveenneog/foundry-hackathon-gateway
+cd foundry-hackathon-gateway
+npm run dashboard:demo          # then open http://127.0.0.1:8090/
+```
+
+The demo runs the real dashboard on sample keys and synthetic usage, on `127.0.0.1` only, with
+in-memory stand-ins for Key Vault, API Management and Foundry. It needs Node.js 20+ and nothing
+else ([`scripts/dashboard-demo.mjs`](scripts/dashboard-demo.mjs)).
+
+### Install on Azure
+
+```powershell
+# 1. Network, private Foundry, APIM Standard v2   (docs/PRIVATE-ENDPOINT.md)
+az deployment group create -g <rg> --template-file infra/examples/private-foundry-test.bicep --parameters "@params.json"
+# 2. Gateway: short-lived key routes /v1 and /claude
+./admin.ps1                     # option 1
+# 3. Product key routes and the private Key Vault
+./poc/products-keyvault/scripts/Deploy-Poc.ps1 -Subscription <sub> -ResourceGroup <rg> -ApimName <apim> -FoundryAccountName <foundry>
+./poc/products-keyvault/scripts/Invoke-PocRunner.ps1 -Subscription <sub> -ResourceGroup <rg> -VaultName <vault> -Step Deploy
+# 4. Dashboard: Container Apps by default; -Hosting AppService for App Service + Function App
+./scripts/Deploy-Console.ps1 -Subscription <sub> -ResourceGroup <rg>
+```
+
+**[→ Install and setup guide](docs/INSTALL.md)** covers:
+- requirements and permissions;
+- each step, and what it creates and grants;
+- the first sign-in;
+- a first key in Claude Code;
+- troubleshooting and removal.
+
+### Use it
+
+| | |
+|---|---|
+| ![Overview: active key counts, tokens and requests, short-lived and product usage over time](docs/images/console/console-overview.png) | **Overview.** Active short-lived and product keys, tokens and requests for 24 h, 7 d or 30 d, and both key types on one chart. |
+| ![Short-lived keys: usage, by model, and the key list with active and archived views](docs/images/console/console-keys.png) | **Short-lived keys** and **Product keys** are separate pages. Each has usage by day and by model, an active or archived key list, search, and a per-key drawer with its own chart. |
+| ![Issue a short-lived key: issued to, subject, one or several models, start delay, validity and budget](docs/images/console/console-issue-signed.png) | **Issue one.** Choose **One model** or **Several models** explicitly. **Starts in** delays activation, as `admin.ps1` does. The key is shown once, masked, with Copy. |
+| ![Bulk issue: shared settings and CSV rows](docs/images/console/console-short-lived-bulk.png) | **Issue in bulk.** Paste or upload CSV rows. The dashboard returns `keys.csv`, to send each person their row, and `index.csv`, which holds no keys. |
+| ![Product key issue: Foundry deployments, monthly budget, rotation and expiry](docs/images/console/console-issue-product.png) | **Product keys** grant Foundry deployments. The dashboard creates one APIM product per model set, so the key is refused for any other model (403). |
+| ![Models: pinned aliases per route and the Foundry deployments](docs/images/console/console-models.png) | **Models.** Lists the Foundry deployments and pins or unpins aliases, with the same rules as `admin.ps1`. |
+| ![Export: an encrypted bundle signed by the Key Vault key](docs/images/console/console-export.png) | **Export.** An AES-256-GCM bundle signed by a Key Vault key. The recipient verifies and opens it with `scripts/open-bundle.mjs`. |
+
+Expired or revoked keys move to **Archived** automatically. Product keys are suspended first.
+Archived keys are deleted 30 days later. **[→ Using the dashboard](docs/CONSOLE.md)** has every
+action.
+
+---
 ## What a participant gets
 
 Two environment variables and one config file. That is the whole setup.
@@ -77,6 +156,10 @@ The notebook reads the key from the environment and never writes it to a cell, w
 ---
 
 ## Quickstart
+
+The terminal workflow. One interactive script deploys the gateway and issues keys.
+
+![admin.ps1 menu](docs/images/admin-menu.png)
 
 ```powershell
 git clone https://github.com/naveenneog/foundry-hackathon-gateway
@@ -200,35 +283,10 @@ success first and traffic used the private path again about 1–1½ minutes late
 Step-by-step portal and CLI instructions, verification and teardown:
 [docs/PRIVATE-ENDPOINT.md](docs/PRIVATE-ENDPOINT.md).
 
-### Key Dashboard: admin-only key issue and distribution
+### Key Dashboard
 
-The Key Dashboard is an Entra-protected web app for gateway administrators. Only `Console.Admin`
-can open it or use its APIs. The email under **Issued to** identifies who a key is for; it does
-not give that person access to the dashboard. Keys are distributed by an admin through direct
-copy, the script-compatible `keys.csv` / key-free `index.csv`, or an encrypted bundle.
-
-The dashboard keeps short-lived HS256 keys separate from long-lived APIM product keys. A
-short-lived key can start immediately or at a chosen hour in the future; its expiry window
-starts at activation. Product keys support one or several explicitly selected Foundry
-deployments, two-slot rotation and optional automation. Usage is reported per key and separately
-for each key type.
-
-The deployment reuses the existing APIM, private Key Vault, Foundry account, workspace and VNet.
-Choose the hosting path at install. Container Apps is the deployed path; App Service plus a
-Function App is available for subscriptions with quota. The IP rule is optional. Entra sign-in
-and admin-role assignment are always required.
-
-```powershell
-# No IP rule; Entra sign-in remains required
-pwsh scripts/Deploy-Console.ps1 -Subscription <subscription> -ResourceGroup <rg>
-
-# Optional fixed IP or narrow NAT range
-pwsh scripts/Deploy-Console.ps1 -Subscription <subscription> -ResourceGroup <rg> `
-  -AllowedIp 203.0.113.7
-```
-
-The [Key Dashboard guide](docs/CONSOLE.md) covers deployment, key issue and distribution,
-model pinning, usage, archive/deletion and bundle opening. Decisions: ADR-0013 through ADR-0016.
+The web app for issuing, distributing and tracking keys is described [at the top of this page](#key-dashboard).
+Install: [docs/INSTALL.md](docs/INSTALL.md). Use: [docs/CONSOLE.md](docs/CONSOLE.md).
 
 ---
 
@@ -460,6 +518,7 @@ scripts/
   Test-Governance.ps1        proves each control fires, per route
   Deploy-Console.ps1         selects and deploys one dashboard hosting path
   open-bundle.mjs            verifies and decrypts a Key Dashboard export bundle
+  dashboard-demo.mjs         runs the Key Dashboard locally on sample data, no Azure
 functions/
   sweep.mjs                  App Service option: v4 timer function for key automation
 examples/
@@ -468,7 +527,8 @@ tests/                       652 tests, including tamper and alg:none attacks
 docs/adr/                    architecture decisions and their reasoning
 docs/UNKNOWNS.md             what we did not know, and how each was closed
 docs/PRIVATE-ENDPOINT.md     Foundry behind a private endpoint: requirements, steps, evidence
-docs/CONSOLE.md              Key Dashboard: deploy, issue, CSV, usage, bundles, measurements
+docs/INSTALL.md              Key Dashboard: install and setup, architecture, troubleshooting
+docs/CONSOLE.md              Key Dashboard: issue, CSV, usage, bundles, measurements
 ```
 
 `src/*.mjs` is the canonical statement of the rules; the policies and the PowerShell are

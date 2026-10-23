@@ -130,6 +130,7 @@ resource web 'Microsoft.Web/sites@2024-04-01' = {
       healthCheckPath: '/healthz'
       appSettings: concat(common, [
         { name: 'FOUNDRY_ACCOUNT_ID', value: foundry.id }
+        { name: 'GATEWAY_VNET_NAME', value: vnetName }
         { name: 'LOG_WORKSPACE_ID', value: workspace.properties.customerId }
         { name: 'PORT', value: '8080' }
         { name: 'WEBSITES_PORT', value: '8080' }

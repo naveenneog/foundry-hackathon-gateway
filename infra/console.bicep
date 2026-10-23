@@ -180,6 +180,7 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
           resources: { cpu: json('0.5'), memory: '1Gi' }
           env: concat(settings, [
             { name: 'FOUNDRY_ACCOUNT_ID', value: foundry.id }
+            { name: 'GATEWAY_VNET_NAME', value: vnetName }
             { name: 'LOG_WORKSPACE_ID', value: workspace.properties.customerId }
             // The cron job below runs the automation; the dashboard never sweeps.
             { name: 'ROTATION_SWEEP_MINUTES', value: '0' }

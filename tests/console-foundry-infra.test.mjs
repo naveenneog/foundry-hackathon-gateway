@@ -119,6 +119,7 @@ function az {
     return '${JSON.stringify({ id: account, kind: options.kind ?? "AIServices", properties: { endpoint: "https://models.cognitiveservices.azure.com/" } })}'
   }
   if ($args[0] -eq 'apim') { return '${JSON.stringify({ identity: { principalId: options.principal ?? principal } })}' }
+  if ($args[0] -eq 'network') { return '${JSON.stringify(options.vnetLocation ?? "westus3")}' }
   if ($args[0] -eq 'role' -and $args[1] -eq 'definition') {
     return '${JSON.stringify([{ name: options.badRole ? principal : options.kind === "OpenAI" ? "5e0bd9bd-7b93-4f28-af87-19fc36ad61bd" : "a97b65f3-24c7-4388-baec-2e87135dc908", roleType: "BuiltInRole" }])}'
   }
@@ -129,10 +130,12 @@ function az {
   if ($args[0] -eq 'role' -and $args[1] -eq 'assignment' -and $args[2] -eq 'create') {
     $global:grants += ,@($args)
     ${options.deny ? "$global:LASTEXITCODE = 1; return 'DENIED'" : "return '{}'"}
+  } elseif ($args[0] -eq 'deployment' -and $args[1] -eq 'group' -and $args[2] -eq 'create') {
+    ${options.networkDenied ? "$global:LASTEXITCODE = 1; return 'DENIED'" : `return '{"properties":{"provisioningState":"${options.networkState ?? "Succeeded"}"}}'`}
   } else { throw 'Unexpected az command' }
 }
 try {
-  & ${q(resolve(connectPath))} ${Object.entries(params).map(([k, v]) => `-${k} ${q(v)}`).join(" ")}
+  & ${q(resolve(connectPath))} ${Object.entries(params).map(([k, v]) => typeof v === "boolean" ? `-${k}:$${v}` : `-${k} ${q(v)}`).join(" ")}
   $outcome = 'ok'
 } catch { $outcome = $_.Exception.Message }
 Write-Output ('RESULT:' + (@{ outcome = $outcome; calls = @($global:calls); grants = @($global:grants) } | ConvertTo-Json -Depth 10 -Compress))
@@ -186,6 +189,110 @@ test("P56 inference helper is idempotent, fails closed on invalid identities/kin
   const denied = connect({}, { deny: true });
   assert.notEqual(result(denied).outcome, "ok");
   assert.doesNotMatch(denied.stdout.split("RESULT:")[0], /role grant configured/i);
+});
+
+test("P56 private endpoint network repair requires an explicit operator switch", () => {
+  const defaults = result(connect());
+  assert.equal(defaults.outcome, "ok");
+  assert.equal(defaults.calls.filter((c) => c[0] === "deployment").length, 0);
+  const configured = connect({ ConfigurePrivateEndpoint: true, VnetName: "vnet-gateway" });
+  const got = result(configured);
+  assert.equal(got.outcome, "ok");
+  const calls = got.calls.filter((c) => c[0] === "deployment");
+  assert.equal(calls.length, 1);
+  const call = calls[0];
+  assert.deepEqual(call.slice(0, 3), ["deployment", "group", "create"]);
+  assert.equal(call[call.indexOf("--subscription") + 1], sub);
+  assert.equal(call[call.indexOf("--resource-group") + 1], "rg-apim");
+  assert.equal(call[call.indexOf("--mode") + 1], "Incremental", "no deletion of existing resources");
+  assert.equal(resolve(call[call.indexOf("--template-file") + 1]), resolve("infra/console-foundry-network.bicep"));
+  for (const p of ["vnetName=vnet-gateway", "privateEndpointSubnetName=snet-pe", `foundryAccountId=${account}`, "location=westus3"]) assert.ok(call.includes(p), p);
+  const vnetRead = got.calls.find((c) => c[0] === "network");
+  assert.deepEqual(vnetRead.slice(0, 3), ["network", "vnet", "show"]);
+  assert.equal(vnetRead[vnetRead.indexOf("--name") + 1], "vnet-gateway");
+  assert.equal(vnetRead[vnetRead.indexOf("--resource-group") + 1], "rg-apim");
+  assert.equal(vnetRead[vnetRead.indexOf("--subscription") + 1], sub);
+  assert.match(configured.stdout, /private endpoint.*configured/i);
+  assert.doesNotMatch(configured.stdout, /no firewall or DNS settings were changed/);
+  const custom = result(connect({ ConfigurePrivateEndpoint: true, VnetName: "vnet-gateway", PrivateEndpointSubnetName: "custom-pe" }));
+  assert.ok(custom.calls.find((c) => c[0] === "deployment").includes("privateEndpointSubnetName=custom-pe"));
+});
+
+test("P56 private endpoint network gate rejects missing or unsafe names before the first Azure call", () => {
+  for (const changes of [
+    { ConfigurePrivateEndpoint: true },
+    { ConfigurePrivateEndpoint: true, VnetName: "" },
+    { ConfigurePrivateEndpoint: true, VnetName: "bad/child" },
+    { ConfigurePrivateEndpoint: true, VnetName: "vnet&(Write-Output INJECTION_MARKER)" },
+    { ConfigurePrivateEndpoint: true, VnetName: "vnet", PrivateEndpointSubnetName: "" },
+    { ConfigurePrivateEndpoint: true, VnetName: "vnet", PrivateEndpointSubnetName: "../child" },
+    { ConfigurePrivateEndpoint: true, VnetName: "vnet", PrivateEndpointSubnetName: "subnet&(Write-Output INJECTION_MARKER)" },
+    { VnetName: "vnet%PATH%" },
+  ]) {
+    const r = connect(changes);
+    const got = result(r);
+    assert.notEqual(got.outcome, "ok", JSON.stringify(changes));
+    assert.match(got.outcome, /invalid|required|unsafe/i, "the network validation gate, not parameter binding, refused the input");
+    assert.deepEqual(got.calls, [], JSON.stringify(changes));
+    assert.doesNotMatch(r.stdout, /^INJECTION_MARKER$/m);
+  }
+});
+
+test("P56 private endpoint network failure is not reported as configured", () => {
+  for (const options of [{ networkDenied: true }, { networkState: "Failed" }]) {
+    const r = connect({ ConfigurePrivateEndpoint: true, VnetName: "vnet-gateway" }, options);
+    const got = result(r);
+    assert.notEqual(got.outcome, "ok");
+    assert.match(got.outcome, /private endpoint|network/i);
+    assert.doesNotMatch(r.stdout.split("RESULT:")[0], /private endpoint.*configured/i);
+  }
+});
+
+test("P56 private endpoint location must come from nonempty safe existing VNet metadata", () => {
+  for (const vnetLocation of ["", "westus3&(Write-Output INJECTION_MARKER)"]) {
+    const r = connect({ ConfigurePrivateEndpoint: true, VnetName: "vnet-gateway" }, { vnetLocation });
+    const got = result(r);
+    assert.notEqual(got.outcome, "ok");
+    assert.equal(got.calls.filter((c) => c[0] === "deployment").length, 0);
+    assert.doesNotMatch(r.stdout, /^INJECTION_MARKER$/m);
+  }
+});
+
+const networkContract = (source) => {
+  assert.match(source, /resource vnet 'Microsoft\.Network\/virtualNetworks@[^']+' existing/);
+  assert.match(source, /resource subnet 'Microsoft\.Network\/virtualNetworks\/subnets@[^']+' existing/);
+  assert.match(source, /resource dnsZones 'Microsoft\.Network\/privateDnsZones@[^']+' existing/);
+  for (const zone of ["privatelink.cognitiveservices.azure.com", "privatelink.openai.azure.com", "privatelink.services.ai.azure.com"]) assert.ok(source.includes(`'${zone}'`), zone);
+  assert.match(source, /param location string/);
+  assert.match(source, /location: location/);
+  assert.match(source, /uniqueString\(toLower\(foundryAccountId\)\)/);
+  assert.match(source, /privateLinkServiceId: foundryAccountId/);
+  assert.match(source, /groupIds: \['account'\]/);
+  assert.match(source, /subnet: \{ id: subnet\.id \}/);
+  assert.match(source, /privateEndpoints\/privateDnsZoneGroups@/);
+  assert.match(source, /privateDnsZoneId: dnsZones\[i\]\.id/);
+  assert.doesNotMatch(source, /Microsoft\.CognitiveServices\/accounts@|publicNetworkAccess|networkAcls|virtualNetworkLinks@/);
+};
+test("P56 network template only adds a deterministic endpoint and its existing-zone registrations", () => {
+  networkContract(read("infra/console-foundry-network.bicep"));
+});
+test("P56 network contract detector rejects accidental network recreation and public access changes", () => {
+  const source = read("infra/console-foundry-network.bicep");
+  for (const bad of [
+    source.replace(/(virtualNetworks@[^']+') existing/, "$1"),
+    source.replace(/(privateDnsZones@[^']+') existing/, "$1"),
+    source.replace("privateLinkServiceId: foundryAccountId", "privateLinkServiceId: 'different-account'"),
+    source.replace("'privatelink.services.ai.azure.com'", "'wrong-zone'"),
+    `${source}\n// publicNetworkAccess: 'Enabled'`,
+  ]) assert.throws(() => networkContract(bad));
+});
+test("P56 dashboard hosting exposes the gateway VNet name without adding it to automation", () => {
+  for (const path of ["infra/console.bicep", "infra/console-appservice.bicep"]) {
+    const source = read(path);
+    assert.match(source, /\{ name: 'GATEWAY_VNET_NAME', value: vnetName \}/);
+    assert.equal(source.match(/name: 'GATEWAY_VNET_NAME'/g)?.length, 1, path);
+    assert.ok(source.indexOf("name: 'GATEWAY_VNET_NAME'") > source.indexOf("name: 'FOUNDRY_ACCOUNT_ID'"), path);
+  }
 });
 
 test("P56 discovery custom role safely reuses only the exact definition, never overwrites a collision", () => {

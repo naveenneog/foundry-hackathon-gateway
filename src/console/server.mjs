@@ -29,6 +29,10 @@ const STATIC = {
   "/views-drawer.js": ["views-drawer.js", "text/javascript; charset=utf-8"],
   "/views-issue.js": ["views-issue.js", "text/javascript; charset=utf-8"],
   "/views-admin.js": ["views-admin.js", "text/javascript; charset=utf-8"],
+  "/foundry.js": ["foundry.js", "text/javascript; charset=utf-8"],
+  "/foundry-picker.js": ["foundry-picker.js", "text/javascript; charset=utf-8"],
+  "/views-foundry.js": ["views-foundry.js", "text/javascript; charset=utf-8"],
+  "/help.js": ["help.js", "text/javascript; charset=utf-8"],
 };
 const MAX_BODY = 64 * 1024;
 const SECURITY_HEADERS = {

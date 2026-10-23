@@ -69,4 +69,7 @@ test("unknown/unattached selection cannot silently issue against the default acc
   await assert.rejects(h.service.issueJwt(ADMIN, { ...jwt, foundryId: other }), { status: 409 });
   await assert.rejects(h.service.issueProductKey(ADMIN, { owner: jwt.owner, name: "nope", foundryId: other, models: ["deepseek-v4-flash"], monthlyTokens: 1000 }), { status: 409 });
   assert.equal(h.arm.subscriptions.size, 0);
+  for (const foundryId of [false, 0, {}, []]) {
+    await assert.rejects(h.service.issueJwt(ADMIN, { ...jwt, foundryId }), { status: 400 }, "malformed IDs are boundary errors");
+  }
 });

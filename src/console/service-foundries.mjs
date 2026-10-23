@@ -29,6 +29,7 @@ export function foundriesApi({ foundry, vault, arm, gatewayUrl, connectionTempla
   }
 
   async function connectionFor(id, { allowUnattached = false } = {}) {
+    if (id !== undefined && id !== null && typeof id !== "string") throw new ServiceError(400, "Foundry selection must be an account resource id.");
     if (!id || id.toLowerCase() === defaultId?.toLowerCase()) return { ...legacy, connected: true };
     validateId(id);
     const shell = connectionInfo({ id, name: id.split("/").at(-1) }, gatewayUrl);

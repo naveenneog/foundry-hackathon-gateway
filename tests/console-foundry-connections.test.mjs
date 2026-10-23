@@ -67,3 +67,16 @@ test("attachment provisions full policy copies, account-local model maps and ope
   assert.equal(arm.namedValues.get(c.mapNames.openai).value, "pinned=deployment");
   assert.equal(arm.namedValues.get("hackgw-model-map").value, "flash=deepseek-v4-flash");
 });
+
+test("new and repaired APIs fail closed before any operation becomes reachable", async () => {
+  const arm = fakeArm();
+  const operation = arm.putOperation;
+  arm.putOperation = async (apiId, id, properties) => {
+    assert.ok(arm.apis.get(apiId).policy?.includes("attachment_incomplete"), "deny policy precedes reachable operations");
+    return operation(apiId, id, properties);
+  };
+  const c = connectionInfo(account, "https://gw.example.net");
+  await provisionConnection(arm, c, account, templates);
+  await provisionConnection(arm, c, account, templates);
+  assert.ok([...arm.apis.values()].every((a) => !a.policy.includes("attachment_incomplete")));
+});

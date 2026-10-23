@@ -38,6 +38,7 @@ const operations = {
   productClaude: [["messages", "POST", "/v1/messages"], ["count-tokens", "POST", "/v1/messages/count_tokens"]],
 };
 const suffix = { openai: "v1", claude: "claude", productOpenai: "poc/v1", productClaude: "poc/claude" };
+const INCOMPLETE_POLICY = '<policies><inbound><return-response><set-status code="403" reason="Forbidden" /><set-body>attachment_incomplete</set-body></return-response></inbound><backend><base /></backend><outbound><base /></outbound><on-error><base /></on-error></policies>';
 
 function compactPolicy(xml) {
   // The APIM policy PUT measured a 16 KiB payload limit. Remove only comments and formatting,
@@ -78,6 +79,8 @@ export async function provisionConnection(arm, connection, account, templates) {
       subscriptionRequired: type.startsWith("product"),
       ...(type.startsWith("product") ? { subscriptionKeyParameterNames: { header: route === "claude" ? "x-api-key" : "api-key", query: "subscription-key" } } : {}),
     });
+    // Never expose a route without its governance, including during partial provisioning/retry.
+    await arm.setApiPolicy(apiId, INCOMPLETE_POLICY);
     for (const [id, method, urlTemplate] of ops) {
       await arm.putOperation(apiId, id, { displayName: id, method, urlTemplate, responses: [{ statusCode: 200 }] });
     }

@@ -55,7 +55,8 @@ copied setup and everywhere the URL is shown.
 Commits: `5fda509` plan, `798e103` range (server), `9a6ab52` range (UI), `0e18208` chargeback
 (server), `c9d039d` chargeback (UI), `648fb11` gateway URL (server), `8f21105` Settings,
 `8168b0f` demo, `f086615` help, `165b496` chart table overflow, `03d616a` review fixes, `f7de90d`
-guides, and the ledger commit that adds this entry.
+guides, `3693006` this entry, and `35c1ef6`, which renames the Key Vault secret-name constant to
+`GATEWAY_URL_SECRET_NAME` after the gate's credential scan read the old name as a credential.
 
 Verified:
 - `npm test` 786/786 (734 before): 52 new tests in eight new files and the demo test. Three

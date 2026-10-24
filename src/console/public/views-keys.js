@@ -4,13 +4,14 @@
 import { apiPath, cachedGet, invalidate, keyPath, post } from "./api.js";
 import { usageBody } from "./charts.js";
 import {
-  addChildren, badge, busy, confirmDialog, el, emailText, emptyState, errorState, icon, loadingState, modelChips, periodSwitch,
+  addChildren, badge, busy, confirmDialog, el, emailText, emptyState, errorState, icon, loadingState, modelChips,
   segmented, setChildren, statusBadge, toast, uid,
 } from "./dom.js";
 import {
-  deleteDate, fmtCompact, fmtDate, fmtDateTime, fmtInt, fmtRelative, fmtShortDateTime, keyStatus, keyTitle, KINDS, matchesQuery, periodLabel, sortKeys,
-  STATUSES, withUsage,
+  deleteDate, fmtCompact, fmtDate, fmtDateTime, fmtInt, fmtRelative, fmtShortDateTime, keyStatus, keyTitle, KINDS, matchesQuery, periodKey, periodLabel,
+  periodQuery, sortKeys, STATUSES, withUsage,
 } from "./lib.js";
+import { periodControl } from "./period.js";
 import { revealKey } from "./secret.js";
 import { keyFoundry } from "./foundry.js";
 import { openKeyDrawer } from "./views-drawer.js";
@@ -52,7 +53,7 @@ export function renderKeysView(root, ctx, kind, sub) {
   const usageSlot = el("div", {});
   const usageCard = el("section", { class: "card", "aria-labelledby": usageId },
     el("div", { class: "card-head" }, el("h2", { class: "card-title", id: usageId }, "Usage"),
-      periodSwitch(ctx.period, (d) => { ctx.setPeriod(d); loadUsage(false); })),
+      periodControl(ctx.period, (p) => { ctx.setPeriod(p); loadUsage(false); })),
     usageSlot);
   const listId = uid("list");
   const listSlot = el("div", {});
@@ -93,15 +94,15 @@ export function renderKeysView(root, ctx, kind, sub) {
   refresh.addEventListener("click", busy(refresh, async () => { await Promise.all([loadUsage(true), loadKeys(true)]); }));
 
   async function loadUsage(fresh) {
-    const days = ctx.period;
+    const period = ctx.period;
     usage = null;
     setChildren(usageSlot, loadingState("Loading usage…", 2));
     renderList();
     try {
-      const data = await cachedGet(apiPath("/api/usage", { kind, days }), { fresh });
-      if (days !== ctx.period) return;
+      const data = await cachedGet(apiPath("/api/usage", { kind, ...periodQuery(period) }), { fresh });
+      if (periodKey(period) !== periodKey(ctx.period)) return;
       usage = data;
-      setChildren(usageSlot, usageBody(kind, data, days));
+      setChildren(usageSlot, usageBody(kind, data, period));
     } catch (error) {
       usage = { error };
       setChildren(usageSlot, errorState(error, () => loadUsage(true)));

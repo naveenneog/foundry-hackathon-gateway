@@ -23,6 +23,7 @@ const STATIC = {
   "/api.js": ["api.js", "text/javascript; charset=utf-8"],
   "/dom.js": ["dom.js", "text/javascript; charset=utf-8"],
   "/charts.js": ["charts.js", "text/javascript; charset=utf-8"],
+  "/period.js": ["period.js", "text/javascript; charset=utf-8"],
   "/secret.js": ["secret.js", "text/javascript; charset=utf-8"],
   "/views-overview.js": ["views-overview.js", "text/javascript; charset=utf-8"],
   "/views-keys.js": ["views-keys.js", "text/javascript; charset=utf-8"],

@@ -2,7 +2,7 @@
 // there is no HTML-string path anywhere, so key metadata cannot inject markup. The helpers touch
 // `document` only when called, so Node tests can import this module with a stub document.
 
-import { fmtInt, PERIODS } from "./lib.js";
+import { fmtInt } from "./lib.js";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 const BLOCKED = new Set(["style", "innerhtml", "outerhtml", "srcdoc"]);
@@ -339,10 +339,6 @@ export function badge(text, tone, title) {
 export const statusBadge = (status) => badge(status, { active: "ok", scheduled: "info", suspended: "warn", revoked: "bad", expired: "grey", archived: "archived" }[status] ?? "grey");
 export const kindBadge = (kind) => badge(kind === "jwt" ? "Short-lived" : "Product", kind === "jwt" ? "jwt" : "product");
 export const routeBadge = (route) => (route ? badge(route === "claude" ? "Claude" : "OpenAI", `route-${route}`, route === "claude" ? "Claude route (/claude)" : "OpenAI-compatible route (/v1)") : null);
-
-export function periodSwitch(value, onChange) {
-  return segmented({ label: "Usage period", value, cls: "seg-sm", onChange, options: PERIODS.map((d) => ({ value: d, label: d === 1 ? "24 h" : `${d} d` })) });
-}
 
 export function kpi({ label, value, sub, cls, exact }) {
   return el("div", { class: ["kpi", cls] },

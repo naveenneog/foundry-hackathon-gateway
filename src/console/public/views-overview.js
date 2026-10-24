@@ -3,8 +3,9 @@
 
 import { apiPath, cachedGet, invalidate, post } from "./api.js";
 import { barList, donut, timeChart } from "./charts.js";
-import { addChildren, busy, confirmDialog, el, errorState, icon, kpi, loadingState, periodSwitch, setChildren, toast, uid } from "./dom.js";
-import { alignSeries, DAY, fmtCompact, fmtInt, keyStatus, keyTitle, KINDS, mergeByModel, periodLabel } from "./lib.js";
+import { addChildren, busy, confirmDialog, el, errorState, icon, kpi, loadingState, setChildren, toast, uid } from "./dom.js";
+import { alignSeries, DAY, fmtCompact, fmtInt, keyStatus, keyTitle, KINDS, mergeByModel, periodDays, periodKey, periodPhrase, periodQuery } from "./lib.js";
+import { periodControl } from "./period.js";
 import { openKeyDrawer } from "./views-drawer.js";
 
 const TOP_KEYS = 8;
@@ -37,24 +38,24 @@ export function renderOverview(root, ctx) {
     el("header", { class: "view-head" },
       el("div", {}, el("h1", { class: "view-title", tabindex: "-1" }, "Overview"),
         el("p", { class: "lede" }, "Every key and its usage, short-lived and product.")),
-      el("div", { class: "view-actions" }, periodSwitch(ctx.period, (d) => { ctx.setPeriod(d); load(false); }), refresh, sweep)),
+      el("div", { class: "view-actions" }, periodControl(ctx.period, (p) => { ctx.setPeriod(p); load(false); }), refresh, sweep)),
     kpis,
     card("Tokens over time", chartSlot),
     el("div", { class: "grid-2" }, card("Top keys", topSlot), card("By model", modelSlot)),
     notes);
 
   async function load(fresh) {
-    const days = ctx.period;
+    const period = ctx.period;
     setChildren(kpis, loadingState("Loading the overview…", 1));
     for (const slot of [chartSlot, topSlot, modelSlot]) setChildren(slot, loadingState("Loading…", 3));
     setChildren(notes);
     const [jk, pk, ju, pu] = await Promise.allSettled([
       cachedGet(apiPath("/api/keys", { kind: "jwt", status: "active" }), { fresh }),
       cachedGet(apiPath("/api/keys", { kind: "product", status: "active" }), { fresh }),
-      cachedGet(apiPath("/api/usage", { kind: "jwt", days }), { fresh }),
-      cachedGet(apiPath("/api/usage", { kind: "product", days }), { fresh }),
+      cachedGet(apiPath("/api/usage", { kind: "jwt", ...periodQuery(period) }), { fresh }),
+      cachedGet(apiPath("/api/usage", { kind: "product", ...periodQuery(period) }), { fresh }),
     ]);
-    if (days !== ctx.period || !root.isConnected) return;
+    if (periodKey(period) !== periodKey(ctx.period) || !root.isConnected) return;
     const keys = { jwt: jk.status === "fulfilled" ? jk.value.keys ?? [] : null, product: pk.status === "fulfilled" ? pk.value.keys ?? [] : null };
     const usage = { jwt: ju.status === "fulfilled" ? ju.value : null, product: pu.status === "fulfilled" ? pu.value : null };
     const failures = [jk, pk, ju, pu].filter((r) => r.status === "rejected").map((r) => r.reason);
@@ -65,8 +66,8 @@ export function renderOverview(root, ctx) {
     setChildren(kpis,
       kpi({ label: "Active short-lived keys", value: keys.jwt ? fmtInt(count("jwt")) : "—", exact: count("jwt") ?? undefined, cls: "kpi-jwt", sub: keys.jwt ? othersLine(keys.jwt) : "could not be loaded" }),
       kpi({ label: "Active product keys", value: keys.product ? fmtInt(count("product")) : "—", exact: count("product") ?? undefined, cls: "kpi-product", sub: keys.product ? othersLine(keys.product) : "could not be loaded" }),
-      kpi({ label: `Tokens, last ${periodLabel(days)}`, value: fmtCompact(total("tokens")), exact: total("tokens"), sub: split("tokens") }),
-      kpi({ label: `Requests, last ${periodLabel(days)}`, value: fmtCompact(total("requests")), exact: total("requests"), sub: split("requests") }));
+      kpi({ label: `Tokens, ${periodPhrase(period)}`, value: fmtCompact(total("tokens")), exact: total("tokens"), sub: split("tokens") }),
+      kpi({ label: `Requests, ${periodPhrase(period)}`, value: fmtCompact(total("requests")), exact: total("requests"), sub: split("requests") }));
 
     const kinds = ["jwt", "product"].filter((kind) => usage[kind]);
     if (!kinds.length) {
@@ -75,12 +76,12 @@ export function renderOverview(root, ctx) {
       return;
     }
     const { times, step, values } = alignSeries(kinds.map((kind) => usage[kind].series), {
-      days, from: usage[kinds[0]].from, to: usage[kinds[0]].to,
+      days: periodDays(period), from: usage[kinds[0]].from, to: usage[kinds[0]].to,
     });
     const unit = step >= DAY ? "day" : "hour";
     const noted = kinds.some((kind) => usage[kind].note);
     setChildren(chartSlot,
-      timeChart({ title: `Tokens per ${unit}, short-lived and product keys, last ${periodLabel(days)}`, times, step, height: 260,
+      timeChart({ title: `Tokens per ${unit}, short-lived and product keys, ${periodPhrase(period)}`, times, step, height: 260,
         series: kinds.map((kind, i) => ({ name: KINDS[kind].label, cls: KINDS[kind].cls, values: values[i] })) }),
       el("p", { class: "field-hint" }, `${unit === "day" ? "Days are UTC days." : "Hours are in your local time."}${noted ? "" : " Usage arrives a few minutes after each call."}`));
 

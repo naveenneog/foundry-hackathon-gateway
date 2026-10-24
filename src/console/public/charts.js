@@ -4,7 +4,7 @@
 
 import { addChildren, el, kpi, setChildren, svgEl, uid } from "./dom.js";
 import {
-  alignSeries, DAY, describeSeries, fmtBucket, fmtCompact, fmtInt, fmtPercent, KINDS, labelIndices, niceTicks, periodLabel, scaleLinear, topWithOther,
+  alignSeries, DAY, describeSeries, fmtBucket, fmtCompact, fmtInt, fmtPercent, KINDS, labelIndices, niceTicks, periodDays, periodPhrase, scaleLinear, topWithOther,
 } from "./lib.js";
 
 // One ResizeObserver for every chart. A chart draws at its container's pixel width, so text keeps
@@ -226,11 +226,11 @@ export function donut({ title, items, centerLabel = "tokens", maxSlices = 6 }) {
 
 /**
  * One usage response for a kind, or for one key: totals, tokens over time and tokens by model.
- * `title` names the chart for assistive technology.
+ * `period` is a number of days or { from, to }; `title` names the chart for assistive technology.
  */
-export function usageBody(kind, data, days, { title = KINDS[kind].title, compact = false } = {}) {
+export function usageBody(kind, data, period, { title = KINDS[kind].title, compact = false } = {}) {
   const total = data?.total ?? {};
-  const { times, step, values } = alignSeries([data?.series], { days, from: data?.from, to: data?.to });
+  const { times, step, values } = alignSeries([data?.series], { days: periodDays(period), from: data?.from, to: data?.to });
   const unit = step >= DAY ? "day" : "hour";
   const cls = KINDS[kind].cls;
   const n = (v) => Number(v) || 0;
@@ -243,7 +243,7 @@ export function usageBody(kind, data, days, { title = KINDS[kind].title, compact
     el("div", { class: "usage-grid" },
       el("div", { class: "usage-chart" },
         el("h3", { class: "section-title" }, `Tokens per ${unit}`),
-        timeChart({ title: `${title}: tokens per ${unit}, last ${periodLabel(days)}`, times, step, height: compact ? 200 : 240, series: [{ name: title, cls, values: values[0] }] }),
+        timeChart({ title: `${title}: tokens per ${unit}, ${periodPhrase(period)}`, times, step, height: compact ? 200 : 240, series: [{ name: title, cls, values: values[0] }] }),
         el("p", { class: "field-hint" }, `${unit === "day" ? "Days are UTC days." : "Hours are in your local time."}${data?.note ? "" : " Usage arrives a few minutes after each call."}`)),
       el("div", { class: "usage-models" },
         el("h3", { class: "section-title" }, "By model"),

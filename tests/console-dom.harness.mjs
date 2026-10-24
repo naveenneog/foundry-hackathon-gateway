@@ -108,7 +108,9 @@ export function fakeDom() {
         node.dispatchEvent(fakeEvent("close", { bubbles: false }));
       },
     };
-    Object.defineProperties(node, { hidden: flag(attrs, "hidden"), disabled: flag(attrs, "disabled"), open: flag(attrs, "open") });
+    Object.defineProperties(node, { hidden: flag(attrs, "hidden"), disabled: flag(attrs, "disabled"), open: flag(attrs, "open"),
+      // As in a browser, the id property reflects the attribute ("" when there is none).
+      id: { get: () => attrs.get("id") ?? "", set: (v) => attrs.set("id", String(v)), enumerable: true } });
     return node;
   };
   Object.assign(doc, {

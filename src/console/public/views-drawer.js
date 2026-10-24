@@ -5,12 +5,13 @@
 import { apiPath, cachedGet, keyPath, post } from "./api.js";
 import { usageBody } from "./charts.js";
 import {
-  badge, busy, confirmDialog, el, errorState, field, icon, kindBadge, loadingState, openModal, periodSwitch, routeBadge, setChildren, showErrors, statusBadge, toast, uid,
+  badge, busy, confirmDialog, el, errorState, field, icon, kindBadge, loadingState, openModal, routeBadge, setChildren, showErrors, statusBadge, toast, uid,
 } from "./dom.js";
 import {
-  checkOwner, checkWhole, deleteDate, fmtDate, fmtDateTime, fmtInt, fmtRelative, isArchived, keyStatus, keyTitle, LIMITS, normalizeOwner, routeOf,
+  checkOwner, checkWhole, deleteDate, fmtDate, fmtDateTime, fmtInt, fmtRelative, isArchived, keyStatus, keyTitle, LIMITS, normalizeOwner, periodQuery, routeOf,
 } from "./lib.js";
 import { accountForKey, accountsOf, keyFoundry } from "./foundry.js";
+import { periodControl } from "./period.js";
 import { revealKey } from "./secret.js";
 
 /**
@@ -33,7 +34,7 @@ export async function openKeyDrawer(ctx, key, { opener, onChanged }) {
   const titleId = uid("drawer-title");
   const panel = el("div", { class: "drawer-panel" });
   const dialog = el("dialog", { class: "drawer", "aria-labelledby": titleId }, panel);
-  let days = ctx.period;
+  let period = ctx.period;
   let k = { ...key, status: keyStatus(key) };
 
   const after = async (message) => {
@@ -111,18 +112,18 @@ export async function openKeyDrawer(ctx, key, { opener, onChanged }) {
   function usageSection() {
     const slot = el("div", {});
     const load = async (fresh = false) => {
-      const want = days;
+      const want = period;
       setChildren(slot, loadingState("Loading usage…", 2));
       try {
-        const data = await cachedGet(apiPath(`/api/usage/${encodeURIComponent(k.name)}`, { days: want }), { fresh });
-        if (want === days) setChildren(slot, usageBody(k.kind, data, want, { title: keyTitle(k), compact: true }));
+        const data = await cachedGet(apiPath(`/api/usage/${encodeURIComponent(k.name)}`, periodQuery(want)), { fresh });
+        if (want === period) setChildren(slot, usageBody(k.kind, data, want, { title: keyTitle(k), compact: true }));
       } catch (error) {
         setChildren(slot, errorState(error, () => load(true)));
       }
     };
     load();
     return el("section", { class: "drawer-section" },
-      el("div", { class: "card-head" }, el("h3", { class: "section-title" }, "Usage"), periodSwitch(days, (d) => { days = d; load(); })),
+      el("div", { class: "card-head" }, el("h3", { class: "section-title" }, "Usage"), periodControl(period, (p) => { period = p; load(); })),
       slot);
   }
 

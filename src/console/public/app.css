@@ -242,6 +242,14 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--primary); }
 .seg-theme .seg-input:checked + .seg-face { background: var(--topbar-chip); color: var(--topbar-fg); box-shadow: none; }
 .seg-theme .seg-input:focus-visible + .seg-face { outline-color: var(--topbar-fg); }
 
+/* The usage period (period.js): presets and Custom, then the range's dates on their own line. */
+.period { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: flex-end; gap: 8px; min-width: 0; }
+.period-range { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: flex-end; gap: 8px 10px; flex-basis: 100%; min-width: 0; }
+.period-range[hidden] { display: none; }
+.period-range .field { gap: 4px; }
+.period-hint { flex-basis: 100%; text-align: right; }
+.input-date { width: auto; min-height: 32px; padding: 4px 8px; }
+
 .picker { display: grid; gap: 10px; min-width: 0; margin: 0; padding: 12px 14px 14px; border: 1px solid var(--border); border-radius: 10px; }
 .picker.is-invalid { border-color: var(--danger); }
 .picker > legend { padding: 0 6px; }

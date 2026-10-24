@@ -4,6 +4,8 @@
 export const HOUR = 3_600_000;
 export const DAY = 24 * HOUR;
 export const PERIODS = Object.freeze([1, 7, 30, 90]);
+/** A custom range reaches back 90 days, as far as AppMetrics keeps usage at no charge (server: usage.mjs). */
+export const RANGE_DAYS = 90;
 export const BATCH_SIZE = 50;
 export const ARCHIVE_DAYS = 30;
 const MAX_BUCKETS = 400;
@@ -28,7 +30,54 @@ export const KINDS = Object.freeze({
 export const ROUTE_LABEL = Object.freeze({ openai: "OpenAI-compatible", claude: "Claude" });
 export const STATUSES = Object.freeze(["active", "scheduled", "suspended", "revoked", "expired", "archived"]);
 
-export const periodLabel = (days) => (days === 1 ? "24 hours" : `${days} days`);
+// ── Usage periods: a preset number of days, or { from, to } whole UTC days (P59) ──
+
+const DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
+export const isoDay = (ms) => new Date(ms).toISOString().slice(0, 10);
+/** "YYYY-MM-DD" as 00:00 UTC that day, in ms; null for any other text or a date that does not exist. */
+export function utcDay(value) {
+  const m = typeof value === "string" ? DATE_RE.exec(value) : null;
+  if (!m) return null;
+  const ms = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  return isoDay(ms) === value ? ms : null;
+}
+export const isRange = (p) => typeof p === "object" && p !== null && typeof p.from === "string" && typeof p.to === "string";
+/** The usage API's parameters for a period: days, or from and to. */
+export const periodQuery = (p) => (isRange(p) ? { from: p.from, to: p.to } : { days: p });
+/** Equal periods have equal keys; a preset and a range of as many days do not. */
+export const periodKey = (p) => (isRange(p) ? `${p.from}..${p.to}` : `d${p}`);
+export const periodDays = (p) => (isRange(p) ? Math.round((utcDay(p.to) - utcDay(p.from)) / DAY) + 1 : Number(p));
+
+/** The dates a range may use: from 89 days before today to today, UTC. */
+export function rangeLimits(now = Date.now()) {
+  const today = Math.floor(now / DAY) * DAY;
+  return { min: isoDay(today - (RANGE_DAYS - 1) * DAY), max: isoDay(today) };
+}
+
+/** Field errors ({ from?, to? }) for a range, checked as the server checks it; empty when it is valid. */
+export function checkRange(from, to, now = Date.now()) {
+  const errors = {};
+  const a = utcDay(from);
+  const b = utcDay(to);
+  if (a === null) errors.from = "Choose the first day, as YYYY-MM-DD.";
+  if (b === null) errors.to = "Choose the last day, as YYYY-MM-DD.";
+  if (a === null || b === null) return errors;
+  const { min, max } = rangeLimits(now);
+  if (a < utcDay(min)) errors.from = `Usage is kept for ${RANGE_DAYS} days: start on ${min} or later.`;
+  if (b > utcDay(max)) errors.to = `The last day cannot be after today, ${max} (UTC).`;
+  else if (a > b) errors.to = "The last day must be on or after the first day.";
+  return errors;
+}
+
+/** "24 hours", "7 days", or a range's dates, such as "Oct 1 – 5, 2026" (UTC days). */
+export function periodLabel(p, locale) {
+  if (!isRange(p)) return p === 1 ? "24 hours" : `${p} days`;
+  const f = intl(Intl.DateTimeFormat, locale, { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+  return p.from === p.to ? f.format(utcDay(p.from)) : f.formatRange(utcDay(p.from), utcDay(p.to));
+}
+/** "last 7 days", or a range's dates marked UTC: completes "Tokens, …". */
+export const periodPhrase = (p, locale) => (isRange(p) ? `${periodLabel(p, locale)} (UTC)` : `last ${periodLabel(p)}`);
+
 /**
  * What a key is called in lists: the short-lived key's subject, else its name without the "poc-key-"
  * storage prefix. Labels are free text shared by many keys, so they never stand in for this.
@@ -403,7 +452,7 @@ export function alignSeries(lists, { days = 7, from, to, now = Date.now() } = {}
   const toMs = Date.parse(to);
   let end = floor(Number.isFinite(toMs) ? toMs : now);
   const fromMs = Date.parse(from);
-  let start = Number.isFinite(fromMs) ? floor(fromMs) : end - ((days <= 1 ? 24 : days) - 1) * step;
+  let start = Number.isFinite(fromMs) ? floor(fromMs) : end - ((step === HOUR ? days * 24 : days) - 1) * step;
   for (const pts of parsed) for (const [t] of pts) { start = Math.min(start, t); end = Math.max(end, t); }
   const count = Math.max(1, Math.min(Math.round((end - start) / step) + 1, MAX_BUCKETS));
   start = end - (count - 1) * step;

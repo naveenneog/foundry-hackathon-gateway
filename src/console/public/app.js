@@ -64,8 +64,9 @@ function createContext(me) {
     period: 7,
     /** Keys picked for export: name → { kind, title }. In memory only. */
     selection: new Map(),
-    setPeriod(days) {
-      ctx.period = days;
+    /** A number of days, or { from, to } whole UTC days (period.js). */
+    setPeriod(period) {
+      ctx.period = period;
     },
     select(key, on) {
       if (on) ctx.selection.set(key.name, { kind: key.kind, title: keyTitle(key) });

@@ -1,7 +1,7 @@
 #requires -Version 7
 <#
 .SYNOPSIS
-  Deploy the Key Dashboard (P46, P53) next to an existing gateway and POC vault, on the hosting
+  Deploy liteAPIM (the admin key dashboard; P46, P53) next to an existing gateway and POC vault, on the hosting
   chosen at install.
 
 .DESCRIPTION
@@ -313,4 +313,4 @@ for ($i = 0; $i -lt 30 -and -not $healthy; $i++) {
     try { $healthy = (Invoke-WebRequest "$url/healthz" -TimeoutSec 20).StatusCode -eq 200 } catch { Start-Sleep 10 }
 }
 if (-not $healthy) { throw "$url/healthz did not answer 200 within five minutes." }
-Write-Host "Key Dashboard ($Hosting): $url  (sign in as an assigned user; admins: open 'Signing secret' and migrate first)"
+Write-Host "liteAPIM ($Hosting): $url  (sign in as an admin, open Settings, then under Signing secret select Migrate from API Management)"

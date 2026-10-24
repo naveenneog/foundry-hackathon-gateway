@@ -168,3 +168,9 @@ test("deploy script: fails when the dashboard never answers /healthz, instead of
   assert.match(deploy, /\$healthy = \$false/);
   assert.match(deploy, /if \(-not \$healthy\) \{ throw/);
 });
+
+test("deploy script: calls the UI liteAPIM and points the admin at Settings, where the signing secret is since P59 (P60)", () => {
+  assert.match(deploy, /^\.SYNOPSIS\n {2}Deploy liteAPIM \(the admin key dashboard; P46, P53\) next to /m);
+  assert.match(deploy, /Write-Host "liteAPIM \(\$Hosting\): \$url {2}\(sign in as an admin, open Settings, then under Signing secret select Migrate from API Management\)"/);
+  assert.doesNotMatch(deploy, /Key Dashboard|open 'Signing secret'/);
+});

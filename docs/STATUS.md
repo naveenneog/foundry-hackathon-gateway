@@ -1,11 +1,8 @@
 # Status
 
-**Active packet:** P59 — custom usage range, chargeback export and an admin-set gateway DNS
-URL, on `release/key-dashboard`. Acceptance: ROADMAP; design: ADR-0019 (which gateway hostnames
-the dashboard trusts) and ADR-0020 (a chargeback usage export, amending the charter's
-chargeback non-goal); unknowns U51–U54. Usage periods are presets of 1, 7, 30 or 90 days;
-there is no export of usage; every handout and base URL uses `GATEWAY_URL`, which only a
-redeploy changes.
+**Active packet:** none. P59 — custom usage range, chargeback export and an admin-set gateway DNS
+URL — is complete on `release/key-dashboard` as local commits; it is not pushed or deployed.
+Design: ADR-0019 and ADR-0020; U51–U54 resolved.
 
 P58 — Foundry & models lists only the Foundries connected to this API Management — is complete
 on `release/key-dashboard` as local commits; it is not pushed or deployed. Design: ADR-0018,
@@ -19,6 +16,87 @@ Design: ADR-0015; owner amendment:
 ADR-0016. App Service quota in eastus2 is 0 (U40), so Container Apps is the live path. The App
 Service template builds; ARM validate/what-if is blocked by the zero quota. The live dashboard has no IP restriction; Entra
 sign-in and the admin role remain required.
+
+### P59 — custom usage range, chargeback export, admin gateway DNS URL — DONE
+
+The owner asked on 2026-10-24 for a custom date range on usage, an export of a chargeback report
+with all key labels, and an admin-set DNS URL that replaces the API Management URL in issued keys,
+copied setup and everywhere the URL is shown.
+
+- **Range.** The Overview, both key pages and the key drawer offer **Custom** beside 24 h, 7 d,
+  30 d and 90 d: labelled **From (UTC)** and **To (UTC)** date inputs, limited to the 90 days
+  `AppMetrics` keeps at no charge, with Apply (or Enter). The usage APIs take `days`, or `from` and
+  `to`, never both; the server refuses anything but strict `YYYY-MM-DD`, a reversed range, an end
+  after today or a start before today − 89 days with 400. `buildUsageQuery` writes the
+  `datetime()` bounds itself from whole UTC days and checks them again; the Logs query gets the
+  same window as `timespan` (U53). Two days or fewer are hourly, longer ranges daily, zero-filled
+  up to the current bucket. The 60 s cache key holds the period.
+- **Chargeback.** `POST /api/chargeback` (admin-only, audit-logged) and the Overview's
+  **Chargeback report** card return `chargeback-<from>-<to>.csv` for the chosen period, both kinds
+  or one: one row per key and model with 26 columns, from the period to first and last use.
+  Usage whose key is gone is `unknown` with its key id; the Overview's Top keys now names it
+  "Unknown key `<id>`" instead of showing an empty name. Built from tags and usage rows only;
+  cells are formula-escaped and RFC 4180-quoted; no totals row and no prices (ADR-0020, which
+  amends the charter's chargeback non-goal; per-model rates are a "Later" roadmap entry).
+- **Gateway URL.** **Settings** (the Signing page, renamed; `#/signing` still opens it) has
+  **Gateway URL (custom domain)**. Only `https://<hostname>` is accepted, and only if ARM lists the
+  host name as a `Proxy` entry of this API Management's `hostnameConfigurations` (U51); otherwise
+  400 saying to add the custom domain to API Management first. It is stored in Key Vault as
+  `console-gateway-url` (reset writes `{"url":null}`, U54) and audit-logged with the old and new
+  URLs. One resolver, `effectiveGatewayUrl()`, supplies every emitted URL; each replica caches it
+  for 30 s and checks the host name with ARM again when it reads the setting again. The connection
+  test keeps calling `GATEWAY_URL`; the dashboard never requests the admin-provided URL. The card
+  says that handed-out keys keep working (U52) and lists the gateway custom domains on offer.
+- **Help and demo.** The guide has nine steps; the gateway URL, the usage period and the
+  chargeback report each highlight their control with Show me, and Escape closes the guide. The
+  demo answers each query's window, includes usage of a deleted key and offers
+  `ai.contoso.example`.
+
+Commits: `5fda509` plan, `798e103` range (server), `9a6ab52` range (UI), `0e18208` chargeback
+(server), `c9d039d` chargeback (UI), `648fb11` gateway URL (server), `8f21105` Settings,
+`8168b0f` demo, `f086615` help, `165b496` chart table overflow, `03d616a` review fixes, `f7de90d`
+guides, and the ledger commit that adds this entry.
+
+Verified:
+- `npm test` 786/786 (734 before): 52 new tests in eight new files and the demo test. Three
+  existing guide assertions changed with the step count and stay exact ("Step 1 of 9", "Step 2 of
+  9", the last two steps), and the fake DOM now reflects the `id` property as browsers do.
+- Each behaviour failed first. 142 mutants: 140 caught, two equivalent (a `typeof` check that a
+  stricter comparison already covers, and one of two overlapping host rules). Five survived their
+  first run and each led to a stronger test: the cache key, a browser date check, Reset's Cancel,
+  the demo's hourly rows and the guide's focus target.
+- The resolver scan: every emitter names the custom domain and none the API Management URL, and
+  the reverse after a reset; a scan fails if any module reads the configured URL other than through
+  the resolver. Each of its six rules was removed in turn and each removal was caught, and a real
+  bypass in `service.mjs` trips the scan on its own.
+- An independent code review found two defects, both fixed test-first in `03d616a`: a save or
+  reset could be undone for 30 s by a read of the setting running at the same time, and a last
+  label such as `0x7f`, which the URL standard reads as an IPv4 number, gave 500 instead of 400.
+- Edge 155 over CDP on the local demo, light and dark: 88 of 88 checks. axe found no violations on
+  the Overview with a custom range, the key drawer and Settings (with and without a custom domain).
+  The range form opens without moving focus, Tab reaches From (UTC), Enter applies; downloads were
+  read back; Reveal named the custom domain; Show me and Escape behaved; no console errors or CSP
+  violations apart from the deliberate 400. The first run found 123 px of horizontal overflow at
+  390 px: chart data tables for assistive technology, an issue that predates P59, fixed in
+  `165b496` (0 px after).
+- Not run against Azure: nothing was deployed. The ARM shape (U51) and the Logs query window (U53)
+  are documented, not measured; the first live use of each is the check.
+- Screenshots were not retaken; README, CONSOLE.md and INSTALL.md say which ones predate P59.
+
+Council: Architect PASS (one resolver for the gateway URL and a scan that keeps it the only
+source; pure builders in `usage.mjs` and `chargeback.mjs`; the conflict with the charter's
+non-goal reconciled in ADR-0020 before any code; every module within its size budget). Coder PASS
+(the two review findings and the overflow fixed with failing tests first; `days`-only callers
+unchanged). QA PASS (tests first, 140 mutants caught, browser checks in both themes; live Azure
+checks listed as open). UX PASS-WITH-NOTES (labels, focus, keyboard, Escape and axe verified in
+both themes; with Custom open the period control takes the header's full width and pushes Refresh
+to the next line, and the guide's highlight around it is as wide; browser tabs already open show
+a new gateway URL in forms only after a reload; screenshots predate P59). Security PASS (the
+gateway URL is trusted only as an ARM-listed gateway host name, never requested, re-checked on
+every refresh and stored with versioned history and an audit trail; KQL holds only values the
+server formatted; the chargeback file holds no secret and escapes formulas; new routes are
+admin-only with the same-origin JSON check; residual: the dashboard identity's role could write
+host names, though the code only reads them, and DNS for the custom domain is not checked).
 
 ### P58 — Foundry page shows only APIM-connected accounts — DONE
 

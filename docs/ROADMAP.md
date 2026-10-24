@@ -251,7 +251,7 @@ Key Vault. Nothing here changes the gateway on `main`.
       image referenced once, PNG, alt text and names free of identifiers, provenance note) and
       the 28 document tests pass.
 
-- [ ] **P59** Custom usage range, chargeback export and an admin-set gateway DNS URL
+- [x] **P59** Custom usage range, chargeback export and an admin-set gateway DNS URL
       *Acceptance:*
       **Range.** The Overview and the short-lived and product usage views offer, beside 24 h,
       7 d, 30 d and 90 d, a custom range of whole UTC dates (inclusive), with labelled date
@@ -287,6 +287,10 @@ Key Vault. Nothing here changes the gateway on `main`.
       chargeback report, with all labels, and DNS url, if the admin updates that, apim url should
       be replaced with the admin provided DNS url in the keys generated and copy and wherever
       APIM url is shown".
+      *Verified 2026-10-24:* 786 tests pass (52 new); 140 of 142 mutants caught, the other two
+      equivalent; 88 of 88 Edge checks on the local demo in both themes, axe clean; an independent
+      review's two findings fixed test-first. Not run against Azure: U51 and U53 are documented,
+      not measured. Details in STATUS.
 
 - [x] **P58** Foundry & models lists only the Foundries connected to this API Management
       *Acceptance:* the page's account list, lede and count cover only connected accounts (the

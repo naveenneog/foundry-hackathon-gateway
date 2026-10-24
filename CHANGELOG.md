@@ -6,6 +6,20 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · [Semantic Ve
 ## [Unreleased]
 
 ### Added
+- **Custom usage range, chargeback report and an admin-set gateway URL (P59).**
+  - Usage on the Overview, both key pages and the key drawer can cover a custom range of whole
+    UTC days, from 89 days before today to today, beside the presets. Two days or fewer are
+    charted by the hour. The usage APIs take `days`, or `from` and `to`.
+  - **Chargeback report** on the Overview downloads `chargeback-<from>-<to>.csv`: one row per key
+    and model with tokens, requests, first and last use, the key's issued-to, labels and other
+    tags, status and Foundry. Usage of a key no longer in Key Vault is listed as `unknown`.
+    Cells are formula-escaped; there are no prices (ADR-0020).
+  - **Settings** (formerly the Signing page; `#/signing` still opens it) has **Gateway URL
+    (custom domain)**. A host name that ARM lists as a gateway custom domain of this API
+    Management replaces the API Management URL in new handouts, Reveal, `keys.csv`, export
+    bundles and Foundry base URLs, without a restart; keys handed out before keep working.
+    Stored in Key Vault and audit-logged (ADR-0019).
+  - The setup guide has steps for all three; the local demo offers a custom domain to try.
 - **90-day usage view (P57).** Usage charts and tables offer 24 h, 7 d, 30 d and 90 d. The
   gateway's `AppMetrics` data is kept 90 days at no charge; older usage is not retained.
 - **Multiple Foundry backends (P56).** The deployed-model list discovers accounts and deployments
@@ -149,6 +163,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · [Semantic Ve
 - Ironclad engineering discipline: charter, ledger, council and an executable gate. (P-0)
 
 ### Changed
+- **The Signing page is part of Settings (P59).** The navigation says **Settings**; the signing
+  secret is its second card, after **Gateway URL**. `#/signing` still opens it. The charter's
+  chargeback non-goal now covers invoicing and prices only; a usage export is in scope
+  (ADR-0020).
 - **Foundry & models lists only the Foundries connected to this API Management (P58).** The
   account list, lede and count cover the default connection and each attached account, the only
   accounts short-lived and product keys can use. The subscription's other accounts, unreadable
@@ -169,6 +187,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · [Semantic Ve
   (P15)
 
 ### Fixed
+- **Usage of a key no longer in Key Vault had no name in the Overview's Top keys (P59).** It now
+  reads "Unknown key `<key id>`", as in the chargeback report.
+- **Charts widened the page on a narrow screen (P59).** Each chart's data table for assistive
+  technology carried the visually-hidden class itself, and a table ignores `width: 1px`: at 390 px
+  an hourly chart added 123 px of horizontal scrolling. The table now sits in a hidden block.
 - **Deploying with only Claude models pinned failed** with *"NamedValue Value should be between
   1 and 4096 characters long"*. The OpenAI route's model map was written as an empty string,
   which APIM rejects. The Claude map already wrote `;` (EMPTY_MAP) for that case, but the OpenAI

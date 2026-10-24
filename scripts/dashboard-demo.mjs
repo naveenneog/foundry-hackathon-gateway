@@ -5,8 +5,10 @@
  *
  * Runs the real server, service and browser UI (src/console/) against the in-memory Key Vault,
  * API Management and Foundry fakes the unit tests use (tests/console.harness.mjs), with seeded
- * keys and synthetic usage. Every request is treated as signed in as a demo admin, so it listens
- * on 127.0.0.1 only. Nothing leaves the machine and nothing is kept after it stops.
+ * keys and synthetic usage. Foundry & models lists two connected Foundries; Connect another
+ * Foundry lists four more, one of which the dashboard cannot read. Every request is treated as
+ * signed in as a demo admin, so it listens on 127.0.0.1 only. Nothing leaves the machine and
+ * nothing is kept after it stops.
  *
  *   PORT=8091 node scripts/dashboard-demo.mjs
  */
@@ -23,9 +25,32 @@ const ADMIN = { name: "admin@contoso.com", oid: "demo-admin", role: "admin" };
 const DAY = 86_400_000;
 const HOUR = 3_600_000;
 
+/** Accounts in the demo subscription that are not connected: [resource group, name, kind, region, [deployment, format][], read error]. */
+const MORE_ACCOUNTS = [
+  ["rg-research", "aif-research", "AIServices", "swedencentral", [["gpt-4o", "OpenAI"], ["claude-sonnet-5", "Anthropic"]]],
+  ["rg-marketing", "aoai-marketing", "OpenAI", "westeurope", [["gpt-4o-mini", "OpenAI"]]],
+  ["rg-sandbox", "aif-sandbox", "AIServices", "eastus", [["deepseek-v4-flash", "DeepSeek"], ["claude-haiku-4-5", "Anthropic"]]],
+  ["rg-legacy", "aoai-legacy", "OpenAI", "eastus2", [], "AuthorizationFailed: the dashboard cannot list this account's deployments."],
+];
+
+function addAccounts(foundry) {
+  for (const [rg, name, kind, location, models, error] of MORE_ACCOUNTS) {
+    const id = `/subscriptions/${foundry.subscriptionId}/resourceGroups/${rg}/providers/Microsoft.CognitiveServices/accounts/${name}`;
+    foundry.accounts.set(id, {
+      id, name, kind, resourceGroup: rg, location, properties: { customSubDomainName: name },
+      deployments: models.map(([model, format]) => ({ name: model, properties: { model: { name: model, format, version: "1" }, provisioningState: "Succeeded" } })),
+      ...(error ? { error } : {}),
+    });
+  }
+}
+
 async function seed(h) {
   h.service.setPackTemplate(readFileSync(TEMPLATE, "utf8"));
   await h.service.migrateSigningSecret(ADMIN);
+  addAccounts(h.foundry);
+  const secondary = [...h.foundry.accounts.keys()].find((id) => id.endsWith("/aif-secondary"));
+  await h.service.attachFoundry(ADMIN, { foundryId: secondary });
+  await h.service.pinModel(ADMIN, { foundryId: secondary, alias: "flash", deployment: "deepseek-v4-flash" });
   const people = ["alex", "sam", "kim", "lee", "ria"];
   for (const [i, p] of people.entries()) {
     await h.service.issueJwt(ADMIN, { owner: `${p}@contoso.com`, subject: `team-${i + 1}`, models: i % 2 ? ["flash", "haiku-4-5"] : ["haiku-4-5"],

@@ -18,12 +18,24 @@ test("dashboard demo: serves the real UI and API on 127.0.0.1 with seeded keys a
     const usage = await (await fetch(url + "api/usage?kind=product&days=7")).json();
     assert.ok(usage.total.tokens > 0);
     const foundries = await (await fetch(url + "api/foundries")).json();
-    assert.equal(foundries.accounts.length, 2, "practice selecting and attaching another Foundry without Azure");
+    const connected = foundries.accounts.filter((a) => a.connected);
+    const waiting = foundries.accounts.filter((a) => !a.connected);
+    assert.deepEqual(connected.map((a) => a.name).sort(), ["aif-secondary", "aif-test"], "Foundry & models lists the default and one attached Foundry");
+    assert.ok(waiting.filter((a) => !a.error).length >= 3, "several accounts to practise Connect another Foundry without Azure");
+    assert.ok(waiting.some((a) => a.error), "and one the dashboard cannot read");
+    const attached = connected.find((a) => a.connectionId !== "default");
+    const models = await (await fetch(url + `api/models?foundryId=${encodeURIComponent(attached.id)}`)).json();
+    assert.ok(models.pins.openai.length >= 1, "the attached Foundry has a pinned alias to test");
     const test = await fetch(url + "api/foundries/test", {
       method: "POST", headers: { "content-type": "application/json", origin: url.replace(/\/$/, "") },
       body: JSON.stringify({ alias: "flash", route: "openai" }),
     });
     assert.equal((await test.json()).ok, true, "the demo simulates inference instead of making external requests");
+    const practice = await fetch(url + "api/foundries/attach", {
+      method: "POST", headers: { "content-type": "application/json", origin: url.replace(/\/$/, "") },
+      body: JSON.stringify({ foundryId: waiting.find((a) => !a.error).id }),
+    });
+    assert.equal(practice.status, 200, "attaching one of them works in the demo");
   } finally {
     server.close();
   }

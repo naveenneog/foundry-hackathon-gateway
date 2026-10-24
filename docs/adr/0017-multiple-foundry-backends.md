@@ -1,6 +1,9 @@
 # ADR-0017: Discover Foundry accounts and bind each key to its selected backend
 
-- **Status:** Accepted; extends ADR-0015's single-account catalogue.
+- **Status:** Accepted; extends ADR-0015's single-account catalogue. Amended by ADR-0018
+  (2026-10-24): Foundry & models lists only connected accounts, and the others are attached from
+  a separate **Connect another Foundry** dialog. Decision 8 and the browse-before-attach
+  consequence below describe the UI before that amendment.
 - **Date:** 2026-10-23
 - **Packet:** P56
 - **Deciders:** owner's request of 2026-10-23

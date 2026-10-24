@@ -1,7 +1,12 @@
 # Status
 
-**Active packet:** none. P56 — multi-Foundry discovery, attachment, account-bound key issue and
-guided help — is complete on `release/key-dashboard`. Design: ADR-0017; U46–U49 resolved.
+**Active packet:** P58 — Foundry & models lists only the Foundries connected to this API
+Management, on `release/key-dashboard`. Acceptance: ROADMAP; design: ADR-0018, amending the UI
+part of ADR-0017; unknown U50. The page lists every account in the subscription (16 live),
+although keys exist only for accounts that API Management routes to.
+
+P56 — multi-Foundry discovery, attachment, account-bound key issue and guided help — is complete
+on `release/key-dashboard`. Design: ADR-0017; U46–U49 resolved.
 
 P55 (release branch) and P49–P54 are published on `release/key-dashboard`, not merged to `main`.
 Design: ADR-0015; owner amendment:

@@ -251,6 +251,20 @@ Key Vault. Nothing here changes the gateway on `main`.
       image referenced once, PNG, alt text and names free of identifiers, provenance note) and
       the 28 document tests pass.
 
+- [ ] **P58** Foundry & models lists only the Foundries connected to this API Management
+      *Acceptance:* the page's account list, lede and count cover only connected accounts (the
+      default connection and each attached one). Unconnected and unreadable accounts appear only
+      in a separate **Connect another Foundry** modal dialog, with search, Attach or the read
+      error, the operator setup and network commands, and help. After an attach the dialog
+      closes and the account is selected in the connected list; a failed attach keeps the dialog
+      open with its error. With nothing connected the page shows an empty state with that
+      action. The issue forms show no count of unconnected accounts; their empty state links to
+      Foundry & models. The guide's Attach step highlights the connect action and Escape still
+      closes the guide. The local demo serves two connected and several unconnected accounts.
+      Server APIs unchanged. ADR-0018.
+      *Why:* requested 2026-10-24: keys are an APIM feature, so only APIM-connected Foundries
+      belong in the list.
+
 - [x] **P56** Discover, attach and select Foundry backends, with highlighted help
       *Acceptance:* deployments from AIServices/OpenAI accounts in the configured subscription
       appear with their Foundry account and errors are visible. Refresh finds new deployments.

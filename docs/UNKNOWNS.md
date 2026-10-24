@@ -60,6 +60,7 @@ assumption is only closed if it names its blast radius and the detector that wou
 | U47 | Can namespaced API copies reuse the gateway policies with account-local model maps and a different JWT audience? | RESOLVED |
 | U48 | Which gateway inference role and endpoint audience apply to attached AIServices and OpenAI accounts? | RESOLVED |
 | U49 | Why does a second Foundry resolve publicly outside the VNet but fail DNS from the gateway? | RESOLVED |
+| U50 | Can the docked setup guide be used while a modal dialog is open? | RESOLVED |
 
 ---
 
@@ -69,6 +70,16 @@ assumption is only closed if it names its blast radius and the detector that wou
 None.
 
 ---
+
+### U50 — The setup guide while a modal dialog is open — RESOLVED
+
+No. `showModal()` puts the dialog in the top layer, and every element in the document outside
+the dialog becomes inert, as if it had the `inert` attribute
+([MDN, HTMLDialogElement.showModal()](https://developer.mozilla.org/en-US/docs/Web/API/HTMLDialogElement/showModal),
+read 2026-10-24). The guide panel lives outside any dialog, so it cannot take focus or clicks
+while **Connect another Foundry** is open. P58 therefore closes that dialog before it opens the
+guide, and the guide's Attach step highlights the page control that opens the dialog, not a
+control inside it. The guide already leaves Escape to an open modal dialog (P56).
 
 ### U46 — Subscription-wide Foundry discovery — RESOLVED
 

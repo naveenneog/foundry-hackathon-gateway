@@ -6,6 +6,7 @@ import { barList, donut, timeChart } from "./charts.js";
 import { addChildren, busy, confirmDialog, el, errorState, icon, kpi, loadingState, setChildren, toast, uid } from "./dom.js";
 import { alignSeries, DAY, fmtCompact, fmtInt, keyStatus, keyTitle, KINDS, mergeByModel, periodDays, periodKey, periodPhrase, periodQuery } from "./lib.js";
 import { periodControl } from "./period.js";
+import { chargebackCard } from "./views-chargeback.js";
 import { openKeyDrawer } from "./views-drawer.js";
 
 const TOP_KEYS = 8;
@@ -34,14 +35,16 @@ export function renderOverview(root, ctx) {
   const topSlot = el("div", {});
   const modelSlot = el("div", {});
   const notes = el("div", {});
+  const chargeback = chargebackCard(ctx);
   addChildren(root,
     el("header", { class: "view-head" },
       el("div", {}, el("h1", { class: "view-title", tabindex: "-1" }, "Overview"),
         el("p", { class: "lede" }, "Every key and its usage, short-lived and product.")),
-      el("div", { class: "view-actions" }, periodControl(ctx.period, (p) => { ctx.setPeriod(p); load(false); }), refresh, sweep)),
+      el("div", { class: "view-actions" }, periodControl(ctx.period, (p) => { ctx.setPeriod(p); chargeback.sync(); load(false); }), refresh, sweep)),
     kpis,
     card("Tokens over time", chartSlot),
     el("div", { class: "grid-2" }, card("Top keys", topSlot), card("By model", modelSlot)),
+    chargeback.card,
     notes);
 
   async function load(fresh) {
@@ -95,7 +98,8 @@ export function renderOverview(root, ctx) {
       items: top.map((u) => {
         const key = byName.get(u.name);
         return {
-          label: key ? keyTitle(key) : u.name, sub: [KINDS[u.kind].label, key?.label ?? u.label, u.owner].filter(Boolean).join(" · "),
+          // Usage whose key is no longer in Key Vault has no name: show its key id, as the chargeback report does.
+          label: key ? keyTitle(key) : u.name ?? `Unknown key ${u.keyId}`, sub: [KINDS[u.kind].label, key?.label ?? u.label, u.owner].filter(Boolean).join(" · "),
           value: Number(u.tokens) || 0, cls: KINDS[u.kind].cls,
           onSelect: key ? (e) => openKeyDrawer(ctx, key, { opener: e.currentTarget, onChanged: () => changed(key.kind) }) : undefined,
         };

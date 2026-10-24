@@ -26,6 +26,7 @@ const STATIC = {
   "/period.js": ["period.js", "text/javascript; charset=utf-8"],
   "/secret.js": ["secret.js", "text/javascript; charset=utf-8"],
   "/views-overview.js": ["views-overview.js", "text/javascript; charset=utf-8"],
+  "/views-chargeback.js": ["views-chargeback.js", "text/javascript; charset=utf-8"],
   "/views-keys.js": ["views-keys.js", "text/javascript; charset=utf-8"],
   "/views-drawer.js": ["views-drawer.js", "text/javascript; charset=utf-8"],
   "/views-issue.js": ["views-issue.js", "text/javascript; charset=utf-8"],

@@ -7,6 +7,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
+import { fakeDom, keydown } from "./console-dom.harness.mjs";
 
 const PUBLIC = new URL("../src/console/public/", import.meta.url);
 const read = (name) => readFileSync(new URL(name, PUBLIC), "utf8");
@@ -387,86 +388,6 @@ test("the guide explains permissions, networking, aliases, refresh and safe dist
 });
 
 // ── help.js: the panel and highlights, on a small fake DOM ─────────────────
-
-const fakeEvent = (type, init = {}) => ({
-  type, target: null, currentTarget: null, defaultPrevented: false, stopped: false,
-  preventDefault() { this.defaultPrevented = true; }, stopPropagation() { this.stopped = true; }, ...init,
-});
-const keydown = (key) => fakeEvent("keydown", { key });
-
-/** Enough DOM for el(), the guide panel, highlights, focus and bubbling events. */
-function fakeDom() {
-  const doc = { activeElement: null, listeners: {} };
-  const matches = (node, selector) => {
-    const m = /^([a-z][a-z0-9-]*)?((?:\[[a-z-]+(?:="[^"]*")?\])*)$/i.exec(selector);
-    if (!m) throw new Error(`The fake DOM does not support "${selector}".`);
-    if (m[1] && node.tagName !== m[1].toLowerCase()) return false;
-    return [...m[2].matchAll(/\[([a-z-]+)(?:="([^"]*)")?\]/g)].every(([, k, v]) => node.hasAttribute(k) && (v === undefined || node.getAttribute(k) === v));
-  };
-  const below = (node, out = []) => {
-    for (const c of node.children) if (c.nodeType === 1) { out.push(c); below(c, out); }
-    return out;
-  };
-  const detach = (n) => {
-    if (n.parentNode) n.parentNode.children = n.parentNode.children.filter((c) => c !== n);
-    n.parentNode = null;
-  };
-  const make = (tag) => {
-    const attrs = new Map();
-    const node = {
-      nodeType: 1, tagName: tag.toLowerCase(), children: [], parentNode: null, listeners: {}, disabled: false,
-      setAttribute: (k, v) => { attrs.set(k, String(v)); },
-      getAttribute: (k) => (attrs.has(k) ? attrs.get(k) : null),
-      removeAttribute: (k) => { attrs.delete(k); },
-      hasAttribute: (k) => attrs.has(k),
-      get hidden() { return attrs.has("hidden"); },
-      set hidden(v) { if (v) attrs.set("hidden", ""); else attrs.delete("hidden"); },
-      classList: {
-        list: () => (attrs.get("class") ?? "").split(/\s+/).filter(Boolean),
-        add(...names) { attrs.set("class", [...new Set([...this.list(), ...names])].join(" ")); },
-        remove(...names) { attrs.set("class", this.list().filter((c) => !names.includes(c)).join(" ")); },
-        contains(name) { return this.list().includes(name); },
-        toggle(name, on = !this.contains(name)) { if (on) this.add(name); else this.remove(name); return on; },
-      },
-      append: (...nodes) => { for (const n of nodes) { detach(n); n.parentNode = node; node.children.push(n); } },
-      replaceChildren: (...nodes) => { for (const c of [...node.children]) detach(c); node.append(...nodes); },
-      remove: () => detach(node),
-      contains: (n) => { for (let x = n; x; x = x.parentNode) if (x === node) return true; return false; },
-      get isConnected() { for (let x = node; x; x = x.parentNode) if (x === doc.body) return true; return false; },
-      get textContent() { return node.children.map((c) => (c.nodeType === 3 ? c.data : c.textContent)).join(""); },
-      set textContent(v) { node.replaceChildren(doc.createTextNode(v)); },
-      querySelectorAll: (s) => below(node).filter((n) => matches(n, s)),
-      querySelector: (s) => node.querySelectorAll(s)[0] ?? null,
-      addEventListener: (type, fn) => { (node.listeners[type] ??= []).push(fn); },
-      removeEventListener: (type, fn) => { node.listeners[type] = (node.listeners[type] ?? []).filter((f) => f !== fn); },
-      dispatchEvent(event) {
-        event.target ??= node;
-        for (let x = node; x && !event.stopped; x = x.parentNode) {
-          event.currentTarget = x;
-          for (const fn of [...(x.listeners[event.type] ?? [])]) fn(event);
-        }
-        if (!event.stopped) for (const fn of [...(doc.listeners[event.type] ?? [])]) fn(event);
-        return !event.defaultPrevented;
-      },
-      click: () => node.dispatchEvent(fakeEvent("click")),
-      focus: (options) => { doc.activeElement = node; node.focusOptions = options; },
-      scrollIntoView: (options) => { node.scrolledWith = options; },
-    };
-    return node;
-  };
-  Object.assign(doc, {
-    createElement: make,
-    createElementNS: (_ns, tag) => make(tag),
-    createTextNode: (data) => ({ nodeType: 3, data: String(data), parentNode: null }),
-    addEventListener: (type, fn) => { (doc.listeners[type] ??= []).push(fn); },
-    removeEventListener: (type, fn) => { doc.listeners[type] = (doc.listeners[type] ?? []).filter((f) => f !== fn); },
-    querySelector: (s) => doc.body.querySelector(s),
-    querySelectorAll: (s) => doc.body.querySelectorAll(s),
-    getElementById: (id) => below(doc.body).find((n) => n.getAttribute("id") === id) ?? null,
-  });
-  doc.body = make("body");
-  return doc;
-}
 
 const modelsView = () => dom.el("div", { class: "view" },
   dom.el("section", { class: "card", "data-help": "foundry-accounts" }, dom.el("h2", {}, "Foundry accounts"),

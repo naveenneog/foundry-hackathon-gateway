@@ -122,27 +122,42 @@ Check a workspace with `az monitor log-analytics workspace table show --name App
 
 ### Foundry discovery, backend attachment and model pinning
 
-**Foundry & models** discovers AIServices and Azure OpenAI accounts in the configured subscription,
-including accounts outside the gateway's resource group. **Refresh** re-reads deployments from
-ARM; newly deployed models do not require an app redeploy. An unreadable account is shown with
-its error, not omitted as an empty catalogue.
+**Foundry & models** lists the Foundry and Azure OpenAI accounts connected to this gateway's API
+Management: the original (default) account and each attached account
+([ADR-0018](adr/0018-connected-foundries-only.md)). Short-lived and product keys are issued only
+for these. Its count covers connected Foundries and their deployments. **Refresh from Azure**
+re-reads accounts and deployments from ARM; newly deployed models do not require an app redeploy.
+
+**Connect another Foundry** opens a dialog that lists the other AIServices and Azure OpenAI
+accounts the dashboard discovers in the configured subscription, including accounts outside the
+gateway's resource group, with search. An account the dashboard cannot read is listed there with
+its error, not omitted. These accounts do not appear in the connected list until they are
+attached. If no Foundry is connected, the page shows an empty state with the same action.
 
 ![Subscription-wide Foundry account discovery with connection states and deployment counts](images/console/console-foundries.png)
 
-1. Select the Foundry account by its name, resource group and region. Deployment names may repeat
-   across accounts; the account's resource ID distinguishes them.
+The screenshot predates P58: it shows unattached accounts in the main list, where they no longer
+appear.
+
+1. In **Connect another Foundry**, choose the account by its name, resource group and region.
+   Deployment names may repeat across accounts; the account's resource ID distinguishes them.
 2. **Attach** provisions that account's APIM backends and isolated gateway routes. It does not
-   give the dashboard permission to grant Azure roles or open a firewall.
+   give the dashboard permission to grant Azure roles or open a firewall. After it succeeds, the
+   dialog closes and the account is selected in the connected list. A failed attach keeps the
+   dialog open with the error; selecting Attach again repairs a partial attempt.
 3. Run the displayed operator setup command to grant the APIM managed identity inference access
-   on the selected account. If the gateway's private DNS zones have no record for this account,
-   the optional private-endpoint setup command creates the endpoint and records in its VNet.
+   on the account. The dialog shows it before attaching, and the account's access section shows
+   it afterwards. If the gateway's private DNS zones have no record for this account, the optional
+   private-endpoint setup command creates the endpoint and records in its VNet.
 4. Pin aliases for ready chat/messages deployments. Embeddings, image, audio, realtime and
    unsupported model formats remain visible with a reason; this gateway does not expose their
    modality-specific APIs.
 5. **Test** makes a small inference request through APIM. Attachment is configuration, not proof
    that RBAC and networking work; a failure shows the next setup step.
 
-The **Help** control explains these steps and highlights the relevant controls. Discovery uses
+The **Help** control explains these steps and highlights the relevant controls; its Attach step
+highlights **Connect another Foundry**. **How attaching works** inside the dialog closes the
+dialog first, because the guide cannot be used while a modal dialog is open. Discovery uses
 metadata-only read permissions. Inference uses APIM's separate identity and per-account role.
 Private endpoint setup is an operator action; no public-network or firewall settings are relaxed.
 
@@ -157,7 +172,7 @@ product keys are linked only to their own account's APIs.
 
 ![Issue a short-lived key: intended holder, subject, models, token budget, activation delay and validity](images/console/console-issue-signed.png)
 
-The key is minted with the signing secret in Key Vault. Select an attached **Foundry**, then
+The key is minted with the signing secret in Key Vault. Select a connected **Foundry**, then
 choose one or several of that account's pinned aliases. Changing the Foundry clears the model
 selection so a grant cannot accidentally use a different account's models.
 **Starts in (hours from now)** defaults to 0; a future start is shown as **Scheduled**. The
@@ -188,7 +203,7 @@ view changes or the page unloads. The files are not written to browser storage.
 
 ![Issue a product key: owner, name, product pack and optional automatic rotation](images/console/console-issue-product.png)
 
-Select an attached **Foundry**, then one or several of its deployments. This creates/reuses a product whose policy allows
+Select a connected **Foundry**, then one or several of its deployments. This creates/reuses a product whose policy allows
 exactly those deployments and stores each APIM subscription's primary key in Key Vault.
 
 ![Product key issue form with Foundry deployments, monthly budget and rotation settings](images/console/console-issue-product.png)

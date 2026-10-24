@@ -207,10 +207,11 @@ short-lived keys. Keys already issued keep working. The page then shows **Copies
 
 ## 6. Issue and use a key
 
-**Select a Foundry backend.** In **Foundry & models**, select an account and inspect its
-deployments. Refresh picks up new deployments. The configured original account is already
-attached; other accounts are attached explicitly. For another account, run the displayed
-operator command to grant APIM inference access:
+**Select a Foundry backend.** **Foundry & models** lists the Foundries connected to API
+Management; select one and inspect its deployments. Refresh from Azure picks up new deployments.
+The configured original account is already connected. Other accounts in the subscription are
+listed in **Connect another Foundry** and are attached explicitly. For another account, run the
+displayed operator command to grant APIM inference access:
 
 ```powershell
 pwsh scripts/Connect-Foundry.ps1 -Subscription <subscription> -ResourceGroup <apim-rg> `
@@ -287,7 +288,7 @@ encrypted bundles.
 | `InternalSubscriptionIsOverQuotaForSku` with `-Hosting AppService` | No App Service quota in the region. Use the default Container Apps path or request quota. |
 | A browser POST returns a bodyless 403 | Platform sign-in needs a same-origin `Referer`; the dashboard sends `Referrer-Policy: same-origin`. A browser extension or proxy that strips `Referer` causes it ([ADR-0014](adr/0014-console-on-container-apps.md)). |
 | Usage shows 0 right after a call | Metrics reach Log Analytics a few minutes after the call. |
-| Only the original Foundry's models appear | Upgrade/redeploy this branch so the dashboard receives the metadata-only subscription discovery role. Then use **Foundry & models → Refresh** and select an account. |
+| Only the original Foundry's models appear | Foundry & models lists connected Foundries only; other accounts appear in **Connect another Foundry**. If that list is empty too, upgrade/redeploy this branch so the dashboard receives the metadata-only subscription discovery role, then select **Refresh from Azure**. |
 | An account's deployments show an access error | The dashboard identity lacks account/deployment metadata-read permission. The installer reports whether its discovery role was granted; no account-key access is needed. |
 | Attached backend test reports DNS failure | The account's public hostname may CNAME into a linked private DNS zone that has no record for that account. Use the optional private-endpoint setup command and test again; do not relax the account's firewall. |
 | A product key returns 401 right after issue or rotation | APIM applies key changes within about 20 seconds (16 s measured). |

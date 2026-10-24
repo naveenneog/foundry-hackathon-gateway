@@ -251,7 +251,7 @@ Key Vault. Nothing here changes the gateway on `main`.
       image referenced once, PNG, alt text and names free of identifiers, provenance note) and
       the 28 document tests pass.
 
-- [ ] **P58** Foundry & models lists only the Foundries connected to this API Management
+- [x] **P58** Foundry & models lists only the Foundries connected to this API Management
       *Acceptance:* the page's account list, lede and count cover only connected accounts (the
       default connection and each attached one). Unconnected and unreadable accounts appear only
       in a separate **Connect another Foundry** modal dialog, with search, Attach or the read
@@ -264,6 +264,9 @@ Key Vault. Nothing here changes the gateway on `main`.
       Server APIs unchanged. ADR-0018.
       *Why:* requested 2026-10-24: keys are an APIM feature, so only APIM-connected Foundries
       belong in the list.
+      *Verified 2026-10-24:* 734 tests pass (13 new); 42 mutants caught; 47 of 48 Edge checks on
+      the local demo pass, axe clean in both themes. The one miss (1 px overflow at 390 px) is
+      identical before P58. Details in STATUS.
 
 - [x] **P56** Discover, attach and select Foundry backends, with highlighted help
       *Acceptance:* deployments from AIServices/OpenAI accounts in the configured subscription

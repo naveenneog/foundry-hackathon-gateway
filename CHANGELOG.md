@@ -149,6 +149,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · [Semantic Ve
 - Ironclad engineering discipline: charter, ledger, council and an executable gate. (P-0)
 
 ### Changed
+- **Foundry & models lists only the Foundries connected to this API Management (P58).** The
+  account list, lede and count cover the default connection and each attached account, the only
+  accounts short-lived and product keys can use. The subscription's other accounts, unreadable
+  ones with their error, appear only in a separate **Connect another Foundry** dialog with search,
+  Attach, the operator setup and network commands, and help. After an attach, the account is
+  selected in the connected list. With nothing connected, the page shows an empty state with that
+  action. The issue forms no longer count unattached accounts, and the guide's Attach step
+  highlights the new action. The local demo serves two connected Foundries and four to connect.
+  Server APIs are unchanged. ADR-0018.
 - Pins carry the route that can serve them, and there is one alias map per route
   (`hackgw-model-map`, `hackgw-claude-model-map`). Existing pins are read as OpenAI-shaped. (P16)
 - Named values and the Application Insights logger are prefixed `hackgw-`, so nothing this

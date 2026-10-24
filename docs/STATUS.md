@@ -1,9 +1,8 @@
 # Status
 
-**Active packet:** P58 — Foundry & models lists only the Foundries connected to this API
-Management, on `release/key-dashboard`. Acceptance: ROADMAP; design: ADR-0018, amending the UI
-part of ADR-0017; unknown U50. The page lists every account in the subscription (16 live),
-although keys exist only for accounts that API Management routes to.
+**Active packet:** none. P58 — Foundry & models lists only the Foundries connected to this API
+Management — is complete on `release/key-dashboard` as local commits; it is not pushed or
+deployed. Design: ADR-0018, amending the UI part of ADR-0017; U50 resolved.
 
 P56 — multi-Foundry discovery, attachment, account-bound key issue and guided help — is complete
 on `release/key-dashboard`. Design: ADR-0017; U46–U49 resolved.
@@ -13,6 +12,63 @@ Design: ADR-0015; owner amendment:
 ADR-0016. App Service quota in eastus2 is 0 (U40), so Container Apps is the live path. The App
 Service template builds; ARM validate/what-if is blocked by the zero quota. The live dashboard has no IP restriction; Entra
 sign-in and the admin role remain required.
+
+### P58 — Foundry page shows only APIM-connected accounts — DONE
+
+The owner asked on 2026-10-24 that Foundry & models list only the Foundries connected to the
+selected API Management, because short-lived and product keys are an APIM feature. The page
+listed every account in the subscription (16 live), with Attach on the unattached ones.
+
+- The account list, lede and count cover the accounts discovery marks `connected`: the default
+  connection and each attached account.
+- **Connect another Foundry** is a modal dialog (`foundry-connect.js`, opened through
+  `openModal`) that lists the other discovered accounts, unreadable ones with their error, with
+  search. The chosen account shows Attach, the role setup command, the optional private-network
+  command and **How attaching works**, which closes the dialog before it opens the guide (U50).
+  A successful attach closes the dialog and selects the account in the connected list; a failed
+  attach keeps the dialog open with the error and focus on Attach.
+- With nothing connected, the page shows an empty state with the same action. The issue forms
+  no longer count unconnected accounts; their empty state links to Foundry & models.
+- The guide's Attach step highlights Connect another Foundry; the step text describes connected
+  Foundries.
+- The local demo attaches `aif-secondary` (with a pinned alias) and adds four unconnected
+  accounts, one of them unreadable.
+- Server APIs and their validation are unchanged. The server's static allow-list serves the new
+  module.
+
+Commits: `a4d739b` plan, `e23a5aa` shared fake DOM, `dc1a4e1` count helpers, `1c70d39` page and
+dialog, `a441f06` issue forms, `f0b9c1e` demo, `ffa40ef` focus fix after review.
+
+Verified:
+- `npm test` 734/734 (721 before). 13 new tests; the demo test now requires two connected and
+  several unconnected accounts. `summaryLine`, which counted every subscription account, was
+  replaced, and its assertions in the P56 test now check `connectedLine` and `candidatesLine`.
+- Each behaviour failed first: the page rendered 5 radios for 2 connected accounts; there was no
+  Connect another Foundry button; the issue form said "3 more accounts are not attached or not
+  readable"; the demo's connected list was `aif-test` only.
+- 42 mutants, all caught. The first run let two survive, and the two assertions were tightened:
+  the guide opens only after the modal closed, and focus is on the re-rendered Attach button.
+- An independent code review found one defect: focus that the admin moved during the reload
+  after an attach was taken back. The focus check now runs after the reload (`ffa40ef`, with a
+  failing test first).
+- Edge via Playwright on the local demo: 47 of 48 checks passed in light and dark. axe found no
+  violations on the page, the dialog, the unreadable-account state and the issue form; Tab and
+  Shift+Tab stayed inside the dialog for 80 presses; Escape closed the dialog, then the guide;
+  an attach selected the account and moved focus to its setup command; there were no console or
+  CSP errors. The remaining check found 1 px of horizontal overflow at 390 px in the access
+  section, which is identical on `cf895a7`.
+- Screenshots were not retaken. README and CONSOLE.md state that `console-foundries.png`
+  predates P58.
+
+Council: Architect PASS (UI only, recorded in ADR-0018; requests that name an account stay in
+`views-foundry.js`, pure rules in `foundry.js`). Coder PASS (unattached-account branches removed
+from the page; the review finding fixed with a test). QA PASS (failing tests first, 42 mutants
+caught, browser checks). UX PASS-WITH-NOTES (focus, keyboard, Escape and axe verified in both
+themes; while highlighted, the guide's step label overlaps the cards above the connect row, as
+other highlights overlap what is above them; the 1 px overflow at 390 px predates P58). Security
+PASS (no new endpoint or data flow; DOM built only through `el()`; attach validation and
+admin-only authorisation unchanged on the server; hiding an account in the browser is not
+relied on as a control).
 
 ### P57 — 90-day usage view — DONE
 

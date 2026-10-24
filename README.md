@@ -44,11 +44,13 @@ Vault, API Management and Foundry with managed identities, and APIM does not cal
 request. A text version of the diagram is in [docs/INSTALL.md](docs/INSTALL.md#architecture).
 
 **Multiple Foundry accounts:** the dashboard discovers deployed models across the configured
-subscription, not just the original gateway account. **Foundry & models** shows each account's
-deployments, readiness and supported route. Attach an account, pin its aliases, then choose that
-Foundry when issuing single or bulk keys. Each attached account has isolated gateway routes and
-short-lived-key audiences; existing keys are not redirected. Inference permission and private
-DNS are checked separately from discovery. The highlighted help walks through each step.
+subscription, not just the original gateway account. **Foundry & models** lists the Foundries
+connected to this API Management, with each one's deployments, readiness and supported route.
+**Connect another Foundry** lists the subscription's other accounts, with search: attach one, pin
+its aliases, then choose that Foundry when issuing single or bulk keys. Each attached account has
+isolated gateway routes and short-lived-key audiences; existing keys are not redirected.
+Inference permission and private DNS are checked separately from discovery. The highlighted help
+walks through each step.
 
 ### Try it in one minute (no Azure)
 
@@ -59,8 +61,9 @@ npm run dashboard:demo          # then open http://127.0.0.1:8090/
 ```
 
 The demo runs the real dashboard on sample keys and synthetic usage, on `127.0.0.1` only, with
-in-memory stand-ins for Key Vault, API Management and Foundry. It needs Node.js 20+ and nothing
-else ([`scripts/dashboard-demo.mjs`](scripts/dashboard-demo.mjs)).
+in-memory stand-ins for Key Vault, API Management and Foundry: two connected Foundries and four
+more to connect. It needs Node.js 20+ and nothing else
+([`scripts/dashboard-demo.mjs`](scripts/dashboard-demo.mjs)).
 
 ### Install on Azure
 
@@ -93,7 +96,7 @@ az deployment group create -g <rg> --template-file infra/examples/private-foundr
 | ![Bulk issue: shared settings and CSV rows](docs/images/console/console-short-lived-bulk.png) | **Issue in bulk.** Paste or upload CSV rows. The dashboard returns `keys.csv`, to send each person their row, and `index.csv`, which holds no keys. |
 | ![Product key issue: Foundry deployments, monthly budget, rotation and expiry](docs/images/console/console-issue-product.png) | **Product keys** grant Foundry deployments. The dashboard creates one APIM product per model set, so the key is refused for any other model (403). |
 | ![Models: pinned aliases per route and the Foundry deployments](docs/images/console/console-models.png) | **Models.** Lists the Foundry deployments and pins or unpins aliases, with the same rules as `admin.ps1`. |
-| ![Foundry account discovery with connected and unattached accounts, region and deployment counts](docs/images/console/console-foundries.png) | **Foundry & models.** Discover accounts across the subscription, refresh new deployments and attach an additional backend without redirecting existing keys. |
+| ![Foundry account discovery with connected and unattached accounts, region and deployment counts](docs/images/console/console-foundries.png) | **Foundry & models.** Lists the Foundries connected to this API Management and refreshes their deployments. **Connect another Foundry** finds and attaches another account from the subscription without redirecting existing keys. The screenshot predates this split and still shows unattached accounts in the list. |
 | ![Setup guide with a highlighted Foundry account section](docs/images/console/console-foundry-help.png) | **Help → Show me.** Highlights discovery, attachment, access/network setup, pinning, key issue and distribution controls. Operator commands are copied, not executed by the dashboard. |
 | ![Export: an encrypted bundle signed by the Key Vault key](docs/images/console/console-export.png) | **Export.** An AES-256-GCM bundle signed by a Key Vault key. The recipient verifies and opens it with `scripts/open-bundle.mjs`. |
 

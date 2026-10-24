@@ -8,7 +8,7 @@ import {
   addChildren, badge, busy, confirmDialog, copyButton, el, emptyState, errorState, icon, loadingState, routeBadge, setChildren, toast, uid,
 } from "./dom.js";
 import {
-  accountsOf, accountStatus, attachBody, attachSummary, commandsFor, deploymentState, FOUNDRY_CACHES, foreignAnswer, KIND_LABEL, matchesDeployment, parseChoice,
+  accountsOf, accountStatus, attachBody, attachSummary, commandsFor, deploymentState, FOUNDRY_CACHES, foreignAnswer, KIND_LABEL, matchesAccount, matchesDeployment, parseChoice,
   pickAccount, pinBlockReason, pinBody, routeReason, summaryLine, testAvailability, testBody, testSummary, unpinBody,
 } from "./foundry.js";
 import { checkAlias, fmtInt, ROUTE_LABEL } from "./lib.js";
@@ -41,12 +41,6 @@ function notice(s) {
   return el("div", { class: `callout callout-${s.tone}` }, icon(s.tone === "ok" ? "check" : "alert", "icon callout-icon"),
     el("div", {}, el("p", {}, el("strong", {}, s.title)), s.lines.map((line) => el("p", { class: "callout-detail" }, line)),
       s.guidance?.length ? [el("p", {}, "What to check:"), el("ul", { class: "dialog-points" }, s.guidance.map((g) => el("li", {}, g)))] : null));
-}
-
-function matchesAccount(a, query) {
-  const terms = String(query ?? "").toLowerCase().split(/\s+/).filter(Boolean);
-  const hay = [a.name, a.resourceGroup, a.location, a.kind, KIND_LABEL[a.kind], a.connectionId, accountStatus(a).label].filter(Boolean).join(" ").toLowerCase();
-  return terms.every((t) => hay.includes(t));
 }
 
 export function renderFoundry(root, ctx) {

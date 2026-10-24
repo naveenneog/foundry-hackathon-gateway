@@ -71,6 +71,9 @@ export function pickAccount(accounts, wanted, fallbackId) {
 /** Keys are issued only for attached accounts. */
 export const connectedAccounts = (accounts) => (Array.isArray(accounts) ? accounts : []).filter((a) => a.connected);
 
+/** Accounts this API Management does not route to yet, unreadable ones included: what Connect another Foundry lists. */
+export const unconnectedAccounts = (accounts) => (Array.isArray(accounts) ? accounts : []).filter((a) => !a.connected);
+
 /** Connected, not attached, or unreadable, with why. A connected account keeps its routes even when a read fails. */
 export function accountStatus(a) {
   if (a?.connected) {
@@ -98,6 +101,29 @@ export function summaryLine(accounts) {
   if (!s.total) return "No Foundry accounts were found in this subscription.";
   const parts = [s.connected && `${s.connected} connected`, s.available && `${s.available} not attached`, s.unreadable && `${s.unreadable} unreadable`].filter(Boolean);
   return `${plural(s.total, "Foundry account")}: ${parts.join(", ")}. ${plural(s.deployments, "deployment")}${s.deploymentsKnown ? "" : " in the accounts that could be read"}.`;
+}
+
+/** The connected list's count: Foundries connected to this API Management and their deployments, nothing else. */
+export function connectedLine(accounts) {
+  const s = summarize(connectedAccounts(accounts));
+  if (!s.total) return "";
+  return `${s.total} ${s.total === 1 ? "Foundry" : "Foundries"} connected to this API Management · ${plural(s.deployments, "deployment")}${s.deploymentsKnown ? "" : " in those that could be read"}.`;
+}
+
+/** Connect another Foundry's count: accounts not connected, which can be attached or not read, and how many a search shows. */
+export function candidatesLine(accounts, shown) {
+  const s = summarize(unconnectedAccounts(accounts));
+  if (!s.total) return "";
+  const parts = [s.available && `${s.available} can be attached`, s.unreadable && `${s.unreadable} unreadable`].filter(Boolean);
+  const filtered = Number.isInteger(shown) && shown < s.total ? ` · ${shown} shown` : "";
+  return `${plural(s.total, "account")} not connected: ${parts.join(", ")}${filtered}.`;
+}
+
+/** Every search term must appear in the account's name, resource group, region, kind, connection or state. */
+export function matchesAccount(a, query) {
+  const terms = str(query).toLowerCase().split(/\s+/).filter(Boolean);
+  const hay = [a?.name, a?.resourceGroup, a?.location, a?.kind, KIND_LABEL[a?.kind], a?.connectionId, accountStatus(a).label].filter(Boolean).join(" ").toLowerCase();
+  return terms.every((t) => hay.includes(t));
 }
 
 // ── Requests that name an account ───────────────────────────────────────────

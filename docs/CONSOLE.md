@@ -1,4 +1,4 @@
-# Key Dashboard
+# liteAPIM (the admin key dashboard)
 
 A web app for gateway administrators. It issues and manages two key types:
 
@@ -8,7 +8,7 @@ A web app for gateway administrators. It issues and manages two key types:
   one or several Foundry deployments, rotated between two slots, suspended, and enrolled in
   automatic rotation.
 
-The dashboard also shows per-key usage, separately for short-lived and product keys, for a preset
+liteAPIM also shows per-key usage, separately for short-lived and product keys, for a preset
 period or a custom range of UTC days, and exports a chargeback report as CSV. Administrators
 distribute keys by copying a single key, downloading the script-compatible `keys.csv` and
 key-free `index.csv`, or creating an encrypted bundle signed by a Key Vault key. The address in
@@ -26,9 +26,9 @@ Decisions: [ADR-0013](adr/0013-admin-console.md) (core design),
 
 ## Access
 
-**Only `Console.Admin` can open the dashboard.** It requires Entra sign-in and the `Console.Admin`
+**Only `Console.Admin` can open liteAPIM.** It requires Entra sign-in and the `Console.Admin`
 app role. A signed-in person without that role gets 403 on every API; the UI displays
-"This dashboard is for administrators. Ask an admin for your key." The deploy script assigns
+"liteAPIM is for administrators. Ask an admin for your key." The deploy script assigns
 the operator and optional `-Admins` entries. It does not assign `Console.User`.
 
 **Issued to** is the email address the administrator records for attribution and usage reporting.
@@ -79,7 +79,7 @@ The script, in order:
      ARM validate/what-if and live deployment.
 
    Container Apps creates an environment injected into the POC VNet. App Service uses its
-   delegated VNet-integration subnet. Each path creates the dashboard with built-in Entra
+   delegated VNet-integration subnet. Each path creates liteAPIM with built-in Entra
    authentication and HTTPS only, and a managed identity with Key Vault Secrets Officer,
    Key Vault Crypto Officer and API Management Service Contributor.
 7. Sets the redirect URI, waits for `/healthz`, and prints the URL.
@@ -96,13 +96,15 @@ issued keep working.
 
 ## Using it
 
+The screenshots in this guide predate the name liteAPIM, so their header shows the earlier name.
+
 ### Keys
 
 ![Admin overview with separate active key counts and short-lived/product usage charts](images/console/console-overview.png)
 
 ![Short-lived key list and active/archived key actions](images/console/console-keys.png)
 
-The dashboard lists active keys by default, with a separate archived view. **Issued to** labels
+liteAPIM lists active keys by default, with a separate archived view. **Issued to** labels
 the intended holder; only administrators can see or reveal keys. For each key:
 
 - **Reveal** returns the value and a ready-to-paste client setup.
@@ -158,7 +160,7 @@ totals row, so a sum or a pivot table over the file counts each token once.
   and quoting follows RFC 4180, as in `keys.csv`
   ([OWASP: CSV injection](https://owasp.org/www-community/attacks/CSV_Injection)).
 - There is no price column. Foundry pricing varies by model, region and deployment type, and
-  Claude models on Foundry are billed in CCU, so the dashboard has no rate it could state as fact.
+  Claude models on Foundry are billed in CCU, so liteAPIM has no rate it could state as fact.
   Optional per-model rates are a "Later" roadmap entry.
 - Token counts are the gateway's token metrics. For streamed responses API Management estimates
   them (UNKNOWNS U5), so the report allocates usage and does not reconcile with an Azure invoice.
@@ -175,8 +177,8 @@ for these. Its count covers connected Foundries and their deployments. **Refresh
 re-reads accounts and deployments from ARM; newly deployed models do not require an app redeploy.
 
 **Connect another Foundry** opens a dialog that lists the other AIServices and Azure OpenAI
-accounts the dashboard discovers in the configured subscription, including accounts outside the
-gateway's resource group, with search. An account the dashboard cannot read is listed there with
+accounts liteAPIM discovers in the configured subscription, including accounts outside the
+gateway's resource group, with search. An account liteAPIM cannot read is listed there with
 its error, not omitted. These accounts do not appear in the connected list until they are
 attached. If no Foundry is connected, the page shows an empty state with the same action.
 
@@ -188,7 +190,7 @@ appear.
 1. In **Connect another Foundry**, choose the account by its name, resource group and region.
    Deployment names may repeat across accounts; the account's resource ID distinguishes them.
 2. **Attach** provisions that account's APIM backends and isolated gateway routes. It does not
-   give the dashboard permission to grant Azure roles or open a firewall. After it succeeds, the
+   give liteAPIM permission to grant Azure roles or open a firewall. After it succeeds, the
    dialog closes and the account is selected in the connected list. A failed attach keeps the
    dialog open with the error; selecting Attach again repairs a partial attempt.
 3. Run the displayed operator setup command to grant the APIM managed identity inference access
@@ -277,7 +279,7 @@ The setup also sets `ANTHROPIC_BASE_URL` and `ANTHROPIC_MODEL`, or `OPENAI_BASE_
 To export:
 
 1. Tick keys on the **Keys** tab.
-2. Enter a recipient and a passphrase. If you leave the passphrase blank, the console generates
+2. Enter a recipient and a passphrase. If you leave the passphrase blank, liteAPIM generates
    one and shows it once.
 3. Download the bundle.
 
@@ -292,7 +294,7 @@ admin's name and the key names, never the values.
 The recipient opens it:
 
 ```bash
-# bundle-key.json: the public key from "Bundle verification key", obtained from the console,
+# bundle-key.json: the public key from "Bundle verification key", obtained from liteAPIM,
 # not from whoever sent the bundle
 BUNDLE_PASSPHRASE='…' node scripts/open-bundle.mjs bundle.json --key bundle-key.json --out keys.json
 ```
@@ -318,7 +320,7 @@ API Management's own URL (`GATEWAY_URL`, set at deploy) unless a custom domain r
 2. On **Settings**, enter `https://<hostname>` in **Gateway URL (custom domain)**, or select one of
    the gateway custom domains the card lists, then **Save**.
 
-The dashboard accepts only `https://` and a host name, lowercased: no path, query, user name,
+liteAPIM accepts only `https://` and a host name, lowercased: no path, query, user name,
 port other than 443, IP address or wildcard. Before saving, it reads the API Management service
 from ARM (`api-version=2024-05-01`) and checks that the host name is a gateway (`Proxy`) entry in
 its `hostnameConfigurations` (U51); anything else is refused with 400. It never sends a request to
@@ -339,7 +341,7 @@ that case.
 - Keys handed out before a change are not rewritten. They keep working: API Management keeps
   answering on its default gateway host name, which cannot be removed, and on each configured
   custom domain ([Learn](https://learn.microsoft.com/azure/api-management/configure-custom-domain), U52).
-- The Foundry connection test is a request the dashboard sends itself, so it keeps calling the
+- The Foundry connection test is a request liteAPIM sends itself, so it keeps calling the
   API Management URL.
 
 #### Signing secret
@@ -372,10 +374,10 @@ shows whether the two copies match, and has three actions:
   - Secret values never reach the logs.
   - The app has no client secret and no registry password; it uses managed identities only.
   - Key Vault is reached only over the private network.
-- **Dashboard access:** remove the administrator's app-role assignment in Entra. Keys are
+- **Access to liteAPIM:** remove the administrator's app-role assignment in Entra. Keys are
   distributed out-of-band by the administrator; the intended holder has no dashboard role.
 - **Gateway URL:** keys name only API Management's URL or a host name ARM lists as one of its
-  gateway custom domains; the dashboard never sends a request to an admin-provided URL
+  gateway custom domains; liteAPIM never sends a request to an admin-provided URL
   ([ADR-0019](adr/0019-admin-gateway-url.md)).
 - **Chargeback report:** built from tags and usage rows, with formula-escaped cells; it holds no
   key value.
@@ -402,7 +404,7 @@ shows whether the two copies match, and has three actions:
 - A bundle with a flipped ciphertext byte was refused.
 
 **Historical P46 role test:** before ADR-0016, `Console.User` saw only its own keys and every
-admin action returned 403. That behaviour was superseded: the dashboard is now admin-only, and
+admin action returned 403. That behaviour was superseded: liteAPIM is now admin-only, and
 owners cannot sign in to reveal keys.
 
 **ADR-0016 live checks (2026-10-23):**

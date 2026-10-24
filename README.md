@@ -6,7 +6,7 @@ or any SDK. Nobody holds a model credential or can overspend.
 
 Two ways to run it, on the same gateway:
 
-| | **Key Dashboard** (web app) | **`admin.ps1`** (terminal) |
+| | **liteAPIM** (the admin key dashboard, a web app) | **`admin.ps1`** (terminal) |
 |---|---|---|
 | For | Administrators, in a browser | One operator at a terminal |
 | Keys | Short-lived keys **and** long-lived product keys | Short-lived keys |
@@ -15,7 +15,7 @@ Two ways to run it, on the same gateway:
 
 ---
 
-## Key Dashboard
+## liteAPIM
 
 An admin-only web app on Azure that issues, distributes and tracks two kinds of key:
 
@@ -31,7 +31,9 @@ usage. That person gets no dashboard access. Administrators hand keys over by co
 
 ### Architecture
 
-![Key Dashboard architecture on Azure: admin dashboard and automation in the gateway's VNet, Key Vault and Foundry behind private endpoints, APIM Standard v2 as the public gateway, usage from Application Insights and Log Analytics](docs/images/architecture-key-dashboard.png)
+![liteAPIM architecture on Azure: liteAPIM and its automation in the gateway's VNet, Key Vault and Foundry behind private endpoints, APIM Standard v2 as the public gateway, usage from Application Insights and Log Analytics](docs/images/architecture-key-dashboard.png)
+
+The illustration predates the name liteAPIM: its admin dashboard box is liteAPIM.
 
 In this design, key recipients **do not** sign in to Entra ID: flow 7 and "Entra ID
 authentication" on APIM in the illustration do not apply. A recipient sends the key an
@@ -39,11 +41,11 @@ administrator gave them, and APIM checks it:
 - a short-lived key as `Authorization: Bearer`;
 - a product key as `x-api-key` or `api-key`.
 
-Entra ID signs in administrators to the dashboard. The dashboard and the automation reach Key
+Entra ID signs in administrators to liteAPIM. liteAPIM and the automation reach Key
 Vault, API Management and Foundry with managed identities, and APIM does not call Key Vault per
 request. A text version of the diagram is in [docs/INSTALL.md](docs/INSTALL.md#architecture).
 
-**Multiple Foundry accounts:** the dashboard discovers deployed models across the configured
+**Multiple Foundry accounts:** liteAPIM discovers deployed models across the configured
 subscription, not just the original gateway account. **Foundry & models** lists the Foundries
 connected to this API Management, with each one's deployments, readiness and supported route.
 **Connect another Foundry** lists the subscription's other accounts, with search: attach one, pin
@@ -60,7 +62,7 @@ cd foundry-hackathon-gateway
 npm run dashboard:demo          # then open http://127.0.0.1:8090/
 ```
 
-The demo runs the real dashboard on sample keys and synthetic usage, on `127.0.0.1` only, with
+The demo runs the real liteAPIM on sample keys and synthetic usage, on `127.0.0.1` only, with
 in-memory stand-ins for Key Vault, API Management and Foundry: two connected Foundries and four
 more to connect, usage of a key no longer in Key Vault, and a gateway custom domain,
 `ai.contoso.example`, to try on Settings. It needs Node.js 20+ and nothing else
@@ -76,7 +78,7 @@ az deployment group create -g <rg> --template-file infra/examples/private-foundr
 # 3. Product key routes and the private Key Vault
 ./poc/products-keyvault/scripts/Deploy-Poc.ps1 -Subscription <sub> -ResourceGroup <rg> -ApimName <apim> -FoundryAccountName <foundry>
 ./poc/products-keyvault/scripts/Invoke-PocRunner.ps1 -Subscription <sub> -ResourceGroup <rg> -VaultName <vault> -Step Deploy
-# 4. Dashboard: Container Apps by default; -Hosting AppService for App Service + Function App
+# 4. liteAPIM: Container Apps by default; -Hosting AppService for App Service + Function App
 ./scripts/Deploy-Console.ps1 -Subscription <sub> -ResourceGroup <rg>
 ```
 
@@ -89,23 +91,25 @@ az deployment group create -g <rg> --template-file infra/examples/private-foundr
 
 ### Use it
 
+The screenshots predate the name liteAPIM, so their header shows the earlier name.
+
 | | |
 |---|---|
 | ![Overview: active key counts, tokens and requests, short-lived and product usage over time](docs/images/console/console-overview.png) | **Overview.** Active short-lived and product keys, tokens and requests for 24 h, 7 d, 30 d, 90 d or a custom range of UTC days, and both key types on one chart. **Chargeback report** downloads a CSV with one row per key and model for that period, with each key's issued-to, labels, status and Foundry, and no prices. The screenshot predates the custom range and the report. |
 | ![Short-lived keys: usage, by model, and the key list with active and archived views](docs/images/console/console-keys.png) | **Short-lived keys** and **Product keys** are separate pages. Each has usage by day and by model, an active or archived key list, search, and a per-key drawer with its own chart. |
 | ![Issue a short-lived key: issued to, subject, one or several models, start delay, validity and budget](docs/images/console/console-issue-signed.png) | **Issue one.** Choose **One model** or **Several models** explicitly. **Starts in** delays activation, as `admin.ps1` does. The key is shown once, masked, with Copy. |
-| ![Bulk issue: shared settings and CSV rows](docs/images/console/console-short-lived-bulk.png) | **Issue in bulk.** Paste or upload CSV rows. The dashboard returns `keys.csv`, to send each person their row, and `index.csv`, which holds no keys. |
-| ![Product key issue: Foundry deployments, monthly budget, rotation and expiry](docs/images/console/console-issue-product.png) | **Product keys** grant Foundry deployments. The dashboard creates one APIM product per model set, so the key is refused for any other model (403). |
+| ![Bulk issue: shared settings and CSV rows](docs/images/console/console-short-lived-bulk.png) | **Issue in bulk.** Paste or upload CSV rows. liteAPIM returns `keys.csv`, to send each person their row, and `index.csv`, which holds no keys. |
+| ![Product key issue: Foundry deployments, monthly budget, rotation and expiry](docs/images/console/console-issue-product.png) | **Product keys** grant Foundry deployments. liteAPIM creates one APIM product per model set, so the key is refused for any other model (403). |
 | ![Models: pinned aliases per route and the Foundry deployments](docs/images/console/console-models.png) | **Models.** Lists the Foundry deployments and pins or unpins aliases, with the same rules as `admin.ps1`. |
 | ![Foundry account discovery with connected and unattached accounts, region and deployment counts](docs/images/console/console-foundries.png) | **Foundry & models.** Lists the Foundries connected to this API Management and refreshes their deployments. **Connect another Foundry** finds and attaches another account from the subscription without redirecting existing keys. The screenshot predates this split and still shows unattached accounts in the list. |
-| ![Setup guide with a highlighted Foundry account section](docs/images/console/console-foundry-help.png) | **Help → Show me.** Highlights discovery, attachment, access/network setup, pinning, the gateway URL, key issue, distribution, the usage period and the chargeback report. Operator commands are copied, not executed by the dashboard. |
+| ![Setup guide with a highlighted Foundry account section](docs/images/console/console-foundry-help.png) | **Help → Show me.** Highlights discovery, attachment, access/network setup, pinning, the gateway URL, key issue, distribution, the usage period and the chargeback report. Operator commands are copied, not executed by liteAPIM. |
 | ![Export: an encrypted bundle signed by the Key Vault key](docs/images/console/console-export.png) | **Export.** An AES-256-GCM bundle signed by a Key Vault key. The recipient verifies and opens it with `scripts/open-bundle.mjs`. |
 
 Expired or revoked keys move to **Archived** automatically. Product keys are suspended first.
 Archived keys are deleted 30 days later. **Settings** holds the signing secret and the **Gateway
 URL**: keys name API Management's own URL unless a custom domain of that API Management replaces
-it; the dashboard checks the domain with ARM before saving it, and keys handed out earlier keep
-working ([ADR-0019](docs/adr/0019-admin-gateway-url.md)). **[→ Using the dashboard](docs/CONSOLE.md)**
+it; liteAPIM checks the domain with ARM before saving it, and keys handed out earlier keep
+working ([ADR-0019](docs/adr/0019-admin-gateway-url.md)). **[→ Using liteAPIM](docs/CONSOLE.md)**
 has every action.
 
 ---
@@ -299,9 +303,9 @@ success first and traffic used the private path again about 1–1½ minutes late
 Step-by-step portal and CLI instructions, verification and teardown:
 [docs/PRIVATE-ENDPOINT.md](docs/PRIVATE-ENDPOINT.md).
 
-### Key Dashboard
+### liteAPIM
 
-The web app for issuing, distributing and tracking keys is described [at the top of this page](#key-dashboard).
+liteAPIM, the web app for issuing, distributing and tracking keys, is described [at the top of this page](#liteapim).
 Install: [docs/INSTALL.md](docs/INSTALL.md). Use: [docs/CONSOLE.md](docs/CONSOLE.md).
 
 ---
@@ -513,13 +517,13 @@ src/
   apim.mjs                   which API Management instance can host this, and the deployment plan
   foundry.mjs                the models in the subscription, and the route that serves each
   anthropic.mjs              the Anthropic error envelope and body rewrites
-  console/                   admin-only Key Dashboard: roles, usage, lifecycle, issue, bundles, UI
+  console/                   liteAPIM, admin only: roles, usage, lifecycle, issue, bundles, UI
 infra/
   main.bicep                 gateway, observability, both APIs, policy, RBAC
-  console.bicep              Container Apps dashboard and scheduled job in the POC VNet
+  console.bicep              liteAPIM on Container Apps and its scheduled job in the POC VNet
   console-appservice.bicep   alternate App Service + Function App path
   console-telemetry.bicep    usage diagnostics for the POC routes
-  console.Dockerfile         distroless Node dashboard image (built by ACR Tasks)
+  console.Dockerfile         distroless Node image for liteAPIM (built by ACR Tasks)
   policy.xml                 the governance policy, OpenAI route
   policy-claude.xml          the governance policy, Claude route
   examples/
@@ -532,9 +536,9 @@ scripts/
   Models.ps1                 model discovery and pinning
   Keys.ps1                   key issuance and handouts
   Test-Governance.ps1        proves each control fires, per route
-  Deploy-Console.ps1         selects and deploys one dashboard hosting path
-  open-bundle.mjs            verifies and decrypts a Key Dashboard export bundle
-  dashboard-demo.mjs         runs the Key Dashboard locally on sample data, no Azure
+  Deploy-Console.ps1         selects and deploys one liteAPIM hosting path
+  open-bundle.mjs            verifies and decrypts a liteAPIM export bundle
+  dashboard-demo.mjs         runs liteAPIM locally on sample data, no Azure
 functions/
   sweep.mjs                  App Service option: v4 timer function for key automation
 examples/
@@ -543,8 +547,8 @@ tests/                       regression, client, key-isolation and UI safety tes
 docs/adr/                    architecture decisions and their reasoning
 docs/UNKNOWNS.md             what we did not know, and how each was closed
 docs/PRIVATE-ENDPOINT.md     Foundry behind a private endpoint: requirements, steps, evidence
-docs/INSTALL.md              Key Dashboard: install and setup, architecture, troubleshooting
-docs/CONSOLE.md              Key Dashboard: issue, CSV, usage, bundles, measurements
+docs/INSTALL.md              liteAPIM: install and setup, architecture, troubleshooting
+docs/CONSOLE.md              liteAPIM: issue, CSV, usage, bundles, measurements
 ```
 
 `src/*.mjs` is the canonical statement of the rules; the policies and the PowerShell are

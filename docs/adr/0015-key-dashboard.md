@@ -1,6 +1,7 @@
 # ADR-0015: Key Dashboard — hosting choice, single-IP access, usage, model choice, key lifecycle
 
-- **Status:** Accepted
+- **Status:** Accepted. Since P60 (2026-10-24) the UI is called liteAPIM; technical names are
+  unchanged (note at the end).
 - **Date:** 2026-10-22
 - **Packets:** P49–P54
 - **Deciders:** owner's requirements of 2026-10-22; design by the coding agent
@@ -135,3 +136,21 @@ to the route its wire format allows, and nowhere else.
   table is added.
 - A Function App on a B1 plan does not run timer triggers reliably. Then Always On is
   required, or the automation moves to a WebJob.
+
+## Note: the UI is called liteAPIM (P60, 2026-10-24)
+
+The owner renamed the UI "liteAPIM" on 2026-10-24. The app this ADR calls the Key Dashboard, and
+ADR-0013 and ADR-0014 call the Key Console, is the same app; its header, page title, setup guide,
+messages and guides now say liteAPIM, introduced in the guides as "liteAPIM (the admin key
+dashboard)". The decisions above are unchanged.
+
+The rename is display text only. These keep their names, because deployed keys, installs and
+scripts depend on them: the `release/key-dashboard` branch; `src/console/`,
+`scripts/Deploy-Console.ps1`, `scripts/dashboard-demo.mjs` and the other file names; environment
+variables; API paths; Key Vault secret names such as `console-gateway-url`; the
+`hackgw-key-console` app registration and its `Console.Admin` role; JWT audiences; CSV and bundle
+columns; and Azure resource names. The display names the app gives the API Management APIs and
+products it creates ("Key Dashboard: …", "Created by the Key Dashboard") also stay: they are Azure
+metadata, not shown in the UI, and renaming them for new resources only would split one install
+between two names. `tests/console-brand.test.mjs` lists those display names as the only allowed
+use of an old name in the app's code.

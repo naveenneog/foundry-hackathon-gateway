@@ -1,6 +1,6 @@
-# Key Dashboard: install and setup
+# liteAPIM (the admin key dashboard): install and setup
 
-This guide installs the Key Dashboard next to the gateway, from an empty resource group to a
+This guide installs liteAPIM next to the gateway, from an empty resource group to a
 first key used by Claude Code. Each step names the script or template that does the work and the
 document with the details.
 
@@ -10,7 +10,7 @@ document with the details.
 | [1. Network, Foundry and APIM](#1-network-foundry-and-api-management) | VNet, private Foundry, APIM Standard v2 | 45–60 min |
 | [2. Gateway](#2-gateway) | Short-lived key routes `/v1` and `/claude` | 5 min |
 | [3. Product routes and Key Vault](#3-product-routes-and-key-vault) | Product key routes `/poc/*`, private vault | 10 min |
-| [4. Dashboard](#4-dashboard) | Dashboard, automation, sign-in | 10 min |
+| [4. liteAPIM](#4-liteapim) | liteAPIM, automation, sign-in | 10 min |
 | [5. First sign-in](#5-first-sign-in) | Signing secret in Key Vault | 1 min |
 | [6. Issue and use a key](#6-issue-and-use-a-key) | A key working in Claude Code | 5 min |
 
@@ -23,18 +23,20 @@ Day-to-day use: [CONSOLE.md](CONSOLE.md).
 
 ## Architecture
 
-![Key Dashboard architecture on Azure](images/architecture-key-dashboard.png)
+![liteAPIM architecture on Azure](images/architecture-key-dashboard.png)
+
+The illustration predates the name liteAPIM: its admin dashboard box is liteAPIM.
 
 In the illustration, key recipients obtain a token from Entra ID (flow 7) and APIM validates
 Entra tokens. In this design they do not. A recipient has no Entra role. The administrator
-gives each recipient a key issued by the dashboard, and APIM checks that key:
+gives each recipient a key issued by liteAPIM, and APIM checks that key:
 
 - a **short-lived key** is an HS256 JWT signed with the gateway's secret, sent as
   `Authorization: Bearer`;
 - a **product key** is an APIM subscription key, sent as `x-api-key` (Claude route) or `api-key`
   (OpenAI route).
 
-Entra ID signs in **administrators** to the dashboard. The diagram below shows the same design as
+Entra ID signs in **administrators** to liteAPIM. The diagram below shows the same design as
 text:
 
 ```mermaid
@@ -43,7 +45,7 @@ flowchart LR
   Admin -->|"HTTPS"| Dash
   Admin -->|"copy · keys.csv · bundle"| Recipient["Key recipient<br/>Claude Code · apps · SDKs"]
   subgraph VNet["Existing VNet"]
-    Dash["Key Dashboard<br/>Container Apps or App Service"]
+    Dash["liteAPIM<br/>Container Apps or App Service"]
     Job["Automation<br/>Container Apps job or Function App timer"]
     KV["Key Vault<br/>private endpoint"]
     Foundry["Foundry<br/>private endpoint"]
@@ -67,10 +69,10 @@ flowchart LR
 |---|---|
 | An Azure subscription, a region with Claude on Foundry (this guide uses `eastus2`) | Every resource is created there |
 | Contributor and User Access Administrator (or Owner) on the resource group | The templates create resources and role assignments |
-| Permission to create an Entra app registration and assign its app roles | The dashboard's sign-in ([`Deploy-Console.ps1`](../scripts/Deploy-Console.ps1)) |
-| Subscription custom-role definition and role-assignment privileges for the installer | The dashboard's discovery role has only `Microsoft.CognitiveServices/accounts/read` and `Microsoft.CognitiveServices/accounts/deployments/read`; no inference, account keys or RBAC writes |
+| Permission to create an Entra app registration and assign its app roles | liteAPIM's sign-in ([`Deploy-Console.ps1`](../scripts/Deploy-Console.ps1)) |
+| Subscription custom-role definition and role-assignment privileges for the installer | liteAPIM's discovery role has only `Microsoft.CognitiveServices/accounts/read` and `Microsoft.CognitiveServices/accounts/deployments/read`; no inference, account keys or RBAC writes |
 | PowerShell 7, Azure CLI 2.60+ signed in (`az login`), Node.js 20+ | The scripts and the local demo |
-| Quota for Container Apps (the default) or for an App Service plan B1 | The dashboard host; App Service quota was 0 in the test subscription ([U40](UNKNOWNS.md)) |
+| Quota for Container Apps (the default) or for an App Service plan B1 | liteAPIM's host; App Service quota was 0 in the test subscription ([U40](UNKNOWNS.md)) |
 
 On a shared machine, use a separate Azure CLI profile so another `az login` cannot switch the
 account mid-install. `Deploy-Console.ps1` refuses to run when the CLI's active tenant differs from
@@ -101,7 +103,7 @@ issued keys are not valid at any gateway. `PORT=8091` changes the port.
 
 ## 1. Network, Foundry and API Management
 
-The dashboard runs inside the gateway's VNet, where Key Vault and Foundry are reachable through
+liteAPIM runs inside the gateway's VNet, where Key Vault and Foundry are reachable through
 private endpoints. [`infra/examples/private-foundry-test.bicep`](../infra/examples/private-foundry-test.bicep)
 creates the whole environment in one resource group:
 - the VNet and subnets;
@@ -144,7 +146,7 @@ $target = @{ Subscription = '<subscription>'; ResourceGroup = '<rg>' }
 ```
 
 `Deploy-Poc.ps1` prints the vault name. The vault is created with public network access
-disabled. The dashboard reaches it through the private endpoint and DNS zone that the runner's
+disabled. liteAPIM reaches it through the private endpoint and DNS zone that the runner's
 `Deploy` step creates. The runner VM is needed only for the POC's own scripts; deallocate it
 afterwards:
 
@@ -152,10 +154,10 @@ afterwards:
 az vm deallocate -g <rg> -n vm-poc-runner --no-wait
 ```
 
-## 4. Dashboard
+## 4. liteAPIM
 
 ```powershell
-# Default: Container Apps. The dashboard scales to zero; a scheduled job runs the automation.
+# Default: Container Apps. liteAPIM scales to zero; a scheduled job runs the automation.
 ./scripts/Deploy-Console.ps1 -Subscription <subscription> -ResourceGroup <rg>
 
 # Options
@@ -178,42 +180,42 @@ Foundry account, the gateway's workspace and the VNet in the resource group. It 
    - **ContainerApps**: builds the image in Azure Container Registry with ACR Tasks (no local
      Docker), then deploys [`infra/console.bicep`](../infra/console.bicep);
    - **AppService**: deploys [`infra/console-appservice.bicep`](../infra/console-appservice.bicep)
-     and zip-deploys the dashboard and [`functions/`](../functions/).
+     and zip-deploys liteAPIM and [`functions/`](../functions/).
 5. Waits for `/healthz` and prints the URL.
 
-The installer also grants a subscription-scoped **metadata-only discovery role** to the
-dashboard identity. It does not grant subscription Reader/Contributor or role-assignment rights.
+The installer also grants a subscription-scoped **metadata-only discovery role** to
+liteAPIM's identity. It does not grant subscription Reader/Contributor or role-assignment rights.
 This is why the deployed-model list can cover Foundry accounts in other resource groups.
 
 | Created | Container Apps path | App Service path |
 |---|---|---|
-| Dashboard | Container app, scale 0–1, built-in Entra sign-in | Linux web app, built-in Entra sign-in |
+| liteAPIM | Container app, scale 0–1, built-in Entra sign-in | Linux web app, built-in Entra sign-in |
 | Automation, every 15 min | Container Apps job | Function App timer on the same plan |
 | Network | Subnet `snet-console` (10.61.5.0/27) | Subnet `snet-appsvc` (10.61.6.0/27) |
 | Also | Registry (admin user off), pull identity, log workspace | Storage account (shared keys off) |
-| Dashboard identity roles | Key Vault Secrets Officer and Crypto Officer, API Management Service Contributor, Reader on Foundry, Log Analytics Data Reader | Same |
+| liteAPIM identity roles | Key Vault Secrets Officer and Crypto Officer, API Management Service Contributor, Reader on Foundry, Log Analytics Data Reader | Same |
 | Automation identity roles | Key Vault Secrets Officer, API Management Service Contributor | Same, plus its host storage |
 
-The dashboard has no client secret and no registry password. It uses managed identities only.
-With no `-AllowedIp`, the dashboard accepts any address and Entra sign-in with the
+liteAPIM has no client secret and no registry password. It uses managed identities only.
+With no `-AllowedIp`, liteAPIM accepts any address and Entra sign-in with the
 `Console.Admin` role is required for every request except `/healthz`.
 
 ## 5. First sign-in
 
 Open the printed URL and sign in. Then open **Settings** and, under **Signing secret**, click
 **Migrate from API Management**. This copies the gateway's signing secret into Key Vault, where
-the dashboard signs short-lived keys. Keys already issued keep working. The card then shows
+liteAPIM signs short-lived keys. Keys already issued keep working. The card then shows
 **Copies match: Yes**.
 
 ![Signing secret page after migration](images/console/console-signing.png)
 
 The screenshot predates P59, when the signing secret had a page of its own; it is now a card on
-**Settings**.
+**Settings**. It also predates the name liteAPIM, so its header shows the earlier name.
 
 **Optional: a custom domain in handed-out keys.** Keys name API Management's own URL. To hand
 them out with a custom domain instead, add it to API Management's Gateway endpoint (Azure portal,
 the API Management instance, **Custom domains**), then choose it under **Gateway URL** on
-**Settings**. The dashboard accepts only a gateway custom domain of this API Management. Details:
+**Settings**. liteAPIM accepts only a gateway custom domain of this API Management. Details:
 [CONSOLE.md](CONSOLE.md#gateway-url-custom-domain).
 
 ## 6. Issue and use a key
@@ -239,7 +241,7 @@ pwsh scripts/Connect-Foundry.ps1 -Subscription <subscription> -ResourceGroup <ap
 
 This operator action adds account-specific connectivity in the existing VNet. It does not
 change public-network access or firewall rules. It can incur private endpoint charges. Pin a
-ready model and use **Test** to verify inference access before distributing keys. The dashboard
+ready model and use **Test** to verify inference access before distributing keys. liteAPIM's
 help highlights the relevant controls and explains metadata access versus inference access.
 
 **A short-lived key.** **Short-lived keys → Issue one**:
@@ -249,7 +251,7 @@ help highlights the relevant controls and explains metadata access versus infere
 
 For Claude Code, set these in the project's `.claude/settings.json` `env` block, or export them:
 The values below show the original account's route. An attached account includes
-`/foundry/<connection-id>` before `/claude` or `/poc/claude`; the dashboard's handout and CSV
+`/foundry/<connection-id>` before `/claude` or `/poc/claude`; liteAPIM's handout and CSV
 already contain that prefix. Copy those values rather than constructing the URL manually.
 
 ```bash
@@ -297,16 +299,16 @@ encrypted bundles.
 | Signed in, page says "Administrators only" | The account lacks `Console.Admin`. Re-run `Deploy-Console.ps1 -Admins <upn>` or assign the role in Entra (Enterprise applications → `hackgw-key-console` → Users and groups). |
 | `Deploy-Console.ps1` stops: "active account is in a different tenant" | Another `az login` switched the CLI account. Run `az account set --subscription <subscription>` or use a separate `AZURE_CONFIG_DIR`. |
 | `InternalSubscriptionIsOverQuotaForSku` with `-Hosting AppService` | No App Service quota in the region. Use the default Container Apps path or request quota. |
-| A browser POST returns a bodyless 403 | Platform sign-in needs a same-origin `Referer`; the dashboard sends `Referrer-Policy: same-origin`. A browser extension or proxy that strips `Referer` causes it ([ADR-0014](adr/0014-console-on-container-apps.md)). |
+| A browser POST returns a bodyless 403 | Platform sign-in needs a same-origin `Referer`; liteAPIM sends `Referrer-Policy: same-origin`. A browser extension or proxy that strips `Referer` causes it ([ADR-0014](adr/0014-console-on-container-apps.md)). |
 | Usage shows 0 right after a call | Metrics reach Log Analytics a few minutes after the call. |
-| Only the original Foundry's models appear | Foundry & models lists connected Foundries only; other accounts appear in **Connect another Foundry**. If that list is empty too, upgrade/redeploy this branch so the dashboard receives the metadata-only subscription discovery role, then select **Refresh from Azure**. |
-| An account's deployments show an access error | The dashboard identity lacks account/deployment metadata-read permission. The installer reports whether its discovery role was granted; no account-key access is needed. |
+| Only the original Foundry's models appear | Foundry & models lists connected Foundries only; other accounts appear in **Connect another Foundry**. If that list is empty too, upgrade/redeploy this branch so liteAPIM receives the metadata-only subscription discovery role, then select **Refresh from Azure**. |
+| An account's deployments show an access error | liteAPIM's identity lacks account/deployment metadata-read permission. The installer reports whether its discovery role was granted; no account-key access is needed. |
 | Attached backend test reports DNS failure | The account's public hostname may CNAME into a linked private DNS zone that has no record for that account. Use the optional private-endpoint setup command and test again; do not relax the account's firewall. |
 | A product key returns 401 right after issue or rotation | APIM applies key changes within about 20 seconds (16 s measured). |
 
 ## Remove
 
-The dashboard adds these resources to the resource group; deleting them removes it and leaves
+liteAPIM adds these resources to the resource group; deleting them removes it and leaves
 the gateway running:
 
 - **Container Apps path:** `ca-console-<suffix>`, `job-ca-console-<suffix>`,

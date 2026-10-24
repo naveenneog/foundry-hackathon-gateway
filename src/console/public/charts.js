@@ -35,15 +35,16 @@ export function legend(items) {
   return el("ul", { class: "legend" }, items.map((it) => el("li", {}, el("span", { class: `swatch ${it.cls}`, "aria-hidden": "true" }), it.label)));
 }
 
+/** The chart's data as a table for assistive technology. The hidden box is a block: a table would ignore width: 1px and widen the page. */
 function dataTable(title, times, step, series) {
-  return el("table", { class: "sr-only" },
+  return el("div", { class: "sr-only" }, el("table", {},
     el("caption", {}, `${title}, data`),
     el("thead", {}, el("tr", {},
       el("th", { scope: "col" }, step >= DAY ? "Day (UTC)" : "Hour"),
       series.map((s) => el("th", { scope: "col" }, `${s.name} tokens`)))),
     el("tbody", {}, times.map((t, i) => el("tr", {},
       el("th", { scope: "row" }, fmtBucket(t, step, { long: true })),
-      series.map((s) => el("td", {}, fmtInt(s.values[i])))))));
+      series.map((s) => el("td", {}, fmtInt(s.values[i]))))))));
 }
 
 const M = { top: 14, right: 16, bottom: 30, left: 52 };

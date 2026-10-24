@@ -193,3 +193,23 @@ test("the Overview, both key pages and the key drawer request and label usage by
   const server = readFileSync(new URL("../src/console/server.mjs", import.meta.url), "utf8");
   assert.match(server, /"\/period\.js": \["period\.js", "text\/javascript; charset=utf-8"\]/);
 });
+
+test("a chart's data table is hidden inside a block: a table ignores width 1px, and at 390 px it widened the page", async () => {
+  const { timeChart } = await import(new URL("charts.js", PUBLIC));
+  const doc = fakeDom();
+  globalThis.document = doc;
+  globalThis.ResizeObserver = class { observe() {} unobserve() {} };
+  try {
+    const times = Array.from({ length: 48 }, (_, i) => Date.UTC(2026, 9, 14) + i * lib.HOUR);
+    const fig = timeChart({ title: "Tokens per hour", times, step: lib.HOUR, series: [{ name: "Short-lived", cls: "s-jwt", values: times.map((_, i) => i) }] });
+    const table = fig.querySelector("table");
+    assert.ok(table, "the data is there for assistive technology");
+    assert.equal(table.classList.contains("sr-only"), false, "the table itself is not the hidden box");
+    assert.ok(table.parentNode.classList.contains("sr-only"), "a visually hidden block holds it");
+    assert.equal(table.parentNode.tagName, "div");
+    assert.equal(table.querySelector("tbody").querySelectorAll("tr").length, 48);
+  } finally {
+    delete globalThis.document;
+    delete globalThis.ResizeObserver;
+  }
+});

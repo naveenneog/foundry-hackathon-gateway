@@ -32,7 +32,7 @@ function gatewayUrlCard() {
     hint: "https:// and a host name only. It must be a gateway custom domain of this API Management: add it in the Azure portal (the API Management instance, Custom domains) first." });
   const save = el("button", { type: "submit", class: "btn btn-primary" }, "Save");
   const reset = el("button", { type: "button", class: "btn btn-secondary", hidden: true }, "Reset to API Management URL");
-  const form = el("form", { class: "form-inline gateway-form", novalidate: true }, url.wrap, el("div", { class: "form-actions" }, save, reset));
+  const form = el("form", { class: "gateway-form", novalidate: true }, url.wrap, el("div", { class: "form-actions" }, save, reset));
   let current = null;
 
   function draw(s) {

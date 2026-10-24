@@ -479,7 +479,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--primary); }
 /* Settings, the gateway URL card: views-settings.js. */
 .gateway-status { display: grid; gap: 8px; margin: 4px 0 14px; }
 .gateway-now { margin: 0; font-weight: 600; overflow-wrap: anywhere; }
-.gateway-form .field { flex: 1 1 340px; }
+.gateway-form { display: grid; gap: 10px; max-width: 46rem; }
 .gateway-offers { display: grid; gap: 6px; margin-top: 12px; }
 .gateway-offers .btn { overflow-wrap: anywhere; text-align: left; }
 

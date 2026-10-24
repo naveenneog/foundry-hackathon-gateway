@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Try the Key Dashboard without Azure: `node scripts/dashboard-demo.mjs`, then open
+ * Try liteAPIM (the admin key dashboard) without Azure: `node scripts/dashboard-demo.mjs`, then open
  * http://127.0.0.1:8090/.
  *
  * Runs the real server, service and browser UI (src/console/) against the in-memory Key Vault,
@@ -37,7 +37,7 @@ const MORE_ACCOUNTS = [
   ["rg-research", "aif-research", "AIServices", "swedencentral", [["gpt-4o", "OpenAI"], ["claude-sonnet-5", "Anthropic"]]],
   ["rg-marketing", "aoai-marketing", "OpenAI", "westeurope", [["gpt-4o-mini", "OpenAI"]]],
   ["rg-sandbox", "aif-sandbox", "AIServices", "eastus", [["deepseek-v4-flash", "DeepSeek"], ["claude-haiku-4-5", "Anthropic"]]],
-  ["rg-legacy", "aoai-legacy", "OpenAI", "eastus2", [], "AuthorizationFailed: the dashboard cannot list this account's deployments."],
+  ["rg-legacy", "aoai-legacy", "OpenAI", "eastus2", [], "AuthorizationFailed: liteAPIM cannot list this account's deployments."],
 ];
 
 function addAccounts(foundry) {
@@ -132,7 +132,7 @@ export async function startDemo({ port = Number(process.env.PORT ?? 8090), quiet
   server.on("close", () => clearInterval(tick));
   await new Promise((resolve) => server.listen(port, "127.0.0.1", resolve));
   const url = `http://127.0.0.1:${server.address().port}/`;
-  if (!quiet) console.log(`Key Dashboard demo (sample data, no Azure): ${url}  — Ctrl+C to stop`);
+  if (!quiet) console.log(`liteAPIM demo (sample data, no Azure): ${url}  — Ctrl+C to stop`);
   return { server, url };
 }
 

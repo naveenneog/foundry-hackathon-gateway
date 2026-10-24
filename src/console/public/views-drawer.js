@@ -1,4 +1,4 @@
-// Key Dashboard — the per-key drawer: details, the key's own usage, who it is issued to, rotation
+// liteAPIM — the per-key drawer: details, the key's own usage, who it is issued to, rotation
 // and lifecycle actions. Destructive actions confirm first; every change refreshes the list, and
 // the drawer redraws from the refreshed key (or closes when the key left the list).
 

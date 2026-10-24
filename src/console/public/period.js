@@ -1,4 +1,4 @@
-// Key Dashboard — the usage period: 24 hours, 7, 30 or 90 days, or a custom range of whole UTC days
+// liteAPIM — the usage period: 24 hours, 7, 30 or 90 days, or a custom range of whole UTC days
 // (P59). One radio group holds the presets and Custom; Custom shows two labelled date inputs and
 // Apply. The server checks a range again; checkRange here only gives early feedback.
 

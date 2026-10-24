@@ -1,4 +1,4 @@
-// Key Dashboard — Connect another Foundry (ADR-0018). Foundry & models lists only the Foundries
+// liteAPIM — Connect another Foundry (ADR-0018). Foundry & models lists only the Foundries
 // connected to this API Management. This modal dialog lists the subscription's other accounts,
 // unreadable ones with their error, with search; the chosen one shows Attach, the operator's
 // commands and the guide. views-foundry.js builds the attach request and the commands, so every
@@ -59,7 +59,7 @@ export function openConnectDialog(ctx, { accounts, subscriptionId, opener, attac
   function drawList() {
     if (!candidates.length) {
       setChildren(listSlot, emptyState("No other Foundry accounts were found.",
-        `The dashboard looks for Foundry (AI Services) and Azure OpenAI accounts in subscription ${subscriptionId || "(not reported)"}. Create one, or give the dashboard read access to one, then select Refresh from Azure.`));
+        `liteAPIM looks for Foundry (AI Services) and Azure OpenAI accounts in subscription ${subscriptionId || "(not reported)"}. Create one, or give liteAPIM read access to one, then select Refresh from Azure.`));
       return drawDetails();
     }
     const list = shown();
@@ -103,8 +103,8 @@ export function openConnectDialog(ctx, { accounts, subscriptionId, opener, attac
   function unreadable(a, how) {
     return [
       el("div", { class: "callout callout-bad" }, icon("alert", "icon callout-icon"), el("div", {},
-        el("p", {}, el("strong", {}, "The dashboard cannot read this account. "), a.error),
-        el("p", {}, "Attaching needs the account and its deployments to be readable. Give the dashboard read access there, then select Refresh from Azure."))),
+        el("p", {}, el("strong", {}, "liteAPIM cannot read this account. "), a.error),
+        el("p", {}, "Attaching needs the account and its deployments to be readable. Give liteAPIM read access there, then select Refresh from Azure."))),
       el("div", { class: "row" }, how),
     ];
   }
@@ -120,7 +120,7 @@ export function openConnectDialog(ctx, { accounts, subscriptionId, opener, attac
         el("p", {}, "Fix the cause, then select Attach again: it repairs a partial attempt."))) : null,
       el("div", { class: "row" }, attachButton, how),
       el("h4", { class: "test-title" }, "Access the gateway needs"),
-      el("p", {}, "The gateway calls the account with its managed identity, which needs an inference role there. The dashboard only reads metadata, so it cannot grant that role."),
+      el("p", {}, "The gateway calls the account with its managed identity, which needs an inference role there. liteAPIM only reads metadata, so it cannot grant that role."),
       commands(a),
     ];
   }

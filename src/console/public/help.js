@@ -1,4 +1,4 @@
-// Key Dashboard — the setup guide (ADR-0017): from a Foundry account to keys in people's hands, then
+// liteAPIM — the setup guide (ADR-0017): from a Foundry account to keys in people's hands, then
 // the gateway URL keys name, the usage period and the chargeback report (P59).
 //
 // A docked, non-modal panel. Help opens it; Escape closes it and focus returns to what opened it.
@@ -14,8 +14,8 @@ export const STEPS = Object.freeze([
     id: "discover", title: "Find Foundry accounts", where: "Foundry & models", routes: ["models"], go: "models", target: "foundry-accounts",
     text: [
       "Foundry & models lists the Foundries connected to this API Management: the gateway's default account and each attached one. Only these get pinned aliases and keys.",
-      "Connect another Foundry lists the other Foundry (AI Services) and Azure OpenAI accounts in the dashboard's Azure subscription. Listing reads metadata only: account and deployment read access. That access does not mean the gateway may call a model.",
-      "Deployed something new? Select Refresh from Azure; nothing refreshes by itself. An account the dashboard cannot read shows its error, never an empty list.",
+      "Connect another Foundry lists the other Foundry (AI Services) and Azure OpenAI accounts in liteAPIM's Azure subscription. Listing reads metadata only: account and deployment read access. That access does not mean the gateway may call a model.",
+      "Deployed something new? Select Refresh from Azure; nothing refreshes by itself. An account liteAPIM cannot read shows its error, never an empty list.",
     ],
   },
   {
@@ -28,7 +28,7 @@ export const STEPS = Object.freeze([
   {
     id: "access", title: "Grant access and check the network", where: "Foundry & models", routes: ["models"], go: "models", target: "foundry-access",
     text: [
-      "The gateway's managed identity needs an inference role on each attached account. The dashboard cannot grant roles: copy the setup command and have someone who can assign roles run it in PowerShell.",
+      "The gateway's managed identity needs an inference role on each attached account. liteAPIM cannot grant roles: copy the setup command and have someone who can assign roles run it in PowerShell.",
       "With a private endpoint, the account must be reachable from API Management's virtual network, with its private DNS zone linked to that network. Where offered, the optional network setup command creates the account's private endpoint and DNS record there without changing its public access or firewall; a private endpoint is billed.",
       "After pinning an alias, Test connection sends one small request through the gateway. It uses a few tokens; a failure shows the status and what to check, and a DNS or timeout failure opens the network setup command.",
     ],
@@ -60,7 +60,7 @@ export const STEPS = Object.freeze([
     text: [
       "A single key is copied from its panel, which masks it and clears it after 60 seconds.",
       "Bulk issue gives keys.csv with every key (send each person only their own row, then delete the file), index.csv with no keys, or an encrypted bundle.",
-      "The dashboard keeps no key values in the browser. Issued to is an email for attribution and usage; it gives no dashboard access.",
+      "liteAPIM keeps no key values in the browser. Issued to is an email for attribution and usage; it gives no dashboard access.",
     ],
   },
   {
@@ -82,9 +82,9 @@ export const STEPS = Object.freeze([
 export const NOTES = Object.freeze([
   "Aliases or deployment names: short-lived keys grant the aliases pinned on Foundry & models; product keys grant deployment names directly.",
   "A model deployed a minute ago appears after Refresh from Azure on Foundry & models. Pin it before issuing keys for it.",
-  "Discovery reads metadata only. The gateway's inference permission is separate, and the dashboard cannot grant it.",
+  "Discovery reads metadata only. The gateway's inference permission is separate, and liteAPIM cannot grant it.",
   "Private endpoints: API Management must reach each account over its virtual network, with private DNS linked to that network.",
-  "Gateway URL: only a gateway custom domain of this API Management can replace its URL in keys, and the dashboard never sends a request to it.",
+  "Gateway URL: only a gateway custom domain of this API Management can replace its URL in keys, and liteAPIM never sends a request to it.",
 ]);
 
 /** Fixed routes only: the router wipes secrets on every one of them. */
@@ -144,7 +144,7 @@ export function createGuide(ctx) {
   const live = el("p", { class: "sr-only", "aria-live": "polite" });
   const panel = el("aside", { id: "help-panel", class: "help-panel", "aria-labelledby": titleId, hidden: true },
     el("div", { class: "help-head" }, el("h2", { class: "help-title", id: titleId }, icon("help"), "Setup guide"), closeX),
-    el("p", { class: "help-intro" }, "From a Foundry account to keys in people's hands, then their usage and chargeback. Show me highlights each step on the page; Escape closes the guide."),
+    el("p", { class: "help-intro" }, "liteAPIM (the admin key dashboard): from a Foundry account to keys in people's hands, then their usage and chargeback. Show me highlights each step on the page; Escape closes the guide."),
     steps,
     el("div", { class: "help-foot" }, back, position, next),
     el("details", { class: "disclosure help-notes" }, el("summary", {}, "Good to know"),

@@ -1,4 +1,4 @@
-// Key Dashboard — admin views: Export (encrypted, signed bundles). The signing secret and the gateway
+// liteAPIM — admin views: Export (encrypted, signed bundles). The signing secret and the gateway
 // URL are on Settings (views-settings.js); Foundry accounts, deployments and pins are views-foundry.js.
 
 import { cachedGet, post } from "./api.js";
@@ -35,7 +35,7 @@ export function renderExport(root, ctx) {
     showPass.textContent = show ? "Hide" : "Show";
     showPass.setAttribute("aria-pressed", String(show));
   });
-  const passphrase = field({ label: "Passphrase", optional: true, control: passInput, hint: `At least ${LIMITS.passphrase} characters. Leave it blank and the console generates one and shows it once.` });
+  const passphrase = field({ label: "Passphrase", optional: true, control: passInput, hint: `At least ${LIMITS.passphrase} characters. Leave it blank and liteAPIM generates one and shows it once.` });
   const passRow = el("div", { class: "input-row" });
   passInput.replaceWith(passRow);
   addChildren(passRow, passInput, showPass);
@@ -46,10 +46,10 @@ export function renderExport(root, ctx) {
   const keyBody = el("div", {});
   const keyDetails = el("details", { class: "disclosure" }, el("summary", {}, "Bundle verification key (public)"), keyBody);
   addChildren(root,
-    head("Export", "An encrypted bundle (AES-256-GCM, scrypt) signed by the console's Key Vault key. Send the passphrase by a different channel than the file."),
+    head("Export", "An encrypted bundle (AES-256-GCM, scrypt) signed by liteAPIM's Key Vault key. Send the passphrase by a different channel than the file."),
     card("Selected keys", selectedSlot),
     card("Create the bundle", form, resultSlot),
-    card("Opening a bundle", el("p", {}, "The recipient checks the signature and decrypts with the public verification key, obtained from this console rather than from the sender:"),
+    card("Opening a bundle", el("p", {}, "The recipient checks the signature and decrypts with the public verification key, obtained from liteAPIM rather than from the sender:"),
       el("pre", { class: "snippet-code" }, el("code", {}, "BUNDLE_PASSPHRASE='…' node scripts/open-bundle.mjs bundle.json --key bundle-key.json --out keys.json")),
       keyDetails));
 

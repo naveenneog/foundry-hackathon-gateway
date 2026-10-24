@@ -1,4 +1,4 @@
-// Key Dashboard — Settings: the gateway URL that keys are handed out with (P59, ADR-0019) and the
+// liteAPIM — Settings: the gateway URL that keys are handed out with (P59, ADR-0019) and the
 // secret that signs short-lived keys (moved here from the Signing page). Both read fresh state on
 // every visit; nothing here is cached.
 
@@ -104,7 +104,7 @@ function gatewayUrlCard() {
   return card("Gateway URL", { attrs: { "data-help": "gateway-url" } },
     el("p", {}, "Keys, their setup snippets, keys.csv, export bundles and the Foundry base URLs name this address. It is API Management's own URL unless a custom domain of API Management replaces it."),
     statusSlot, form, offerSlot,
-    el("p", { class: "field-hint" }, "Other replicas of the dashboard use a change within 30 seconds; browser tabs that are already open, after a reload."));
+    el("p", { class: "field-hint" }, "Other replicas of liteAPIM use a change within 30 seconds; browser tabs that are already open, after a reload."));
 }
 
 // ── Signing secret ──────────────────────────────────────────────────────────

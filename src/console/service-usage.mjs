@@ -7,7 +7,7 @@ import { InputError } from "./validate.mjs";
 const CACHE_MS = 60_000;
 const CACHE_MAX = 64;
 const HOUR_MS = 3_600_000;
-const NO_SOURCE = "Usage is not configured: the dashboard has no Log Analytics workspace.";
+const NO_SOURCE = "Usage is not configured: liteAPIM has no Log Analytics workspace.";
 const iso = (ms) => new Date(ms).toISOString();
 
 export function usageApi({ vault, clock, owns, kindOf, visibleKey, ServiceError, requireAdmin, audit, defaultFoundry }) {

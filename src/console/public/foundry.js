@@ -1,4 +1,4 @@
-// Key Dashboard — Foundry accounts (ADR-0017): discovery, selection by ARM resource id, the request
+// liteAPIM — Foundry accounts (ADR-0017): discovery, selection by ARM resource id, the request
 // bodies that name an account, the Foundry each key is bound to, and what attaching and the
 // connection test do and do not prove. Pure: no DOM and no network, so
 // tests/console-foundry-ui.test.mjs imports it under Node.

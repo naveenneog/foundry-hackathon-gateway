@@ -1,4 +1,4 @@
-// Key Dashboard — DOM helpers. Markup is only ever built with createElement and textContent:
+// liteAPIM — DOM helpers. Markup is only ever built with createElement and textContent:
 // there is no HTML-string path anywhere, so key metadata cannot inject markup. The helpers touch
 // `document` only when called, so Node tests can import this module with a stub document.
 

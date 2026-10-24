@@ -80,7 +80,7 @@ export function openBundle(bundle, { passphrase, publicJwk }) {
   }
   const ok = verify("sha256", canonicalHeader(header),
     { key: publicJwk, format: "jwk", dsaEncoding: "ieee-p1363" }, Buffer.from(signature, "base64"));
-  if (!ok) throw new BundleError("Bad signature: this bundle was not signed by the console key, or its header was changed.");
+  if (!ok) throw new BundleError("Bad signature: this bundle was not signed by liteAPIM's bundle key, or its header was changed.");
 
   const ct = Buffer.from(ciphertext, "base64");
   if (createHash("sha256").update(ct).digest("base64") !== header.ciphertextSha256) {

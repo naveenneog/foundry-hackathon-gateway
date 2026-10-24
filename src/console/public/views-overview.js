@@ -1,4 +1,4 @@
-// Key Dashboard — Overview: key counts and usage across both kinds for the chosen period.
+// liteAPIM — Overview: key counts and usage across both kinds for the chosen period.
 // Four reads (two key lists, two usage summaries), cached briefly and never polled.
 
 import { apiPath, cachedGet, invalidate, post } from "./api.js";

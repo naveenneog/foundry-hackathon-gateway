@@ -1,4 +1,4 @@
-// Key Dashboard — the Foundry choice that starts both issue forms (ADR-0017, ADR-0018). Only the
+// liteAPIM — the Foundry choice that starts both issue forms (ADR-0017, ADR-0018). Only the
 // Foundries connected to this API Management are offered, each with its region, resource group
 // and kind; other accounts in the subscription are neither listed nor counted. The base URL of the
 // chosen one shows once its models load. The choice is kept by ARM id for the page's lifetime,

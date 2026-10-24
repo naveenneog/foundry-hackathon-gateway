@@ -109,7 +109,7 @@ test("the dashboard is for admins and says Short-lived keys: no user-role paths 
     assert.doesNotMatch(html, re, `${label} in index.html`);
     assert.doesNotMatch(css, re, `${label} in app.css`);
   }
-  assert.match(source["app.js"], /This dashboard is for administrators\. Ask an admin for your key\./);
+  assert.match(source["app.js"], /"liteAPIM is for administrators\. Ask an admin for your key\."/);
   assert.equal(lib.KINDS.jwt.title, "Short-lived keys");
   assert.equal(lib.KINDS.jwt.route, "short-lived");
   assert.match(source["views-issue.js"], /For attribution and usage; this person does not get dashboard access\./);

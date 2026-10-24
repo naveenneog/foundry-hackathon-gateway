@@ -1,4 +1,4 @@
-// Key Dashboard — hand-written SVG charts. Colours come from CSS classes and currentColor, so a
+// liteAPIM — hand-written SVG charts. Colours come from CSS classes and currentColor, so a
 // theme switch recolours a chart without re-rendering it. Every chart is role="img" with a title
 // and a description, and time series also carry their full data in a visually hidden table.
 

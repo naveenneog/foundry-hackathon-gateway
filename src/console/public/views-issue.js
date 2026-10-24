@@ -1,4 +1,4 @@
-// Key Dashboard — issuing keys. Single and bulk, for both kinds, with an explicit "One model" /
+// liteAPIM — issuing keys. Single and bulk, for both kinds, with an explicit "One model" /
 // "Several models" choice. Both forms start with the Foundry (ADR-0017): only its models are
 // offered, choosing another drops the model choice, and every request names it. Short-lived keys
 // grant pinned gateway aliases and may start later; product keys grant Foundry deployment names.

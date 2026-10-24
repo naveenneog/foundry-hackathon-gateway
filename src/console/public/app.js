@@ -1,4 +1,4 @@
-// Key Dashboard — entry point: sign-in check (admins only, ADR-0016), theme, navigation, routing,
+// liteAPIM — entry point: sign-in check (admins only, ADR-0016), theme, navigation, routing,
 // and the setup guide (help.js), which hears about every route.
 //
 // CSP: script-src 'self' with no inline script, and every view builds its DOM with createElement
@@ -28,7 +28,7 @@ const ROUTES = [
 const ALIASES = Object.freeze({ signing: "settings" });
 const SUB_TITLES = { issue: "Issue", bulk: "Bulk issue" };
 const SIGN_IN = "/.auth/login/aad?post_login_redirect_uri=/";
-const ADMINS_ONLY = "This dashboard is for administrators. Ask an admin for your key.";
+const ADMINS_ONLY = "liteAPIM is for administrators. Ask an admin for your key.";
 
 // ── Theme ──────────────────────────────────────────────────────────────────
 
@@ -138,7 +138,7 @@ function route(ctx, moveFocus) {
     if (a.dataset.route === r.id) a.setAttribute("aria-current", "page");
     else a.removeAttribute("aria-current");
   }
-  document.title = `${sub ? `${SUB_TITLES[sub]} · ` : ""}${r.label} · Key Dashboard`;
+  document.title = `${sub ? `${SUB_TITLES[sub]} · ` : ""}${r.label} · liteAPIM`;
   const view = el("div", { class: "view" });
   setChildren(document.getElementById("main"), view);
   r.render(view, ctx, sub);
@@ -198,7 +198,7 @@ async function start() {
     me = await get("/api/me");
   } catch (error) {
     if (error.status === 401) {
-      gate("Sign in to the Key Dashboard", "Use your organisation account.", el("a", { class: "btn btn-primary", href: SIGN_IN }, "Sign in"));
+      gate("Sign in to liteAPIM", "Use your organisation account.", el("a", { class: "btn btn-primary", href: SIGN_IN }, "Sign in"));
     } else if (error.status === 403) {
       adminsOnly();
     } else {
@@ -225,5 +225,5 @@ async function start() {
 
 start().catch((error) => {
   setChildren(document.getElementById("main"), el("div", { class: "view" },
-    el("div", { class: "callout callout-bad" }, icon("alert", "icon callout-icon"), el("p", {}, error?.message || "The dashboard failed to start."))));
+    el("div", { class: "callout callout-bad" }, icon("alert", "icon callout-icon"), el("p", {}, error?.message || "liteAPIM failed to start."))));
 });

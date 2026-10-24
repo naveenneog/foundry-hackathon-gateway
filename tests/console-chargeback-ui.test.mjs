@@ -90,7 +90,7 @@ test("the chargeback card downloads the CSV for the chosen period and kind, then
 });
 
 test("a refused report shows the server's reason, downloads nothing and leaves the button usable", async () => {
-  const page = mount(() => reply(409, { error: "Usage is not configured: the dashboard has no Log Analytics workspace." }));
+  const page = mount(() => reply(409, { error: "Usage is not configured: liteAPIM has no Log Analytics workspace." }));
   try {
     const { card } = chargebackCard({ period: 30 });
     dom.addChildren(page.doc.body, card);

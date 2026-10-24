@@ -1,4 +1,4 @@
-// Key Dashboard — the only module that talks to the server. No DOM, so Node tests import it.
+// liteAPIM — the only module that talks to the server. No DOM, so Node tests import it.
 //
 // Every request is same-origin with credentials; every state change is a POST with a JSON body
 // (the server refuses anything else, ADR-0013). Redirects are not followed: the API never
@@ -18,7 +18,7 @@ export class ApiError extends Error {
 }
 
 const MESSAGES = {
-  0: "The dashboard could not reach the server. Check the connection, then try again.",
+  0: "liteAPIM could not reach the server. Check the connection, then try again.",
   401: "Your session has ended. Sign in again.",
   403: "Your role does not allow this.",
   404: "Not found.",

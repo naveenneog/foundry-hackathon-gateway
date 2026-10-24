@@ -1,4 +1,4 @@
-// Key Dashboard — the only module that handles key values: reveal, single issue, bulk issue CSVs.
+// liteAPIM — the only module that handles key values: reveal, single issue, bulk issue CSVs.
 //
 // A revealed or newly issued key is shown masked in a modal panel with Show and Copy. It is wiped
 // from the DOM after 60 seconds (an explicit click extends that), when the panel closes, when the

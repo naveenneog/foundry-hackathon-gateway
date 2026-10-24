@@ -39,7 +39,7 @@ export function renderPackPolicy(template, { models, keyTokens, poolTokens, tpm 
   for (const [k, v] of Object.entries({ keyTokens, poolTokens, tpm })) if (!Number.isInteger(v) || v < 1) fail(`${k} must be a positive whole number.`);
   const xml = template.replaceAll("__MODELS__", models.join("|")).replaceAll("__KEY_TOKENS__", String(keyTokens))
     .replaceAll("__POOL_TOKENS__", String(poolTokens)).replaceAll("__TPM__", String(tpm));
-  if (/__[A-Z_]+__/.test(xml.replace(/<!--[\s\S]*?-->/g, ""))) throw new Error("Product policy template has a placeholder this console does not fill.");
+  if (/__[A-Z_]+__/.test(xml.replace(/<!--[\s\S]*?-->/g, ""))) throw new Error("Product policy template has a placeholder that liteAPIM does not fill.");
   return xml;
 }
 

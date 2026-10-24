@@ -1,4 +1,4 @@
-// Key Dashboard — Short-lived keys and Product keys: usage for the kind, then the key list with
+// liteAPIM — Short-lived keys and Product keys: usage for the kind, then the key list with
 // Active | Archived, search, status filter, sorting, export selection and a per-key drawer.
 
 import { apiPath, cachedGet, invalidate, keyPath, post } from "./api.js";

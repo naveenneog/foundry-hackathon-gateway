@@ -1,4 +1,4 @@
-// Key Dashboard — Foundry & models (ADR-0017, ADR-0018): the Foundries connected to this API
+// liteAPIM — Foundry & models (ADR-0017, ADR-0018): the Foundries connected to this API
 // Management, that is the default account and each attached one, with their deployments. See the
 // access each still needs, test it, and pin its deployments to aliases of its own. The
 // subscription's other accounts are listed only in Connect another Foundry (foundry-connect.js),
@@ -34,7 +34,7 @@ function setupBlock(setup, helpFocus) {
   if (!setup) return el("p", { class: "field-hint" }, "The server sent no setup command for this account.");
   const copy = copyButton(() => setup, { label: "Copy command", what: "Setup command" });
   if (helpFocus) copy.setAttribute("data-help-focus", "");
-  return [el("p", { class: "field-hint" }, "Have someone who can assign roles on the account run this in PowerShell. The dashboard shows it and never runs it."),
+  return [el("p", { class: "field-hint" }, "Have someone who can assign roles on the account run this in PowerShell. liteAPIM shows it and never runs it."),
     el("pre", { class: "snippet-code" }, el("code", {}, setup)), el("div", { class: "row" }, copy)];
 }
 
@@ -47,7 +47,7 @@ function networkSetup(command, suggested) {
     el("summary", {}, "Private network setup (optional)"),
     el("div", {},
       el("p", {}, "Only for an account that API Management must reach privately. It creates a private endpoint and a private DNS record for this account in the gateway's virtual network. It does not change the account's public network access or firewall."),
-      el("p", { class: "field-hint" }, "Run it as an operator in PowerShell; the dashboard never runs it. A private endpoint is billed by the hour and for the data it processes."),
+      el("p", { class: "field-hint" }, "Run it as an operator in PowerShell; liteAPIM never runs it. A private endpoint is billed by the hour and for the data it processes."),
       el("pre", { class: "snippet-code" }, el("code", {}, command)),
       el("div", { class: "row" }, copyButton(() => command, { label: "Copy network command", what: "Network setup command" }))));
 }
@@ -297,7 +297,7 @@ export function renderFoundry(root, ctx) {
     const availability = models && !models.error ? testAvailability(a, models.pins)
       : { allowed: false, reason: models?.error ? "This Foundry's pins could not be read; see Deployments below." : "Loading this Foundry's pins…", choices: [] };
     setChildren(accessSlot,
-      el("p", {}, "The gateway calls this account with its managed identity, which needs an inference role here. The dashboard only reads metadata, so it cannot grant that role."),
+      el("p", {}, "The gateway calls this account with its managed identity, which needs an inference role here. liteAPIM only reads metadata, so it cannot grant that role."),
       setupBlock(setup, true),
       networkBox ?? el("p", { class: "field-hint" }, "Private endpoint? API Management must reach the account from its virtual network, with the account's private DNS zone linked to that network."),
       testControls(a, availability, out, !setup, networkBox));

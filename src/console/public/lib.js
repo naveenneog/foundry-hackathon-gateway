@@ -1,4 +1,4 @@
-// Key Dashboard — pure helpers: validation, CSV, formatting, chart maths and key-list logic.
+// liteAPIM — pure helpers: validation, CSV, formatting, chart maths and key-list logic.
 // No DOM and no network here, so tests/console-ui.test.mjs imports this module under Node.
 
 export const HOUR = 3_600_000;

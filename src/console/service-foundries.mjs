@@ -1,5 +1,5 @@
 /** Discover, attach and test account-isolated gateway connections (ADR-0017). */
-import { connectionInfo, provisionConnection } from "./connections.mjs";
+import { connectionIdOf, connectionInfo, provisionConnection } from "./connections.mjs";
 import { ACCOUNT_ID } from "./azure-foundries.mjs";
 import { pinsFromMaps } from "./pinning.mjs";
 import { mintKey } from "../keys.mjs";
@@ -7,13 +7,18 @@ import { mintKey } from "../keys.mjs";
 const PREFIX = "gw-foundry-";
 const SIGNING = "gw-signing-secret";
 
-export function foundriesApi({ foundry, vault, arm, gatewayUrl, vnetName, connectionTemplates, requireAdmin, guard, ServiceError, audit, clock, inferenceFetch }) {
+/**
+ * `gateway` is the resolver in gateway-url.mjs: every connection's gatewayUrl is built from its
+ * effectiveGatewayUrl() (ADR-0019); only the connection test, a request the dashboard sends
+ * itself, uses serverUrl().
+ */
+export function foundriesApi({ foundry, vault, arm, gateway, vnetName, connectionTemplates, requireAdmin, guard, ServiceError, audit, clock, inferenceFetch }) {
   const defaultId = foundry?.defaultAccountId;
-  const legacy = connectionInfo({
+  const legacyAccount = {
     id: defaultId ?? "/subscriptions/default/resourceGroups/default/providers/Microsoft.CognitiveServices/accounts/default",
     name: defaultId?.split("/").at(-1) ?? "Configured Foundry", kind: "AIServices",
-  }, gatewayUrl, true);
-  if (!defaultId) legacy.foundryId = null;
+  };
+  const legacy = (base) => ({ ...connectionInfo(legacyAccount, base, true), ...(defaultId ? {} : { foundryId: null }) });
 
   function validateId(id) {
     const m = ACCOUNT_ID.exec(String(id));
@@ -30,12 +35,11 @@ export function foundriesApi({ foundry, vault, arm, gatewayUrl, vnetName, connec
 
   async function connectionFor(id, { allowUnattached = false } = {}) {
     if (id !== undefined && id !== null && typeof id !== "string") throw new ServiceError(400, "Foundry selection must be an account resource id.");
-    if (!id || id.toLowerCase() === defaultId?.toLowerCase()) return { ...legacy, connected: true };
+    if (!id || id.toLowerCase() === defaultId?.toLowerCase()) return { ...legacy(await gateway.effectiveGatewayUrl()), connected: true };
     validateId(id);
-    const shell = connectionInfo({ id, name: id.split("/").at(-1) }, gatewayUrl);
-    const saved = await vault.getSecret(`${PREFIX}${shell.id}`);
+    const saved = await vault.getSecret(`${PREFIX}${connectionIdOf(id)}`);
     if (!saved) {
-      if (allowUnattached) return { ...shell, connected: false };
+      if (allowUnattached) return { ...connectionInfo({ id, name: id.split("/").at(-1) }, await gateway.effectiveGatewayUrl()), connected: false };
       throw new ServiceError(409, "Attach this Foundry in Foundry & models before issuing or pinning keys.");
     }
     let account;
@@ -43,7 +47,7 @@ export function foundriesApi({ foundry, vault, arm, gatewayUrl, vnetName, connec
     if (account.id?.toLowerCase() !== id.toLowerCase() || !["AIServices", "OpenAI"].includes(account.kind)) {
       throw new ServiceError(500, "The stored Foundry connection does not match its account.");
     }
-    return { ...connectionInfo(account, gatewayUrl), connected: true };
+    return { ...connectionInfo(account, await gateway.effectiveGatewayUrl()), connected: true };
   }
 
   const setupCommand = (id) => {
@@ -59,9 +63,9 @@ export function foundriesApi({ foundry, vault, arm, gatewayUrl, vnetName, connec
     return {
       subscriptionId: foundry.subscriptionId, defaultFoundryId: defaultId,
       accounts: accounts.map((a) => {
-        const c = connectionInfo(a, gatewayUrl, a.id.toLowerCase() === defaultId?.toLowerCase());
+        const id = connectionIdOf(a.id, a.id.toLowerCase() === defaultId?.toLowerCase());
         return { id: a.id, name: a.name, kind: a.kind, resourceGroup: a.resourceGroup, location: a.location,
-          connected: c.id === "default" || saved.has(`${PREFIX}${c.id}`), connectionId: c.id,
+          connected: id === "default" || saved.has(`${PREFIX}${id}`), connectionId: id,
           deployments: a.deployments.length, ...(a.error ? { error: a.error } : {}), setupCommand: setupCommand(a.id), networkCommand: networkCommand(a.id) };
       }),
     };
@@ -88,7 +92,7 @@ export function foundriesApi({ foundry, vault, arm, gatewayUrl, vnetName, connec
     requireAdmin(actor);
     validateId(foundryId);
     const account = await getAccount(foundryId);
-    const c = connectionInfo(account, gatewayUrl, foundryId.toLowerCase() === defaultId?.toLowerCase());
+    const c = connectionInfo(account, await gateway.effectiveGatewayUrl(), foundryId.toLowerCase() === defaultId?.toLowerCase());
     if (c.id !== "default") {
       await guard(() => provisionConnection(arm, c, account, connectionTemplates));
       await vault.setSecret(`${PREFIX}${c.id}`, JSON.stringify({ id: account.id, name: account.name, kind: account.kind }), {
@@ -114,7 +118,8 @@ export function foundriesApi({ foundry, vault, arm, gatewayUrl, vnetName, connec
       audience: c.audience, notBefore: clock(), expiresAt: clock() + 60_000 });
     let response;
     try {
-      response = await inferenceFetch(`${c.gatewayUrl}${route === "claude" ? "/claude/v1/messages" : "/v1/chat/completions"}`, {
+      // The dashboard's own request goes to the configured API Management URL, never to an admin-set one (ADR-0019).
+      response = await inferenceFetch(`${gateway.serverUrl()}${c.path}${route === "claude" ? "/claude/v1/messages" : "/v1/chat/completions"}`, {
         method: "POST", redirect: "error", signal: AbortSignal.timeout(30_000),
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", "anthropic-version": "2023-06-01" },
         body: JSON.stringify({ model: alias, max_tokens: 16, messages: [{ role: "user", content: "Reply: OK" }] }),
@@ -146,5 +151,5 @@ export function foundriesApi({ foundry, vault, arm, gatewayUrl, vnetName, connec
   }
 
   return { connectionFor, connectionForKey, getAccount, setupCommand, networkCommand, discoverFoundries, listFoundries, attachFoundry, testFoundry,
-    defaultFoundry: Object.freeze({ id: legacy.id, name: legacy.name }) };
+    defaultFoundry: Object.freeze({ id: "default", name: legacyAccount.name }) };
 }

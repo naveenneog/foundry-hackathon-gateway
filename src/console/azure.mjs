@@ -147,6 +147,11 @@ export function apim({ apimId, getToken, fetchImpl = fetch, sleep = defaultSleep
 
   return {
     resourceId: apimId,
+    /** The service itself: its gateway URL and hostname configurations (U51). Read only; hostnames are never written here. */
+    async getService() {
+      const p = (await call("GET", url(""))).json.properties ?? {};
+      return { gatewayUrl: p.gatewayUrl ?? null, hostnameConfigurations: Array.isArray(p.hostnameConfigurations) ? p.hostnameConfigurations : [] };
+    },
     async getNamedValue(name) {
       const r = await call("GET", url(`/namedValues/${seg(name)}`), { allow404: true });
       if (!r) return null;

@@ -91,6 +91,9 @@ const routes = [
   ["GET", /^\/api\/usage$/, "read-own", ({ service, actor, q }) => service.usage(actor, { kind: q.get("kind") ?? undefined, ...periodOf(q) })],
   ["GET", new RegExp(`^/api/usage/${NAME}$`), "read-own", ({ service, actor, m, q }) => service.keyUsage(actor, m[1], periodOf(q))],
   ["POST", /^\/api\/chargeback$/, "report", ({ service, actor, body }) => service.chargeback(actor, body)],
+  ["GET", /^\/api\/gateway-url$/, "settings", ({ service, actor }) => service.gatewayUrlStatus(actor)],
+  ["POST", /^\/api\/gateway-url$/, "settings", ({ service, actor, body }) => service.setGatewayUrl(actor, body)],
+  ["POST", /^\/api\/gateway-url\/reset$/, "settings", ({ service, actor }) => service.resetGatewayUrl(actor)],
   ["POST", /^\/api\/export$/, "export", ({ service, actor, body }) => service.exportBundle(actor, body)],
 ];
 

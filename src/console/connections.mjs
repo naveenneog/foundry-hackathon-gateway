@@ -3,13 +3,19 @@ import { createHash } from "node:crypto";
 import { InputError } from "./validate.mjs";
 import { ACCOUNT_ID } from "./azure-foundries.mjs";
 
+/** A connection's id: "default" for the gateway's own account, else f and 12 hex digits of the account's id. */
+export const connectionIdOf = (accountId, legacy = false) =>
+  (legacy ? "default" : `f${createHash("sha256").update(String(accountId).toLowerCase()).digest("hex").slice(0, 12)}`);
+
+/** `gatewayUrl` is the origin to hand out (gateway-url.mjs); `path` is the connection's place under it. */
 export function connectionInfo(account, gatewayUrl, legacy = false) {
   if (!ACCOUNT_ID.test(String(account.id))) throw new InputError("Expected a Foundry account resource id.");
-  const id = legacy ? "default" : `f${createHash("sha256").update(account.id.toLowerCase()).digest("hex").slice(0, 12)}`;
+  const id = connectionIdOf(account.id, legacy);
   const prefix = `hackgw-${id}`;
+  const path = legacy ? "" : `/foundry/${id}`;
   return {
-    id, foundryId: account.id, name: account.name, kind: account.kind,
-    gatewayUrl: `${gatewayUrl.replace(/\/+$/, "")}${legacy ? "" : `/foundry/${id}`}`,
+    id, foundryId: account.id, name: account.name, kind: account.kind, path,
+    gatewayUrl: `${gatewayUrl.replace(/\/+$/, "")}${path}`,
     audience: legacy ? "hackathon-gateway" : `hackathon-gateway-${id}`,
     mapNames: legacy ? { openai: "hackgw-model-map", claude: "hackgw-claude-model-map" }
       : { openai: `${prefix}-model-map`, claude: `${prefix}-claude-model-map` },

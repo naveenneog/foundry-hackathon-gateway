@@ -18,6 +18,7 @@ import { lifecycleApi } from "./service-lifecycle.mjs";
 import { usageApi } from "./service-usage.mjs";
 import { keysCsv, indexCsv } from "./csv.mjs";
 import { foundriesApi } from "./service-foundries.mjs";
+import { gatewayUrlApi } from "./gateway-url.mjs";
 
 export class ServiceError extends Error {
   constructor(status, message) {
@@ -72,7 +73,10 @@ export function createService({ vault, arm, foundry = null, packTemplate: initia
     }
   };
 
-  const connections = foundriesApi({ vault, arm, foundry, gatewayUrl, vnetName, connectionTemplates, inferenceFetch, clock, requireAdmin, audit, guard, ServiceError });
+  // The configured API Management URL goes to the resolver and nowhere else: every URL handed out
+  // comes from gateway.effectiveGatewayUrl() (ADR-0019; tests/console-gateway-url-emitters.test.mjs).
+  const gateway = gatewayUrlApi({ apimUrl: gatewayUrl, vault, arm, clock, audit, requireAdmin, ServiceError });
+  const connections = foundriesApi({ vault, arm, foundry, gateway, vnetName, connectionTemplates, inferenceFetch, clock, requireAdmin, audit, guard, ServiceError });
   const models = modelsApi({ arm, connections, requireAdmin, audit, guard });
 
   async function configuration(foundryId) {
@@ -158,7 +162,7 @@ export function createService({ vault, arm, foundry = null, packTemplate: initia
     const req = await guard(async () => validateJwtRequest(body, { allowedModels: [...cfg.models.openai, ...cfg.models.claude] }));
     const { name, jti, token, notBefore, expiresAt } = await mintAndStore(actor, req, await signingSecret(), connection);
     audit(actor, "issue-jwt", { jti, owner: req.owner, subject: req.subject, models: req.models.join(","), budget: req.budget, startInHours: req.startInHours });
-    return { name, jti, token, notBefore, expiresAt, handout: jwtHandout({ gatewayUrl: cfg.gatewayUrl, token, models: req.models, claudeModels: cfg.models.claude }) };
+    return { name, jti, token, notBefore, expiresAt, handout: jwtHandout({ gatewayUrl: connection.gatewayUrl, token, models: req.models, claudeModels: cfg.models.claude }) };
   }
 
   const entriesOf = (body) => {
@@ -188,7 +192,7 @@ export function createService({ vault, arm, foundry = null, packTemplate: initia
         const claude = req.models.filter((m) => cfg.models.claude.includes(m));
         issued.push({ name: k.name, owner: req.owner, subject: req.subject, jti: k.jti, token: k.token, models: req.models, budget: req.budget,
           notBefore: k.notBefore, expiresAt: k.expiresAt,
-          openaiBaseUrl: req.models.length > claude.length ? `${cfg.gatewayUrl}/v1` : "", anthropicBaseUrl: claude.length ? `${cfg.gatewayUrl}/claude` : "", anthropicModel: claude[0] ?? "" });
+          openaiBaseUrl: req.models.length > claude.length ? `${connection.gatewayUrl}/v1` : "", anthropicBaseUrl: claude.length ? `${connection.gatewayUrl}/claude` : "", anthropicModel: claude[0] ?? "" });
       } catch (e) {
         if (!(e instanceof InputError)) throw e;
         failed.push({ index, error: e.message });
@@ -209,8 +213,8 @@ export function createService({ vault, arm, foundry = null, packTemplate: initia
     const connection = await connections.connectionForKey(s.tags);
     const { cfg } = await configuration(connection.foundryId);
     const grant = String(s.tags.models ?? "").split(",").filter(Boolean);
-    return kindOf(s) === "jwt" ? jwtHandout({ gatewayUrl: cfg.gatewayUrl, token: s.value, models: grant, claudeModels: cfg.models.claude })
-      : productHandout({ gatewayUrl: cfg.gatewayUrl, key: s.value, models: s.tags.models ? grant : undefined,
+    return kindOf(s) === "jwt" ? jwtHandout({ gatewayUrl: connection.gatewayUrl, token: s.value, models: grant, claudeModels: cfg.models.claude })
+      : productHandout({ gatewayUrl: connection.gatewayUrl, key: s.value, models: s.tags.models ? grant : undefined,
         claudeModels: cfg.deployments.filter((d) => d.route === "claude").map((d) => d.deployment) });
   }
 
@@ -279,7 +283,7 @@ export function createService({ vault, arm, foundry = null, packTemplate: initia
         issued.push({ name: k.name, label: req.name, owner: req.owner, subscriptionId: k.subscriptionId, key: k.key,
           models: (grant.grantTags.models ?? "").split(",").filter(Boolean), monthlyTokens: req.monthlyTokens ?? null,
           expiresAt: req.expiresDays ? clock() + req.expiresDays * 86_400_000 : null,
-          anthropicBaseUrl: !grant.grantTags.models || routes.has("claude") ? `${cfg.gatewayUrl}/poc/claude` : "", openaiBaseUrl: routes.has("openai") ? `${cfg.gatewayUrl}/poc/v1` : "" });
+          anthropicBaseUrl: !grant.grantTags.models || routes.has("claude") ? `${connection.gatewayUrl}/poc/claude` : "", openaiBaseUrl: routes.has("openai") ? `${connection.gatewayUrl}/poc/v1` : "" });
       } catch (e) {
         if (!(e instanceof InputError) && !(e instanceof ServiceError && e.status === 409)) throw e;
         failed.push({ index, error: e.message });
@@ -401,6 +405,7 @@ export function createService({ vault, arm, foundry = null, packTemplate: initia
   const lifecycle = lifecycleApi({ vault, arm, clock, audit, requireAdmin, owns, kindOf, visibleKey, rotate, ServiceError, revokedName: NV.revoked, guard, revocations });
 
   return { ...models, ...lifecycle, ...usageFns, listFoundries: connections.listFoundries, attachFoundry: connections.attachFoundry,
-    testFoundry: connections.testFoundry, setPackTemplate, config, signingStatus, migrateSigningSecret, pushSigningSecret, rotateSigningSecret, issueJwt, issueJwtBulk, issueProductBulk, revealKey,
+    testFoundry: connections.testFoundry, gatewayUrlStatus: gateway.status, setGatewayUrl: gateway.set, resetGatewayUrl: gateway.reset,
+    setPackTemplate, config, signingStatus, migrateSigningSecret, pushSigningSecret, rotateSigningSecret, issueJwt, issueJwtBulk, issueProductBulk, revealKey,
     revokeJwt, issueProductKey, rotateProductKey, setProductState, setAutomation, runRotationSweep, bundlePublicKey, exportBundle };
 }

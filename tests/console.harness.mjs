@@ -72,6 +72,8 @@ export function fakeArm({ signingKey = randomBytes(32).toString("base64") } = {}
   const calls = [];
   const backends = new Map();
   const apis = new Map();
+  // What ARM reports under properties.hostnameConfigurations (U51): the built-in gateway hostname.
+  const hostnameConfigurations = [{ type: "Proxy", hostName: "gw.example.net", certificateSource: "BuiltIn", defaultSslBinding: false }];
   const newKey = () => randomBytes(16).toString("hex");
   const sub = (sid) => {
     const s = subscriptions.get(sid);
@@ -86,6 +88,11 @@ export function fakeArm({ signingKey = randomBytes(32).toString("base64") } = {}
     calls,
     backends,
     apis,
+    hostnameConfigurations,
+    async getService() {
+      calls.push(["getService"]);
+      return { gatewayUrl: "https://gw.example.net", hostnameConfigurations: structuredClone(hostnameConfigurations) };
+    },
     async putBackend(id, properties) { backends.set(id, properties); },
     async putApi(id, properties) {
       apis.set(id, { properties, operations: apis.get(id)?.operations ?? new Map() });

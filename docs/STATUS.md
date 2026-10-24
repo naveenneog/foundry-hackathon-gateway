@@ -1,8 +1,8 @@
 # Status
 
-**Active packet:** P60 — the UI is called liteAPIM, on `release/key-dashboard`. Acceptance:
-ROADMAP. The header reads "Foundry Gateway" over "Key Dashboard", the page title is
-"Key Dashboard · Foundry Gateway Key Console", and the docs call the app the Key Dashboard.
+**Active packet:** none. P60 — the UI is called liteAPIM — is complete on `release/key-dashboard`
+as local commits; it is not pushed or deployed. The next candidate is P61 (narrow-screen layout
+on Foundry & models and the top bar, found during P60's browser check; ROADMAP).
 
 P59 — custom usage range, chargeback export and an admin-set gateway DNS URL — is complete on
 `release/key-dashboard` as local commits; it is not pushed or deployed. Design: ADR-0019 and
@@ -20,6 +20,68 @@ Design: ADR-0015; owner amendment:
 ADR-0016. App Service quota in eastus2 is 0 (U40), so Container Apps is the live path. The App
 Service template builds; ARM validate/what-if is blocked by the zero quota. The live dashboard has no IP restriction; Entra
 sign-in and the admin role remain required.
+
+### P60 — UI rebranded as liteAPIM — DONE
+
+The owner asked on 2026-10-24, after P59: "Also rebrand the UI as liteAPIM".
+
+- **The UI.** The header brand is `liteAPIM` alone: the "Foundry Gateway" line and the "Key
+  Dashboard" subtitle are dropped, so one name appears. The brand link's accessible name is the
+  name; the key mark stays decorative. The page title is "liteAPIM", then
+  "<page> · liteAPIM" per route; the sign-in screen says "Sign in to liteAPIM", the
+  administrators-only screen "liteAPIM is for administrators. Ask an admin for your key.", and the
+  loading text, the no-script note and the start-up failure name liteAPIM. The setup guide opens
+  with "liteAPIM (the admin key dashboard)". Sentences in which the app named itself ("The
+  dashboard cannot read this account", "the console generates one") also say liteAPIM, in the
+  browser modules, the usage-not-configured message, the bundle signature error, the product
+  template error and the demo's sample Azure error. "dashboard access" stays: it describes access.
+- **The demo and the deploy script.** The demo prints `liteAPIM demo (sample data, no Azure)`.
+  `Deploy-Console.ps1`'s synopsis names liteAPIM, and its last line prints
+  `liteAPIM (<hosting>): <url>` with "sign in as an admin, open Settings, then under Signing
+  secret select Migrate from API Management": it still said to open "Signing secret", a page P59
+  merged into Settings.
+- **The guides.** README, `docs/CONSOLE.md` and `docs/INSTALL.md` say "liteAPIM (the admin key
+  dashboard)" at first mention and liteAPIM after it; the README section and install step 4 are
+  headed liteAPIM, and the links to them follow. Each guide says the screenshots and the
+  architecture illustration predate the name. ADR-0015 has a dated note on the name.
+- **Unchanged on purpose:** the branch, file names, environment variables, API paths, Key Vault
+  secret names, the `hackgw-key-console` app registration and its roles, JWT audiences, CSV and
+  bundle columns, Azure resource names, and the display names the app gives the API Management APIs
+  and products it creates ("Key Dashboard: …"), which are Azure metadata, not shown in the UI.
+
+Commits: `c9d6f0e` plan, `74027d2` UI, `1376fd7` deploy script, `0c44a70` guides and ADR note,
+and this entry.
+
+Verified:
+- `npm test` 793/793 (786 before): `tests/console-brand.test.mjs` (3 tests), one deploy-script
+  test and three guide tests. Four existing pins moved to the new exact text and stay exact: the
+  served `<title>` (console-server), the administrators-only message (console-ui), the README
+  heading and install step 4 (dashboard-release-docs).
+- Each check failed first for the right reason. 39 mutants, all caught: 28 on the UI, the server
+  messages, the demo and the deploy script (old title, brand, casing, a kept subtitle, an
+  announced mark, each changed message, another spelling, a widened Azure display name), and 11
+  on the guides (first mention, "the dashboard", headings, anchors, the quoted message).
+- Edge 155 over CDP on the local demo, light and dark, at 1360 px and 390 px: 154 of 156 checks.
+  The brand link is named liteAPIM and fits the top bar; every route's title ends "· liteAPIM";
+  no page, the guide or the Connect another Foundry dialog shows an old name or "the dashboard";
+  the guide opens with "liteAPIM (the admin key dashboard)" and Escape closes it; with
+  JavaScript off the title is liteAPIM and the note says liteAPIM needs JavaScript; axe found no
+  violations on the Overview, Settings and Foundry & models in either theme; no console errors.
+  The two failures are 15 px of horizontal overflow on Foundry & models at 390 px, in both themes,
+  from the Test connection model list: the same 15 px at `c1a2673`, before P60, so not fixed here
+  and filed as P61. Below about 400 px the theme switch also stacks vertically, as before P60.
+- Screenshots were not retaken.
+
+Council: Architect PASS (display text only; no identifier, path, schema or resource renamed; the
+brand test lists the API Management display names as the only allowed old name in code, with the
+reason in ADR-0015). Coder PASS (one string per message changed; four exact pins moved to the new
+text, none loosened). QA PASS (tests first, 39 mutants caught, browser checks in both themes and
+two widths; the pre-existing overflow measured before and after and filed). UX PASS-WITH-NOTES
+(one name on every page; the brand keeps its mark, size and contrast in both themes; the name's
+lowercase start sits at the beginning of some sentences, as the owner's casing requires; the
+screenshots and illustration still show the earlier name; the 390 px overflow and the stacked
+theme switch predate P60, filed as P61). Security PASS (no change to authentication, roles,
+audiences, secret names or key handling; deployed keys and installs are unaffected).
 
 ### P59 — custom usage range, chargeback export, admin gateway DNS URL — DONE
 

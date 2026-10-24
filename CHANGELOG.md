@@ -163,6 +163,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · [Semantic Ve
 - Ironclad engineering discipline: charter, ledger, council and an executable gate. (P-0)
 
 ### Changed
+- **The UI is called liteAPIM (P60).** The header brand, page title, sign-in and
+  administrators-only screens, setup guide, empty states, messages and the local demo's banner say
+  liteAPIM; the "Key Dashboard" subtitle is gone. The README, `docs/INSTALL.md` and
+  `docs/CONSOLE.md` introduce it as "liteAPIM (the admin key dashboard)". `Deploy-Console.ps1`
+  prints `liteAPIM (<hosting>): <url>` and now points administrators at **Settings** for the
+  signing secret. Nothing technical is renamed: the branch, file names, environment variables, API
+  paths, Key Vault secret names, the `hackgw-key-console` app registration and its roles, JWT
+  audiences, CSV and bundle columns, and Azure resource names stay as they were, so deployed keys
+  and installs keep working. The screenshots and the architecture illustration still show the
+  earlier name (ADR-0015 note).
 - **The Signing page is part of Settings (P59).** The navigation says **Settings**; the signing
   secret is its second card, after **Gateway URL**. `#/signing` still opens it. The charter's
   chargeback non-goal now covers invoicing and prices only; a usage export is in scope

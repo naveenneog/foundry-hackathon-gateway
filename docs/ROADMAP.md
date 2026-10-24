@@ -251,7 +251,18 @@ Key Vault. Nothing here changes the gateway on `main`.
       image referenced once, PNG, alt text and names free of identifiers, provenance note) and
       the 28 document tests pass.
 
-- [ ] **P60** The UI is called liteAPIM
+- [ ] **P61** Narrow screens: Foundry & models and the top bar
+      *Acceptance:* at 390 px and 320 px, in both themes, Foundry & models has no horizontal
+      overflow: the Test connection model list (a `<select>` whose longest option, alias · route
+      · deployment, sets its minimum width) shrinks to the row and wraps below it if needed, and
+      the selected option stays readable. The top bar's theme switch stays one horizontal group
+      instead of stacking its three buttons vertically below about 400 px. A browser check
+      measures both before and after; no other page changes.
+      *Why:* found by P60's browser check on 2026-10-24: 15 px of overflow on Foundry & models at
+      390 px, the same at `c1a2673` before P60, and the stacked theme switch, also unchanged by
+      P60. Not fixed in P60, a rename.
+
+- [x] **P60** The UI is called liteAPIM
       *Acceptance:* the header brand reads `liteAPIM`, in that exact casing; the "Foundry Gateway"
       line and the "Key Dashboard" subtitle are dropped, because keeping the old name beside the
       new one on every page would leave two product names. The page title ends "· liteAPIM"; the
@@ -265,6 +276,11 @@ Key Vault. Nothing here changes the gateway on `main`.
       Vault secret names, the app registration `hackgw-key-console`, JWT audiences, file names,
       and the CSV and export schemas. ADR-0015 records the name.
       *Why:* requested 2026-10-24: "Also rebrand the UI as liteAPIM".
+      *Verified 2026-10-24:* 793 tests pass (7 new); 39 of 39 mutants caught; 154 of 156 Edge
+      checks on the local demo in both themes at 1360 px and 390 px, axe clean, the two failures
+      a 15 px overflow on Foundry & models at 390 px that predates P60 (filed as P61). Also
+      changed: the app's own "the dashboard" / "the console" wording, and the deploy script's
+      last line, which named the page P59 merged into Settings. Details in STATUS.
 
 - [x] **P59** Custom usage range, chargeback export and an admin-set gateway DNS URL
       *Acceptance:*

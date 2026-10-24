@@ -28,7 +28,7 @@ test("checkGatewayUrl gives early feedback that matches the server's parser", ()
   for (const input of ["https://ai.contoso.example", "HTTPS://AI.Contoso.Example/", "https://ai.contoso.example:443", " https://ai.contoso.example ",
     "http://ai.contoso.example", "https://ai.contoso.example/v1", "https://ai.contoso.example:8443", "https://10.0.0.1", "https://*.contoso.example",
     "https://user@ai.contoso.example", "https://localhost", "https://ai..contoso.example", "https://bücher.example", "ai.contoso.example", "",
-    `https://${"a".repeat(64)}.example`, "https://ai.contoso.example?x=1", "https://ai.contoso.123"]) {
+    `https://${"a".repeat(64)}.example`, "https://ai.contoso.example?x=1", "https://ai.contoso.123", "https://foo.0x7f", "https://1.0x7f", "https://a.0X7F", "https://gw.0x"]) {
     let accepted = true;
     try { parseGatewayOrigin(input); } catch { accepted = false; }
     assert.equal(lib.checkGatewayUrl(input) === null, accepted, JSON.stringify(input));

@@ -168,7 +168,10 @@ const GATEWAY_ORIGIN_RE = new RegExp(`^https://((?:${HOST_LABEL}\\.)+${HOST_LABE
 /** The gateway URL setting, checked as the server checks it (gateway-url.mjs); the server also checks it is an APIM gateway hostname. */
 export function checkGatewayUrl(v) {
   const host = GATEWAY_ORIGIN_RE.exec(String(v ?? "").trim().toLowerCase())?.[1];
-  return host && host.length <= 253 && /[a-z]/.test(host.split(".").at(-1)) ? null
+  // The URL standard reads a host whose last label is a number (decimal, or 0x hexadecimal) as IPv4.
+  const ok = host && host.length <= 253 && !/^(?:0x[0-9a-f]*|[0-9]+)$/.test(host.split(".").at(-1)) && URL.canParse(`https://${host}`)
+    && new URL(`https://${host}`).hostname === host;
+  return ok ? null
     : "Enter https:// and a host name only, for example https://ai.contoso.com: no path, query, user name, port other than 443, IP address or wildcard.";
 }
 

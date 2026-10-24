@@ -6,7 +6,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 
-import { parseGatewayOrigin, gatewayHostnames, GATEWAY_URL_SECRET, GATEWAY_URL_TTL_MS } from "../src/console/gateway-url.mjs";
+import { parseGatewayOrigin, gatewayHostnames, gatewayUrlApi, GATEWAY_URL_SECRET, GATEWAY_URL_TTL_MS } from "../src/console/gateway-url.mjs";
 import { apim } from "../src/console/azure.mjs";
 import { createService } from "../src/console/service.mjs";
 import { createHandler } from "../src/console/server.mjs";
@@ -30,6 +30,7 @@ test("parseGatewayOrigin: https and a host name only, lowercased; no path, query
     "https://localhost", "https://ai_contoso.example", "https://-ai.contoso.example", "https://ai-.contoso.example", "https://ai..contoso.example",
     "https://ai.contoso.example.", "https://bücher.example", "https://ai.contoso.example\\@evil.example", "https://ai.contoso.example%2f",
     "https://ai.contoso.example /", "https:// ai.contoso.example", `https://${"a".repeat(64)}.example`, `https://${Array(64).fill("abc").join(".")}.example`,
+    "https://foo.0x7f", "https://gw.0x", "https://1.0x7f", "https://a.0X7F", "https://ai.contoso.0x10",
     "", null, undefined, 42, ["https://ai.contoso.example"], { toString: () => "https://ai.contoso.example" },
   ]) assert.throws(() => parseGatewayOrigin(input), (e) => e.name === "InputError" && /https:\/\/ and a host name only/.test(e.message), String(input));
 });
@@ -189,4 +190,65 @@ test("over HTTP: GET and POST /api/gateway-url and POST /api/gateway-url/reset, 
   } finally {
     server.close();
   }
+});
+
+/** A gateway URL resolver over controllable fakes: `hold(name)` makes the next vault write or ARM read wait until `open(name)`. */
+function racing() {
+  let now = 0;
+  const secrets = new Map();
+  const held = new Map();
+  const waiting = new Map();
+  const pause = async (name) => {
+    if (!held.get(name)) return;
+    held.set(name, false);
+    await new Promise((resolve) => waiting.set(name, resolve));
+  };
+  const vault = {
+    async getSecret(name) { const s = secrets.get(name); return s ? { ...s } : null; },
+    async setSecret(name, value, { tags }) { await pause("write"); secrets.set(name, { value, tags }); return { name, value, tags }; },
+  };
+  const arm = { async getService() {
+    await pause("arm");
+    return { hostnameConfigurations: [{ type: "Proxy", hostName: "a.contoso.example" }, { type: "Proxy", hostName: "b.contoso.example" }] };
+  } };
+  const api = gatewayUrlApi({ apimUrl: "https://gw.example.net", vault, arm, clock: () => now, audit: () => {}, requireAdmin: () => {},
+    ServiceError: class extends Error { constructor(status, message) { super(message); this.status = status; } } });
+  const tick = () => new Promise((resolve) => setImmediate(resolve));
+  return { api, tick, later: (ms) => { now += ms; }, hold: (name) => held.set(name, true), open: (name) => waiting.get(name)?.() };
+}
+
+test("a save or reset is not undone by a read of the setting that started while it was being written", async () => {
+  const r = racing();
+  const admin = { name: "admin@contoso.com" };
+  await r.api.set(admin, { url: "https://a.contoso.example" });
+  r.later(GATEWAY_URL_TTL_MS);
+  r.hold("write");
+  r.hold("arm");
+  const resetting = r.api.reset(admin);
+  await r.tick();
+  const reading = r.api.effectiveGatewayUrl();
+  await r.tick();
+  r.open("write");
+  assert.equal((await resetting).effectiveUrl, "https://gw.example.net");
+  r.open("arm");
+  assert.equal(await reading, "https://a.contoso.example", "a read that began before the reset was written answers with what it read");
+  assert.equal(await r.api.effectiveGatewayUrl(), "https://gw.example.net", "but the reset stays in force");
+
+  r.later(GATEWAY_URL_TTL_MS);
+  r.hold("arm");
+  const viewing = r.api.status(admin);
+  await r.tick();
+  assert.equal((await r.api.set(admin, { url: "https://b.contoso.example" })).effectiveUrl, "https://b.contoso.example");
+  r.open("arm");
+  await viewing;
+  assert.equal(await r.api.effectiveGatewayUrl(), "https://b.contoso.example", "a status read that began before the save does not undo it");
+});
+
+test("a host the URL standard reads as an IPv4 number is refused with 400, and ignored if found in Key Vault", async () => {
+  const h = harness();
+  h.arm.hostnameConfigurations.push({ type: "Proxy", hostName: "foo.0x7f" });
+  await assert.rejects(h.service.setGatewayUrl(ADMIN, { url: "https://foo.0x7f" }), { status: 400 });
+  h.vault.secrets.set(GATEWAY_URL_SECRET, { name: GATEWAY_URL_SECRET, value: JSON.stringify({ url: "https://foo.0x7f" }), tags: { kind: "gateway-url" } });
+  assert.equal((await h.service.config()).gatewayUrl, "https://gw.example.net");
+  assert.match((await h.service.gatewayUrlStatus(ADMIN)).problem, /not a valid https origin/);
 });

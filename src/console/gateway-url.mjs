@@ -18,8 +18,15 @@ const RULES = "Enter https:// and a host name only, for example https://ai.conto
 /** `https://<hostname>`, lowercased, from an admin's input; InputError for anything else. */
 export function parseGatewayOrigin(value) {
   const host = ORIGIN_RE.exec(typeof value === "string" ? value.trim().toLowerCase() : "")?.[1];
-  // A top-level label without a letter is an IPv4 address (or not a public name at all).
-  if (!host || host.length > 253 || !/[a-z]/.test(host.split(".").at(-1))) throw new InputError(RULES);
+  // The URL standard reads a host whose last label is a number (decimal, or 0x hexadecimal) as IPv4.
+  if (!host || host.length > 253 || /^(?:0x[0-9a-f]*|[0-9]+)$/.test(host.split(".").at(-1))) throw new InputError(RULES);
+  let parsed = null;
+  try {
+    parsed = new URL(`https://${host}`);
+  } catch {
+    // Refused below, like any other host the URL standard does not take as it is.
+  }
+  if (parsed?.hostname !== host) throw new InputError(RULES);
   return `https://${host}`;
 }
 
@@ -34,8 +41,10 @@ export function gatewayUrlApi({ apimUrl, vault, arm, clock, audit, requireAdmin,
   const apimHost = new URL(apimUrl).host;
   let cache = null;
   let pending = null;
-  // A save or reset bumps the generation, so a read that started before it cannot overwrite it.
+  // Every answer put in the cache bumps the generation, after its own reads and writes, so a read
+  // that started before it (and may have read the old setting) can no longer overwrite it.
   let generation = 0;
+  const keep = (e) => { generation++; cache = e; return e; };
 
   /** The stored setting. `url` is null when it is unset, reset or not a valid origin (`invalid`). */
   async function stored() {
@@ -87,10 +96,11 @@ export function gatewayUrlApi({ apimUrl, vault, arm, clock, audit, requireAdmin,
 
   async function status(actor) {
     requireAdmin(actor);
-    generation++;
+    const g = ++generation;
     const [s, service] = await Promise.all([stored(), arm.getService()]);
-    cache = entry(s, gatewayHostnames(service));
-    return view(cache);
+    const e = entry(s, gatewayHostnames(service));
+    if (g === generation) cache = e;
+    return view(e);
   }
 
   async function set(actor, body) {
@@ -107,25 +117,21 @@ export function gatewayUrlApi({ apimUrl, vault, arm, clock, audit, requireAdmin,
     if (!hosts.includes(host)) {
       throw new ServiceError(400, `${host} is not a gateway hostname of this API Management. Add it as a custom domain of the Gateway endpoint in API Management first (Azure portal: the API Management instance, Custom domains), then save it here.`);
     }
-    generation++;
     const before = await stored();
     const changed = before.url !== url;
     const s = changed ? await write(actor, url) : before;
     if (changed) audit(actor, "set-gateway-url", { from: before.url ?? apimUrl, to: url });
-    cache = entry(s, hosts);
-    return { changed, ...view(cache) };
+    return { changed, ...view(keep(entry(s, hosts))) };
   }
 
   /** Back to the configured URL. Writes {"url":null}: a soft-deleted secret could not be written again (U54). */
   async function reset(actor) {
     requireAdmin(actor);
-    generation++;
     const before = await stored();
     const changed = before.url !== null || before.invalid;
     const s = changed ? await write(actor, null) : before;
     if (changed) audit(actor, "reset-gateway-url", { from: before.url, to: apimUrl });
-    cache = entry(s, cache?.hosts ?? null);
-    return { changed, ...view(cache) };
+    return { changed, ...view(keep(entry(s, cache?.hosts ?? null))) };
   }
 
   return { effectiveGatewayUrl, serverUrl: () => apimUrl, status, set, reset };

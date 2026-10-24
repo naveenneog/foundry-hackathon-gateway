@@ -367,13 +367,13 @@ test("app wiring: the Models page is Foundry & models, config is read per Foundr
 
 // ── help.js: the steps ──────────────────────────────────────────────────────
 
-test("six guide steps from discovery to distribution, each pointing at a section that a view marks", () => {
-  assert.deepEqual(help.STEPS.map((s) => s.id), ["discover", "attach", "access", "pin", "issue", "distribute"]);
+test("nine guide steps from discovery to distribution, usage and chargeback, each pointing at a section that a view marks", () => {
+  assert.deepEqual(help.STEPS.map((s) => s.id), ["discover", "attach", "access", "pin", "gateway", "issue", "distribute", "period", "chargeback"]);
   const marked = new Set(JS.flatMap((n) => [...source[n].matchAll(/"data-help": "([a-z-]+)"/g)].map((m) => m[1])));
   for (const s of help.STEPS) {
     assert.ok(marked.has(s.target), `${s.id}: a view marks [data-help="${s.target}"]`);
     assert.ok(s.routes.length > 0, s.id);
-    for (const r of s.routes) assert.match(r, /^(?:models|(?:short-lived|product)\/(?:issue|bulk))$/, `${s.id}: ${r}`);
+    for (const r of s.routes) assert.match(r, /^(?:models|overview|settings|short-lived|product|(?:short-lived|product)\/(?:issue|bulk))$/, `${s.id}: ${r}`);
     assert.ok(s.title && s.where && s.text.length, s.id);
   }
 });
@@ -457,7 +457,7 @@ test("Show me highlights the step's section on this page: outline class, step la
     const control = section.querySelector("[data-help-focus]");
     assert.deepEqual(went, [], "already on the page: nothing navigates");
     assert.ok(section.classList.contains("help-target"));
-    assert.match(section.getAttribute("data-help-label"), /^Step 1 of 6: Find Foundry accounts$/);
+    assert.match(section.getAttribute("data-help-label"), /^Step 1 of 9: Find Foundry accounts$/);
     assert.equal(doc.activeElement, control, "keyboard focus lands on the step's control");
     assert.deepEqual(control.focusOptions, { preventScroll: true });
     assert.deepEqual(section.scrolledWith, { block: "center", behavior: "smooth" });
@@ -560,11 +560,11 @@ test("Escape anywhere closes the guide and its highlight and restores focus, but
     next.click();
     assert.match(currentStep(guide), /Attach a Foundry/);
     for (let i = 0; i < 10; i++) next.click();
-    assert.match(currentStep(guide), /Hand out keys/);
+    assert.match(currentStep(guide), /Export a chargeback report/);
     assert.equal(next.getAttribute("aria-disabled"), "true");
     assert.equal(doc.activeElement, next, "focus stays on Next");
     back.click();
-    assert.match(currentStep(guide), /Choose the Foundry/);
+    assert.match(currentStep(guide), /Choose the usage period/);
   } finally {
     unmount();
   }

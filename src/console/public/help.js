@@ -1,4 +1,5 @@
-// Key Dashboard — the setup guide (ADR-0017): from a Foundry account to keys in people's hands.
+// Key Dashboard — the setup guide (ADR-0017): from a Foundry account to keys in people's hands, then
+// the gateway URL keys name, the usage period and the chargeback report (P59).
 //
 // A docked, non-modal panel. Help opens it; Escape closes it and focus returns to what opened it.
 // "Show me" highlights the part of the page a step is about: a CSS class with a step label, keyboard
@@ -40,6 +41,13 @@ export const STEPS = Object.freeze([
     ],
   },
   {
+    id: "gateway", title: "Choose the gateway URL keys name", where: "Settings", routes: ["settings"], go: "settings", target: "gateway-url",
+    text: [
+      "Keys and their setup name API Management's own URL unless a custom domain replaces it. Gateway URL on Settings takes https:// and a host name that is a gateway custom domain of this API Management; add the custom domain in the Azure portal first.",
+      "New single and bulk keys, Reveal, keys.csv, export bundles and the Foundry base URLs then use it. Keys already handed out keep working, because API Management also answers on its own URL. Reset to API Management URL goes back.",
+    ],
+  },
+  {
     id: "issue", title: "Choose the Foundry when issuing", where: "Short-lived keys, Issue one", go: "issue", target: "issue-foundry",
     routes: ["short-lived/issue", "short-lived/bulk", "product/issue", "product/bulk"],
     text: [
@@ -55,6 +63,20 @@ export const STEPS = Object.freeze([
       "The dashboard keeps no key values in the browser. Issued to is an email for attribution and usage; it gives no dashboard access.",
     ],
   },
+  {
+    id: "period", title: "Choose the usage period", where: "Overview", routes: ["overview", "short-lived", "product"], go: "overview", target: "usage-period",
+    text: [
+      "Usage covers the last 24 hours, 7, 30 or 90 days, or a custom range: choose Custom, then the first and last day, and Apply. Days are whole UTC days, both included.",
+      "Usage is kept for 90 days at no charge, so a range starts at most 89 days before today. Two days or fewer are charted by the hour, longer ranges by the day.",
+    ],
+  },
+  {
+    id: "chargeback", title: "Export a chargeback report", where: "Overview", routes: ["overview"], go: "overview", target: "chargeback",
+    text: [
+      "Chargeback report downloads a CSV for the period chosen at the top of the Overview, for both key kinds or one: a row per key and model with tokens, requests, first and last use, who the key is issued to, its label and tags, status and Foundry.",
+      "Usage of a key no longer in Key Vault is listed as unknown, with its key id. The file has no prices: Foundry pricing varies by model, and Claude is billed in CCU.",
+    ],
+  },
 ]);
 
 export const NOTES = Object.freeze([
@@ -62,6 +84,7 @@ export const NOTES = Object.freeze([
   "A model deployed a minute ago appears after Refresh from Azure on Foundry & models. Pin it before issuing keys for it.",
   "Discovery reads metadata only. The gateway's inference permission is separate, and the dashboard cannot grant it.",
   "Private endpoints: API Management must reach each account over its virtual network, with private DNS linked to that network.",
+  "Gateway URL: only a gateway custom domain of this API Management can replace its URL in keys, and the dashboard never sends a request to it.",
 ]);
 
 /** Fixed routes only: the router wipes secrets on every one of them. */
@@ -69,6 +92,8 @@ const GO = {
   models: (ctx) => ctx.go("#/models"),
   issue: (ctx) => ctx.go("#/short-lived/issue"),
   bulk: (ctx) => ctx.go("#/short-lived/bulk"),
+  overview: (ctx) => ctx.go("#/overview"),
+  settings: (ctx) => ctx.go("#/settings"),
 };
 const WAIT_MS = 6000;
 const reducedMotion = () => globalThis.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches === true;
@@ -119,7 +144,7 @@ export function createGuide(ctx) {
   const live = el("p", { class: "sr-only", "aria-live": "polite" });
   const panel = el("aside", { id: "help-panel", class: "help-panel", "aria-labelledby": titleId, hidden: true },
     el("div", { class: "help-head" }, el("h2", { class: "help-title", id: titleId }, icon("help"), "Setup guide"), closeX),
-    el("p", { class: "help-intro" }, "From a Foundry account to keys in people's hands. Show me highlights each step on the page; Escape closes the guide."),
+    el("p", { class: "help-intro" }, "From a Foundry account to keys in people's hands, then their usage and chargeback. Show me highlights each step on the page; Escape closes the guide."),
     steps,
     el("div", { class: "help-foot" }, back, position, next),
     el("details", { class: "disclosure help-notes" }, el("summary", {}, "Good to know"),

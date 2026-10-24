@@ -369,7 +369,7 @@ test("the guide: Attach a Foundry describes and highlights Connect another Found
     const marked = page.view.querySelectorAll(".help-target");
     assert.equal(marked.length, 1);
     assert.ok(marked[0].contains(connect), "the highlight is around Connect another Foundry");
-    assert.equal(marked[0].getAttribute("data-help-label"), "Step 2 of 6: Attach a Foundry");
+    assert.equal(marked[0].getAttribute("data-help-label"), "Step 2 of 9: Attach a Foundry");
     assert.equal(page.doc.activeElement, connect, "and keyboard focus is on it");
     connect.dispatchEvent(keydown("Escape"));
     assert.equal(guide.panel.hidden, true, "Escape closes the guide");

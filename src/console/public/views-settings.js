@@ -6,9 +6,9 @@ import { get, invalidate, post } from "./api.js";
 import { addChildren, badge, busy, confirmDialog, el, errorState, field, icon, loadingState, setChildren, showErrors, toast, uid } from "./dom.js";
 import { checkGatewayUrl, fmtRelative } from "./lib.js";
 
-function card(title, { help, actions } = {}, ...children) {
+function card(title, { attrs, actions } = {}, ...children) {
   const id = uid("card");
-  return el("section", { class: "card", "aria-labelledby": id, "data-help": help },
+  return el("section", { class: "card", "aria-labelledby": id, ...attrs },
     actions ? el("div", { class: "card-head" }, el("h2", { class: "card-title", id }, title), actions) : el("h2", { class: "card-title", id }, title),
     children);
 }
@@ -101,7 +101,7 @@ function gatewayUrlCard() {
   }));
 
   load();
-  return card("Gateway URL", { help: "gateway-url" },
+  return card("Gateway URL", { attrs: { "data-help": "gateway-url" } },
     el("p", {}, "Keys, their setup snippets, keys.csv, export bundles and the Foundry base URLs name this address. It is API Management's own URL unless a custom domain of API Management replaces it."),
     statusSlot, form, offerSlot,
     el("p", { class: "field-hint" }, "Other replicas of the dashboard use a change within 30 seconds; browser tabs that are already open, after a reload."));

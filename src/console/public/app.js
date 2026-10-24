@@ -10,10 +10,11 @@ import { addChildren, confirmDialog, el, errorState, icon, reportError, segmente
 import { createGuide } from "./help.js";
 import { keyTitle } from "./lib.js";
 import { closeSecrets, pendingSecrets } from "./secret.js";
-import { renderExport, renderSigning } from "./views-admin.js";
+import { renderExport } from "./views-admin.js";
 import { renderFoundry } from "./views-foundry.js";
 import { renderKeysView } from "./views-keys.js";
 import { renderOverview } from "./views-overview.js";
+import { renderSettings } from "./views-settings.js";
 
 const ROUTES = [
   { id: "overview", label: "Overview", render: (root, ctx) => renderOverview(root, ctx) },
@@ -21,8 +22,10 @@ const ROUTES = [
   { id: "product", label: "Product keys", subs: ["issue", "bulk"], render: (root, ctx, sub) => renderKeysView(root, ctx, "product", sub) },
   { id: "models", label: "Foundry & models", render: (root, ctx) => renderFoundry(root, ctx) },
   { id: "export", label: "Export", render: (root, ctx) => renderExport(root, ctx) },
-  { id: "signing", label: "Signing", render: (root) => renderSigning(root) },
+  { id: "settings", label: "Settings", render: (root, ctx) => renderSettings(root, ctx) },
 ];
+/** Earlier addresses that still arrive: the Signing page is part of Settings since P59. */
+const ALIASES = Object.freeze({ signing: "settings" });
 const SUB_TITLES = { issue: "Issue", bulk: "Bulk issue" };
 const SIGN_IN = "/.auth/login/aad?post_login_redirect_uri=/";
 const ADMINS_ONLY = "This dashboard is for administrators. Ask an admin for your key.";
@@ -121,7 +124,8 @@ function route(ctx, moveFocus) {
   closeSecrets();
   for (const dialog of document.querySelectorAll("dialog[open]")) dialog.close();
   const parsed = parseHash();
-  let r = ROUTES.find((x) => x.id === parsed?.id);
+  const id = parsed && Object.hasOwn(ALIASES, parsed.id) ? ALIASES[parsed.id] : parsed?.id;
+  let r = ROUTES.find((x) => x.id === id);
   let sub = r?.subs?.includes(parsed.sub) ? parsed.sub : null;
   if (!r) {
     r = ROUTES[0];

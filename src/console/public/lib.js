@@ -163,6 +163,15 @@ export function checkPassphrase(v) {
   return s === "" || s.length >= LIMITS.passphrase ? null : `Use at least ${LIMITS.passphrase} characters, or leave it blank to generate one.`;
 }
 
+const HOST_LABEL = "[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?";
+const GATEWAY_ORIGIN_RE = new RegExp(`^https://((?:${HOST_LABEL}\\.)+${HOST_LABEL})(?::443)?/?$`);
+/** The gateway URL setting, checked as the server checks it (gateway-url.mjs); the server also checks it is an APIM gateway hostname. */
+export function checkGatewayUrl(v) {
+  const host = GATEWAY_ORIGIN_RE.exec(String(v ?? "").trim().toLowerCase())?.[1];
+  return host && host.length <= 253 && /[a-z]/.test(host.split(".").at(-1)) ? null
+    : "Enter https:// and a host name only, for example https://ai.contoso.com: no path, query, user name, port other than 443, IP address or wildcard.";
+}
+
 /** Shared grant settings for single and bulk issue. Returns field errors and the request body. */
 export function validateSettings(kind, v) {
   const errors = {};

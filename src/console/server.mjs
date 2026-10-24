@@ -31,6 +31,7 @@ const STATIC = {
   "/views-drawer.js": ["views-drawer.js", "text/javascript; charset=utf-8"],
   "/views-issue.js": ["views-issue.js", "text/javascript; charset=utf-8"],
   "/views-admin.js": ["views-admin.js", "text/javascript; charset=utf-8"],
+  "/views-settings.js": ["views-settings.js", "text/javascript; charset=utf-8"],
   "/foundry.js": ["foundry.js", "text/javascript; charset=utf-8"],
   "/foundry-picker.js": ["foundry-picker.js", "text/javascript; charset=utf-8"],
   "/foundry-connect.js": ["foundry-connect.js", "text/javascript; charset=utf-8"],

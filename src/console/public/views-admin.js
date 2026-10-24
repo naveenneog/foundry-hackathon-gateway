@@ -1,9 +1,9 @@
-// Key Dashboard — admin views: Export (encrypted, signed bundles) and Signing (the secret that signs
-// short-lived keys). Foundry accounts, deployments and pins are views-foundry.js.
+// Key Dashboard — admin views: Export (encrypted, signed bundles). The signing secret and the gateway
+// URL are on Settings (views-settings.js); Foundry accounts, deployments and pins are views-foundry.js.
 
-import { cachedGet, get, post } from "./api.js";
+import { cachedGet, post } from "./api.js";
 import {
-  addChildren, busy, confirmDialog, copyButton, downloadJson, el, emptyState, errorState, field, icon, loadingState, setChildren, showErrors, toast, uid,
+  addChildren, busy, copyButton, downloadJson, el, emptyState, errorState, field, icon, loadingState, setChildren, showErrors, toast, uid,
 } from "./dom.js";
 import { checkPassphrase, checkRecipient, chunk, fmtInt, KINDS, LIMITS } from "./lib.js";
 import { showSecret } from "./secret.js";
@@ -134,69 +134,3 @@ export function renderExport(root, ctx) {
   drawSelection();
 }
 
-// ── Signing ─────────────────────────────────────────────────────────────────
-
-export function renderSigning(root) {
-  const refresh = el("button", { type: "button", class: "btn btn-secondary" }, icon("refresh"), "Refresh");
-  const statusSlot = el("div", {});
-  const run = (label, tone, fn) => {
-    const button = el("button", { type: "button", class: `btn btn-${tone}` }, label);
-    button.addEventListener("click", busy(button, fn));
-    return button;
-  };
-  const migrate = run("Migrate from API Management", "secondary", async () => {
-    const r = await post("/api/signing/migrate", {});
-    toast(r.migrated ? "The signing secret is now in Key Vault." : "Key Vault already holds the same signing secret.");
-    await load();
-  });
-  const push = run("Push to API Management…", "warn", async () => {
-    const ok = await confirmDialog({
-      title: "Push the vault's secret to API Management?", tone: "warn", typed: "PUSH", confirmLabel: "Push secret",
-      message: "API Management's copy is overwritten with the value in Key Vault.",
-      points: ["Short-lived keys signed with a different secret stop working at the gateway."],
-    });
-    if (!ok) return;
-    await post("/api/signing/push", { confirm: "PUSH" });
-    toast("API Management now uses the vault's signing secret.");
-    await load();
-  });
-  const rotate = run("Rotate signing secret…", "danger", async () => {
-    const ok = await confirmDialog({
-      title: "Rotate the signing secret?", typed: "ROTATE", confirmLabel: "Rotate secret",
-      message: "A new secret is written to Key Vault and to API Management.",
-      points: ["Every short-lived key issued before now stops working immediately.", "Product keys are not affected.", "Re-issue the short-lived keys that are still needed."],
-    });
-    if (!ok) return;
-    await post("/api/signing/rotate", { confirm: "ROTATE" });
-    toast("Signing secret rotated. Re-issue the short-lived keys that are still needed.");
-    await load();
-  });
-  const action = (title, text, button, cls = "") => el("div", { class: ["action-row", cls] }, el("div", {}, el("h3", { class: "section-title" }, title), el("p", { class: "field-hint" }, text)), button);
-  addChildren(root,
-    head("Signing secret", "Key Vault holds the secret that signs short-lived keys. API Management keeps an encrypted copy to check them, because a Key Vault reference would need the vault firewall opened.", refresh),
-    card("Status", statusSlot),
-    card("Actions",
-      action("Migrate", "First run only: copies API Management's current secret into Key Vault. It never overwrites a different value.", migrate),
-      action("Push", "Copies the vault's value to API Management, for example after restoring the vault.", push),
-      action("Rotate", "Writes a new secret to both. Every short-lived key issued before it stops working.", rotate, "action-danger")));
-
-  async function load() {
-    setChildren(statusSlot, loadingState("Checking the signing secret…", 1));
-    try {
-      const s = await get("/api/signing");
-      const tile = (label, ok, yes, no) => el("div", { class: ["status-tile", ok ? "is-ok" : "is-bad"] },
-        icon(ok ? "check" : "alert", "icon status-icon"), el("div", {}, el("p", { class: "kpi-label" }, label), el("p", { class: "status-value" }, ok ? yes : no)));
-      setChildren(statusSlot,
-        el("div", { class: "status-tiles" },
-          tile("Key Vault", s.vault, "Holds the secret", "No secret — migrate it"),
-          tile("API Management", s.apim, "Has a copy", "No copy"),
-          tile("Copies match", s.inSync, "Yes", "No")),
-        s.inSync ? null : el("div", { class: "callout callout-bad" }, icon("alert", "icon callout-icon"),
-          el("p", {}, "Keys issued here would be refused by the gateway until the copies match. Migrate on first run, or push the vault's value.")));
-    } catch (error) {
-      setChildren(statusSlot, errorState(error, load));
-    }
-  }
-  refresh.addEventListener("click", busy(refresh, load));
-  load();
-}

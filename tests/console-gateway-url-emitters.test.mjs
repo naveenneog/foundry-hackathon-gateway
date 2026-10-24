@@ -97,7 +97,8 @@ function gatewayUrlBypasses(sources) {
     if (!["gateway-url.mjs", "service-foundries.mjs"].includes(file) && /\bserverUrl\s*\(/.test(code)) {
       out.push(`${file}: uses the API Management URL meant for requests the dashboard itself sends`);
     }
-    if (!["gateway-url.mjs", "service.mjs"].includes(file) && /\bapimUrl\b/.test(code)) out.push(`${file}: holds the configured URL`);
+    // The configured URL lives on the server; a browser module only displays the server's apimUrl field.
+    if (!file.startsWith("public/") && !["gateway-url.mjs", "service.mjs"].includes(file) && /\bapimUrl\b/.test(code)) out.push(`${file}: holds the configured URL`);
     // Formatters receive a URL from their caller; main.mjs validates the setting; service.mjs hands
     // its option to the resolver. Any other module with a bare gatewayUrl variable has its own copy.
     if (!["main.mjs", "service.mjs", "gateway-url.mjs", "handout.mjs", "connections.mjs"].includes(file) && bare(code) > 0) {

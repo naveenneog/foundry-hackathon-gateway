@@ -10,7 +10,7 @@ Two ways to run it, on the same gateway:
 |---|---|---|
 | For | Administrators, in a browser | One operator at a terminal |
 | Keys | Short-lived keys **and** long-lived product keys | Short-lived keys |
-| Also | Usage charts, model pinning, archive, rotation automation, encrypted bundles | Gateway deploy, model deploy, key diagnosis |
+| Also | Usage charts for preset periods or a custom range, a chargeback CSV, model pinning, archive, rotation automation, encrypted bundles, an optional custom gateway domain | Gateway deploy, model deploy, key diagnosis |
 | Guide | [Install](docs/INSTALL.md) · [Use](docs/CONSOLE.md) | [Runbook](docs/RUNBOOK.md) |
 
 ---
@@ -62,7 +62,8 @@ npm run dashboard:demo          # then open http://127.0.0.1:8090/
 
 The demo runs the real dashboard on sample keys and synthetic usage, on `127.0.0.1` only, with
 in-memory stand-ins for Key Vault, API Management and Foundry: two connected Foundries and four
-more to connect. It needs Node.js 20+ and nothing else
+more to connect, usage of a key no longer in Key Vault, and a gateway custom domain,
+`ai.contoso.example`, to try on Settings. It needs Node.js 20+ and nothing else
 ([`scripts/dashboard-demo.mjs`](scripts/dashboard-demo.mjs)).
 
 ### Install on Azure
@@ -90,19 +91,22 @@ az deployment group create -g <rg> --template-file infra/examples/private-foundr
 
 | | |
 |---|---|
-| ![Overview: active key counts, tokens and requests, short-lived and product usage over time](docs/images/console/console-overview.png) | **Overview.** Active short-lived and product keys, tokens and requests for 24 h, 7 d, 30 d or 90 d, and both key types on one chart. |
+| ![Overview: active key counts, tokens and requests, short-lived and product usage over time](docs/images/console/console-overview.png) | **Overview.** Active short-lived and product keys, tokens and requests for 24 h, 7 d, 30 d, 90 d or a custom range of UTC days, and both key types on one chart. **Chargeback report** downloads a CSV with one row per key and model for that period, with each key's issued-to, labels, status and Foundry, and no prices. The screenshot predates the custom range and the report. |
 | ![Short-lived keys: usage, by model, and the key list with active and archived views](docs/images/console/console-keys.png) | **Short-lived keys** and **Product keys** are separate pages. Each has usage by day and by model, an active or archived key list, search, and a per-key drawer with its own chart. |
 | ![Issue a short-lived key: issued to, subject, one or several models, start delay, validity and budget](docs/images/console/console-issue-signed.png) | **Issue one.** Choose **One model** or **Several models** explicitly. **Starts in** delays activation, as `admin.ps1` does. The key is shown once, masked, with Copy. |
 | ![Bulk issue: shared settings and CSV rows](docs/images/console/console-short-lived-bulk.png) | **Issue in bulk.** Paste or upload CSV rows. The dashboard returns `keys.csv`, to send each person their row, and `index.csv`, which holds no keys. |
 | ![Product key issue: Foundry deployments, monthly budget, rotation and expiry](docs/images/console/console-issue-product.png) | **Product keys** grant Foundry deployments. The dashboard creates one APIM product per model set, so the key is refused for any other model (403). |
 | ![Models: pinned aliases per route and the Foundry deployments](docs/images/console/console-models.png) | **Models.** Lists the Foundry deployments and pins or unpins aliases, with the same rules as `admin.ps1`. |
 | ![Foundry account discovery with connected and unattached accounts, region and deployment counts](docs/images/console/console-foundries.png) | **Foundry & models.** Lists the Foundries connected to this API Management and refreshes their deployments. **Connect another Foundry** finds and attaches another account from the subscription without redirecting existing keys. The screenshot predates this split and still shows unattached accounts in the list. |
-| ![Setup guide with a highlighted Foundry account section](docs/images/console/console-foundry-help.png) | **Help → Show me.** Highlights discovery, attachment, access/network setup, pinning, key issue and distribution controls. Operator commands are copied, not executed by the dashboard. |
+| ![Setup guide with a highlighted Foundry account section](docs/images/console/console-foundry-help.png) | **Help → Show me.** Highlights discovery, attachment, access/network setup, pinning, the gateway URL, key issue, distribution, the usage period and the chargeback report. Operator commands are copied, not executed by the dashboard. |
 | ![Export: an encrypted bundle signed by the Key Vault key](docs/images/console/console-export.png) | **Export.** An AES-256-GCM bundle signed by a Key Vault key. The recipient verifies and opens it with `scripts/open-bundle.mjs`. |
 
 Expired or revoked keys move to **Archived** automatically. Product keys are suspended first.
-Archived keys are deleted 30 days later. **[→ Using the dashboard](docs/CONSOLE.md)** has every
-action.
+Archived keys are deleted 30 days later. **Settings** holds the signing secret and the **Gateway
+URL**: keys name API Management's own URL unless a custom domain of that API Management replaces
+it; the dashboard checks the domain with ARM before saving it, and keys handed out earlier keep
+working ([ADR-0019](docs/adr/0019-admin-gateway-url.md)). **[→ Using the dashboard](docs/CONSOLE.md)**
+has every action.
 
 ---
 ## What a participant gets

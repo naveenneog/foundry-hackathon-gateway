@@ -8,14 +8,19 @@ A web app for gateway administrators. It issues and manages two key types:
   one or several Foundry deployments, rotated between two slots, suspended, and enrolled in
   automatic rotation.
 
-The dashboard also shows per-key usage, separately for short-lived and product keys. Administrators
+The dashboard also shows per-key usage, separately for short-lived and product keys, for a preset
+period or a custom range of UTC days, and exports a chargeback report as CSV. Administrators
 distribute keys by copying a single key, downloading the script-compatible `keys.csv` and
-key-free `index.csv`, or creating an encrypted bundle signed by a Key Vault key.
+key-free `index.csv`, or creating an encrypted bundle signed by a Key Vault key. The address in
+handed-out keys is API Management's own URL, or a custom domain of API Management that an
+administrator sets on **Settings**.
 
 Decisions: [ADR-0013](adr/0013-admin-console.md) (core design),
 [ADR-0014](adr/0014-console-on-container-apps.md) (Container Apps hosting),
-[ADR-0015](adr/0015-key-dashboard.md) (dashboard), and
-[ADR-0016](adr/0016-admin-only-short-lived-keys.md) (admin-only access and distribution).
+[ADR-0015](adr/0015-key-dashboard.md) (dashboard),
+[ADR-0016](adr/0016-admin-only-short-lived-keys.md) (admin-only access and distribution),
+[ADR-0019](adr/0019-admin-gateway-url.md) (which gateway URL keys name) and
+[ADR-0020](adr/0020-chargeback-usage-export.md) (the chargeback report).
 
 ---
 
@@ -83,9 +88,9 @@ The script, in order:
 access. The live installation has no IP restriction because the administrator's NAT egress address
 rotates. The automation has no inbound endpoint.
 
-**First sign-in as admin:** open **Signing secret**, then click **Migrate from API Management**.
-This copies the gateway's current signing secret into Key Vault. Keys already issued keep
-working.
+**First sign-in as admin:** open **Settings**, then, under **Signing secret**, click **Migrate from
+API Management**. This copies the gateway's current signing secret into Key Vault. Keys already
+issued keep working.
 
 ---
 
@@ -119,6 +124,47 @@ Application Insights table that keeps 90 days at no charge, even though the work
 Usage older than 90 days is removed. Raising the table's retention (up to 730 days of analytics
 retention) keeps more, at an [extra cost](https://azure.microsoft.com/pricing/details/monitor/).
 Check a workspace with `az monitor log-analytics workspace table show --name AppMetrics`.
+
+**Custom range.** **Custom**, beside the presets on the Overview, both key pages and the key drawer,
+shows **From (UTC)** and **To (UTC)**. Both days are whole UTC days and are included. The range
+starts no earlier than 89 days before today and ends no later than today, because usage is kept
+for 90 days; the hint under the dates states the earliest day. **Apply**, or Enter in a date
+field, loads it. Two days or fewer are charted by the hour, longer ranges by the day; buckets
+without usage show zero. The usage APIs take `days`, or `from` and `to` (`YYYY-MM-DD`), never
+both; anything else is refused with 400. A range is queried with `datetime()` bounds that the
+server writes from the checked days, and the same window as the query's `timespan` (U53). Answers
+are cached for 60 seconds per kind and period.
+
+### Chargeback report
+
+The Overview's **Chargeback report** card downloads `chargeback-<from>-<to>.csv` for the period
+chosen at the top of the page, for both key kinds or one ([ADR-0020](adr/0020-chargeback-usage-export.md)).
+The file has a header row, then one row per key and model with usage in the period. There is no
+totals row, so a sum or a pivot table over the file counts each token once.
+
+| Columns | Content |
+|---|---|
+| `period_start_utc`, `period_end_utc` | The period, to the second; a custom range ends at 23:59:59 on its last day |
+| `key_kind`, `key_name`, `key_id`, `issued_to` | `short-lived` or `product`; the Key Vault name; the `jti` or the subscription id; **Issued to** |
+| `label`, `subject`, `budget_tokens`, `monthly_tokens`, `rotate_days`, `product`, `issued_by`, `valid_from_utc`, `expires_utc` | The key's descriptive tags, blank where a kind does not have them |
+| `status`, `foundry_account`, `connection_id`, `granted_models` | Status as on the key lists (`active`, `scheduled`, `suspended`, `revoked`, `expired`, `archived`), or `unknown`; the Foundry and connection; the granted models or aliases |
+| `model`, `prompt_tokens`, `completion_tokens`, `total_tokens`, `requests`, `first_seen_utc`, `last_seen_utc` | Usage of that model in the period |
+
+- Usage whose key is no longer in Key Vault, for example a deleted key, is listed with status
+  `unknown` and its key id, so the file adds up to the usage views. The Overview's **Top keys**
+  names such usage **Unknown key `<key id>`**.
+- The file is built from Key Vault tags and usage rows only; it holds no key value, token or
+  secret. Cells beginning with `=`, `+`, `-`, `@`, a tab or a carriage return get a leading `'`,
+  and quoting follows RFC 4180, as in `keys.csv`
+  ([OWASP: CSV injection](https://owasp.org/www-community/attacks/CSV_Injection)).
+- There is no price column. Foundry pricing varies by model, region and deployment type, and
+  Claude models on Foundry are billed in CCU, so the dashboard has no rate it could state as fact.
+  Optional per-model rates are a "Later" roadmap entry.
+- Token counts are the gateway's token metrics. For streamed responses API Management estimates
+  them (UNKNOWNS U5), so the report allocates usage and does not reconcile with an Azure invoice.
+- `POST /api/chargeback` takes `kind` (`all`, `jwt` or `product`) and `days`, or `from` and `to`. It
+  is admin-only and audit-logged with the period, the kind and the number of rows. Without a Log
+  Analytics workspace it answers 409 rather than an empty file.
 
 ### Foundry discovery, backend attachment and model pinning
 
@@ -156,7 +202,9 @@ appear.
    that RBAC and networking work; a failure shows the next setup step.
 
 The **Help** control explains these steps and highlights the relevant controls; its Attach step
-highlights **Connect another Foundry**. **How attaching works** inside the dialog closes the
+highlights **Connect another Foundry**. Further steps cover the gateway URL on Settings, the usage
+period with a custom range, and the chargeback report; **Show me** highlights each control, and
+Escape closes the guide. **How attaching works** inside the dialog closes the
 dialog first, because the guide cannot be used while a modal dialog is open. Discovery uses
 metadata-only read permissions. Inference uses APIM's separate identity and per-account role.
 Private endpoint setup is an operator action; no public-network or firewall settings are relaxed.
@@ -253,12 +301,56 @@ BUNDLE_PASSPHRASE='…' node scripts/open-bundle.mjs bundle.json --key bundle-ke
 ciphertext was changed. It writes the keys to `--out` with owner-only permissions, never to the
 terminal.
 
-### Signing secret (admins)
+### Settings: gateway URL and signing secret (admins)
+
+**Settings** has two cards: **Gateway URL** and **Signing secret**. The Signing page of earlier
+versions is now the second card; `#/signing` still opens Settings.
+
+#### Gateway URL (custom domain)
+
+Handouts, Reveal's client setup, `keys.csv`, export bundles and each Foundry's base URL name
+API Management's own URL (`GATEWAY_URL`, set at deploy) unless a custom domain replaces it
+([ADR-0019](adr/0019-admin-gateway-url.md)).
+
+1. Add the custom domain to API Management's **Gateway** endpoint first: in the Azure portal,
+   the API Management instance, **Custom domains**
+   ([Learn: configure a custom domain name](https://learn.microsoft.com/azure/api-management/configure-custom-domain)).
+2. On **Settings**, enter `https://<hostname>` in **Gateway URL (custom domain)**, or select one of
+   the gateway custom domains the card lists, then **Save**.
+
+The dashboard accepts only `https://` and a host name, lowercased: no path, query, user name,
+port other than 443, IP address or wildcard. Before saving, it reads the API Management service
+from ARM (`api-version=2024-05-01`) and checks that the host name is a gateway (`Proxy`) entry in
+its `hostnameConfigurations` (U51); anything else is refused with 400. It never sends a request to
+the URL and does not look it up in DNS; check that the name resolves to the gateway, for example
+by calling it with a key. A Front Door or Application Gateway host name in front of API
+Management is not in that list and cannot be set here; `admin.ps1` accepts a typed host name for
+that case.
+
+- The setting is the Key Vault secret `console-gateway-url`, holding `{"url":"https://…"}`. Each
+  change is a new secret version, and the audit log records `set-gateway-url` or
+  `reset-gateway-url` with the old and the new URL.
+- **Reset to API Management URL** writes `{"url":null}`. The secret is never deleted, because a
+  soft-deleted secret could not be written again under the same name (U54).
+- The replica that saves a change uses it at once. Other replicas use it within 30 seconds; each
+  checks the host name with ARM again when it reads the setting again, and falls back to the API
+  Management URL if the domain is no longer listed. Browser tabs that are already open show the
+  new URL in forms after a reload; the server builds every handout, so new keys carry it anyway.
+- Keys handed out before a change are not rewritten. They keep working: API Management keeps
+  answering on its default gateway host name, which cannot be removed, and on each configured
+  custom domain ([Learn](https://learn.microsoft.com/azure/api-management/configure-custom-domain), U52).
+- The Foundry connection test is a request the dashboard sends itself, so it keeps calling the
+  API Management URL.
+
+#### Signing secret
 
 ![Signing secret: where it is held, whether the copies match, and the three actions](images/console/console-signing.png)
 
+The screenshot predates P59: it shows the earlier Signing page, now the **Signing secret** card on
+Settings.
+
 Key Vault holds the secret. API Management receives a copy as an encrypted named value, because
-a Key Vault reference would need the vault firewall opened to trusted services (U36). The page
+a Key Vault reference would need the vault firewall opened to trusted services (U36). The card
 shows whether the two copies match, and has three actions:
 
 - **Migrate:** first run only; copies the APIM secret into the vault.
@@ -282,6 +374,11 @@ shows whether the two copies match, and has three actions:
   - Key Vault is reached only over the private network.
 - **Dashboard access:** remove the administrator's app-role assignment in Entra. Keys are
   distributed out-of-band by the administrator; the intended holder has no dashboard role.
+- **Gateway URL:** keys name only API Management's URL or a host name ARM lists as one of its
+  gateway custom domains; the dashboard never sends a request to an admin-provided URL
+  ([ADR-0019](adr/0019-admin-gateway-url.md)).
+- **Chargeback report:** built from tags and usage rows, with formula-escaped cells; it holds no
+  key value.
 - **Network access:** the live deployment has no IP allowlist, because the administrator's public
   egress IP changes. Entra authentication and the `Console.Admin` role are still required.
 

@@ -15,7 +15,8 @@ document with the details.
 | [6. Issue and use a key](#6-issue-and-use-a-key) | A key working in Claude Code | 5 min |
 
 Decisions: [ADR-0013](adr/0013-admin-console.md), [ADR-0014](adr/0014-console-on-container-apps.md),
-[ADR-0015](adr/0015-key-dashboard.md), [ADR-0016](adr/0016-admin-only-short-lived-keys.md).
+[ADR-0015](adr/0015-key-dashboard.md), [ADR-0016](adr/0016-admin-only-short-lived-keys.md),
+[ADR-0019](adr/0019-admin-gateway-url.md).
 Day-to-day use: [CONSOLE.md](CONSOLE.md).
 
 ---
@@ -199,11 +200,21 @@ With no `-AllowedIp`, the dashboard accepts any address and Entra sign-in with t
 
 ## 5. First sign-in
 
-Open the printed URL and sign in. Then open **Signing secret** and click **Migrate from API
-Management**. This copies the gateway's signing secret into Key Vault, where the dashboard signs
-short-lived keys. Keys already issued keep working. The page then shows **Copies match: Yes**.
+Open the printed URL and sign in. Then open **Settings** and, under **Signing secret**, click
+**Migrate from API Management**. This copies the gateway's signing secret into Key Vault, where
+the dashboard signs short-lived keys. Keys already issued keep working. The card then shows
+**Copies match: Yes**.
 
 ![Signing secret page after migration](images/console/console-signing.png)
+
+The screenshot predates P59, when the signing secret had a page of its own; it is now a card on
+**Settings**.
+
+**Optional: a custom domain in handed-out keys.** Keys name API Management's own URL. To hand
+them out with a custom domain instead, add it to API Management's Gateway endpoint (Azure portal,
+the API Management instance, **Custom domains**), then choose it under **Gateway URL** on
+**Settings**. The dashboard accepts only a gateway custom domain of this API Management. Details:
+[CONSOLE.md](CONSOLE.md#gateway-url-custom-domain).
 
 ## 6. Issue and use a key
 

@@ -5,10 +5,11 @@
  *
  * Runs the real server, service and browser UI (src/console/) against the in-memory Key Vault,
  * API Management and Foundry fakes the unit tests use (tests/console.harness.mjs), with seeded
- * keys and synthetic usage. Foundry & models lists two connected Foundries; Connect another
- * Foundry lists four more, one of which the dashboard cannot read. Every request is treated as
- * signed in as a demo admin, so it listens on 127.0.0.1 only. Nothing leaves the machine and
- * nothing is kept after it stops.
+ * keys and synthetic usage, including usage of a key no longer in Key Vault. Foundry & models
+ * lists two connected Foundries; Connect another Foundry lists four more, one of which the
+ * dashboard cannot read. Settings offers one gateway custom domain, ai.contoso.example, to try.
+ * Every request is treated as signed in as a demo admin, so it listens on 127.0.0.1 only. Nothing
+ * leaves the machine and nothing is kept after it stops.
  *
  *   PORT=8091 node scripts/dashboard-demo.mjs
  */
@@ -24,6 +25,12 @@ const TEMPLATE = new URL("../poc/products-keyvault/infra/product-policy.xml", im
 const ADMIN = { name: "admin@contoso.com", oid: "demo-admin", role: "admin" };
 const DAY = 86_400_000;
 const HOUR = 3_600_000;
+const RETIRED_KEY_ID = "k_retired_demo";
+/** Hostnames the demo API Management reports besides its own (U51): a gateway custom domain to try, and a portal domain it refuses. */
+const DEMO_HOSTNAMES = [
+  { type: "Proxy", hostName: "ai.contoso.example", certificateSource: "Managed", defaultSslBinding: true },
+  { type: "DeveloperPortal", hostName: "developer.contoso.example", certificateSource: "Managed" },
+];
 
 /** Accounts in the demo subscription that are not connected: [resource group, name, kind, region, [deployment, format][], read error]. */
 const MORE_ACCOUNTS = [
@@ -47,6 +54,7 @@ function addAccounts(foundry) {
 async function seed(h) {
   h.service.setPackTemplate(readFileSync(TEMPLATE, "utf8"));
   await h.service.migrateSigningSecret(ADMIN);
+  h.arm.hostnameConfigurations.push(...DEMO_HOSTNAMES);
   addAccounts(h.foundry);
   const secondary = [...h.foundry.accounts.keys()].find((id) => id.endsWith("/aif-secondary"));
   await h.service.attachFoundry(ADMIN, { foundryId: secondary });
@@ -65,33 +73,39 @@ async function seed(h) {
   }
 }
 
-/** Synthetic AppMetrics rows in the shape the real query returns, deterministic per run. */
+/** Synthetic AppMetrics rows in the shape the real query returns, for its window and bucket size, deterministic per run. */
 function syntheticUsage(h, now) {
   let state = 7;
   const rnd = () => ((state = (state * 16807) % 2147483647) / 2147483647);
   return {
     async query(q) {
       const kind = q.includes('Route == "poc"') ? "product" : "jwt";
-      const hourly = q.includes("1h");
-      const count = hourly ? 24 : Number(/ago\((\d+)d\)/.exec(q)?.[1] ?? 7);
+      const hourly = q.includes("bin(TimeGenerated, 1h)");
       const bucket = hourly ? HOUR : DAY;
-      const end = Math.floor(now() / bucket) * bucket;
+      // A custom range is a datetime window; a preset is ago(Nd) ending now (src/console/usage.mjs).
+      const window = /TimeGenerated >= datetime\(([^)]+)\) and TimeGenerated < datetime\(([^)]+)\)/.exec(q);
+      const last = Math.floor((window ? Math.min(Date.parse(window[2]) - 1, now()) : now()) / bucket) * bucket;
+      const first = window ? Date.parse(window[1]) : last - ((hourly ? 24 : Number(/ago\((\d+)d\)/.exec(q)?.[1] ?? 7)) - 1) * bucket;
       const only = /KeyId == "([^"]+)"/.exec(q)?.[1];
       const keys = [...h.vault.secrets.values()].filter((s) => s.tags.kind === kind)
         .map((s) => ({ id: s.tags.jti ?? s.tags.subscription, models: String(s.tags.models ?? "flash").split(",") }))
         .filter((k) => !only || k.id === only);
+      // Usage of a key since deleted from Key Vault: listed as unknown, by its key id.
+      if (kind === "jwt" && !only) keys.push({ id: RETIRED_KEY_ID, models: ["flash"] });
       const rows = [];
       for (const k of keys) {
-        for (let b = 0; b < count; b++) {
+        for (let at = first; at <= last; at += bucket) {
           if (rnd() < 0.35) continue;
-          const at = new Date(end - b * bucket).toISOString();
           const model = k.models[Math.floor(rnd() * k.models.length)];
           const total = Math.round(rnd() * (hourly ? 900 : 9_000));
           const prompt = Math.round(total * 0.7);
           const calls = 1 + Math.floor(rnd() * 6);
-          rows.push({ Bucket: at, KeyId: k.id, Model: model, Name: "Total Tokens", Tokens: total, Calls: calls },
-            { Bucket: at, KeyId: k.id, Model: model, Name: "Prompt Tokens", Tokens: prompt, Calls: calls },
-            { Bucket: at, KeyId: k.id, Model: model, Name: "Completion Tokens", Tokens: total - prompt, Calls: calls });
+          const seen = Math.min(at + Math.floor(rnd() * bucket * 0.5), now());
+          const span = { Bucket: new Date(at).toISOString(), FirstSeen: new Date(seen).toISOString(),
+            LastSeen: new Date(Math.min(seen + Math.floor(rnd() * bucket * 0.4), now())).toISOString() };
+          rows.push({ ...span, KeyId: k.id, Model: model, Name: "Total Tokens", Tokens: total, Calls: calls },
+            { ...span, KeyId: k.id, Model: model, Name: "Prompt Tokens", Tokens: prompt, Calls: calls },
+            { ...span, KeyId: k.id, Model: model, Name: "Completion Tokens", Tokens: total - prompt, Calls: calls });
         }
       }
       return rows;

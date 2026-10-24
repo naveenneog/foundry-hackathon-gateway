@@ -40,3 +40,41 @@ test("dashboard demo: serves the real UI and API on 127.0.0.1 with seeded keys a
     server.close();
   }
 });
+
+test("dashboard demo: a custom usage range, a chargeback report with usage of a key gone from Key Vault, and a custom domain to try", async () => {
+  const { server, url } = await startDemo({ port: 0, quiet: true });
+  const post = (path, body) => fetch(url + path, { method: "POST", headers: { "content-type": "application/json", origin: url.replace(/\/$/, "") }, body: JSON.stringify(body) });
+  const day = (offset) => new Date(Date.now() - offset * 86_400_000).toISOString().slice(0, 10);
+  try {
+    const range = await (await fetch(url + `api/usage?kind=jwt&from=${day(6)}&to=${day(0)}`)).json();
+    assert.deepEqual(range.range, { from: day(6), to: day(0) });
+    assert.equal(range.series.length, 7);
+    assert.ok(range.total.tokens > 0, "synthetic usage answers a custom range too");
+    const twoDays = await (await fetch(url + `api/usage?kind=product&from=${day(1)}&to=${day(0)}`)).json();
+    assert.equal(twoDays.bucket, "hour");
+    assert.ok(twoDays.series.filter((p) => p.tokens > 0).length > 2, "two days of synthetic usage come by the hour");
+    assert.equal(twoDays.series.reduce((sum, p) => sum + p.tokens, 0), twoDays.total.tokens);
+    const past = await (await fetch(url + `api/usage?kind=jwt&from=${day(40)}&to=${day(31)}`)).json();
+    assert.ok(past.total.tokens > 0);
+    assert.equal(past.series.reduce((sum, p) => sum + p.tokens, 0), past.total.tokens, "every synthetic row falls inside the range asked for");
+    const overview = await (await fetch(url + "api/usage?kind=jwt&days=30")).json();
+    assert.ok(overview.byKey.some((k) => k.name === null && k.keyId), "some usage belongs to a key no longer in Key Vault");
+
+    const report = await (await post("api/chargeback", { days: 30, kind: "all" })).json();
+    assert.equal(report.filename, `chargeback-${day(30)}-${day(0)}.csv`);
+    assert.ok(report.rows > 5);
+    assert.match(report.csv, /^period_start_utc,period_end_utc,key_kind,/);
+    assert.match(report.csv, /,unknown,/);
+    assert.match(report.csv, /\r\n[^\r\n]*,product,poc-key-/);
+
+    const settings = await (await fetch(url + "api/gateway-url")).json();
+    assert.deepEqual(settings.candidates, ["https://ai.contoso.example"], "one gateway custom domain on offer");
+    assert.equal((await post("api/gateway-url", { url: "https://developer.contoso.example" })).status, 400, "a developer portal domain is refused");
+    assert.equal((await post("api/gateway-url", { url: "https://ai.contoso.example" })).status, 200);
+    assert.equal((await (await fetch(url + "api/config")).json()).gatewayUrl, "https://ai.contoso.example");
+    assert.equal((await post("api/gateway-url/reset", {})).status, 200);
+    assert.equal((await (await fetch(url + "api/config")).json()).gatewayUrl, "https://gw.example.net");
+  } finally {
+    server.close();
+  }
+});

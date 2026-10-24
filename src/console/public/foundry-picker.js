@@ -1,11 +1,12 @@
-// Key Dashboard — the Foundry choice that starts both issue forms (ADR-0017). Only attached
-// accounts are offered, each with its region, resource group and kind; the base URL of the chosen
-// one shows once its models load. The choice is kept by ARM id for the page's lifetime, never by
-// name, and changing it hands the caller a new account so the model choice starts again.
+// Key Dashboard — the Foundry choice that starts both issue forms (ADR-0017, ADR-0018). Only the
+// Foundries connected to this API Management are offered, each with its region, resource group
+// and kind; other accounts in the subscription are neither listed nor counted. The base URL of the
+// chosen one shows once its models load. The choice is kept by ARM id for the page's lifetime,
+// never by name, and changing it hands the caller a new account so the model choice starts again.
 
 import { invalidate } from "./api.js";
 import { badge, busy, el, emptyState, errorState, icon, loadingState, setChildren, uid } from "./dom.js";
-import { accountsOf, connectedAccounts, KIND_LABEL, pickAccount, summarize } from "./foundry.js";
+import { accountsOf, connectedAccounts, KIND_LABEL, pickAccount } from "./foundry.js";
 
 let chosenId = null;
 
@@ -23,7 +24,7 @@ export function foundryChooser(ctx, { onChoose }) {
   const explain = el("button", { type: "button", class: "btn btn-ghost btn-xs" }, icon("help"), "Which Foundry?");
   const wrap = el("fieldset", { class: "foundry-choice", "data-help": "issue-foundry", "aria-describedby": `${hintId} ${error.id}` },
     el("legend", { class: "field-label" }, "Foundry"),
-    el("p", { class: "field-hint", id: hintId }, "Keys work only with the Foundry chosen here, and only its models are listed below. Only attached Foundry accounts are offered."),
+    el("p", { class: "field-hint", id: hintId }, "Keys work only with the Foundry chosen here, and only its models are listed below. Only Foundries connected to this API Management are offered."),
     slot, target, error, el("div", { class: "row" }, reload, explain), status);
   let account = null;
   let accounts = [];
@@ -50,21 +51,15 @@ export function foundryChooser(ctx, { onChoose }) {
         a.error ? badge("check access", "warn", a.error) : null));
   }
 
-  function draw(all) {
+  function draw() {
     if (!accounts.length) {
-      const total = summarize(all).total;
-      setChildren(slot, emptyState("No Foundry is attached yet.",
-        total ? `${total} Foundry ${total === 1 ? "account was" : "accounts were"} found, none attached. Attach one and pin its models, then issue keys for it.`
-          : "Attach a Foundry account and pin its models, then issue keys for it.",
-        el("a", { class: "btn btn-primary btn-sm", href: "#/models" }, icon("plug"), "Attach a Foundry")));
+      setChildren(slot, emptyState("No Foundry is connected to this API Management yet.",
+        "Keys can be issued only for a connected Foundry. Connect one and pin its models on Foundry & models, then issue keys for it.",
+        el("a", { class: "btn btn-primary btn-sm", href: "#/models" }, icon("plug"), "Open Foundry & models")));
       return;
     }
     const name = uid("foundry");
-    const others = all.length - accounts.length;
-    setChildren(slot,
-      el("div", { class: "choice-list" }, accounts.map((a) => option(a, name))),
-      others ? el("p", { class: "field-hint" }, `${others} more ${others === 1 ? "account is" : "accounts are"} not attached or not readable. `,
-        el("a", { href: "#/models" }, "See Foundry & models")) : null);
+    setChildren(slot, el("div", { class: "choice-list" }, accounts.map((a) => option(a, name))));
   }
 
   async function load(fresh = false) {
@@ -78,10 +73,9 @@ export function foundryChooser(ctx, { onChoose }) {
       choose(null, false);
       return;
     }
-    const all = accountsOf(data);
-    accounts = connectedAccounts(all);
+    accounts = connectedAccounts(accountsOf(data));
     account = pickAccount(accounts, account?.id ?? chosenId, data.defaultFoundryId);
-    draw(all);
+    draw();
     choose(account, false);
   }
 

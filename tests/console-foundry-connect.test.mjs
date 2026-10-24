@@ -13,6 +13,7 @@ const dom = await import(new URL("dom.js", PUBLIC));
 const foundry = await import(new URL("foundry.js", PUBLIC));
 const help = await import(new URL("help.js", PUBLIC));
 const { renderFoundry } = await import(new URL("views-foundry.js", PUBLIC));
+const { foundryChooser } = await import(new URL("foundry-picker.js", PUBLIC));
 
 // ── Five accounts: two connected, two that can be attached, one unreadable ──
 
@@ -348,6 +349,45 @@ test("the guide: Attach a Foundry describes and highlights Connect another Found
     connect.dispatchEvent(keydown("Escape"));
     assert.equal(guide.panel.hidden, true, "Escape closes the guide");
     assert.equal(page.view.querySelectorAll(".help-target").length, 0, "and clears the highlight");
+  } finally {
+    unmount();
+  }
+});
+
+// ── The issue forms' Foundry choice (foundry-picker.js) ────────────────────
+
+async function mountPicker(answer) {
+  const doc = fakeDom();
+  globalThis.document = doc;
+  const chosen = [];
+  const picker = foundryChooser({ foundries: async () => structuredClone(answer), help: () => {} }, { onChoose: (a) => chosen.push(a?.id ?? null) });
+  dom.addChildren(doc.body, picker.wrap);
+  await settle();
+  return { picker, chosen };
+}
+
+test("the issue forms offer connected Foundries only and do not count the others", async () => {
+  const { picker, chosen } = await mountPicker(FIVE());
+  try {
+    assert.deepEqual(radios(picker.wrap), [MAIN, RESEARCH]);
+    assert.deepEqual(chosen, [MAIN], "the default is chosen first");
+    const text = words(picker.wrap);
+    assert.doesNotMatch(text, /more accounts?|not attached|not readable/i, "no hint counting the subscription's other accounts");
+    assert.match(text, /Only Foundries connected to this API Management are offered\./);
+  } finally {
+    unmount();
+  }
+});
+
+test("with no Foundry connected, the issue forms say so and link to Foundry & models without counting accounts", async () => {
+  const { picker, chosen } = await mountPicker(discovery(account(NEW), account(LOCKED, { kind: "OpenAI", deployments: 0, error: LOCKED_ERROR })));
+  try {
+    assert.deepEqual(radios(picker.wrap), []);
+    assert.deepEqual(chosen, [null], "nothing can be chosen");
+    const empty = picker.wrap.querySelector(".state-empty");
+    assert.match(words(empty), /No Foundry is connected to this API Management yet\./);
+    assert.doesNotMatch(words(empty), /\d/, "no count of the subscription's accounts");
+    assert.match(words(empty.querySelector('a[href="#/models"]')), /Foundry & models/);
   } finally {
     unmount();
   }

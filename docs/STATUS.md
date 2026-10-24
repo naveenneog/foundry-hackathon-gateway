@@ -1,8 +1,15 @@
 # Status
 
-**Active packet:** none. P58 — Foundry & models lists only the Foundries connected to this API
-Management — is complete on `release/key-dashboard` as local commits; it is not pushed or
-deployed. Design: ADR-0018, amending the UI part of ADR-0017; U50 resolved.
+**Active packet:** P59 — custom usage range, chargeback export and an admin-set gateway DNS
+URL, on `release/key-dashboard`. Acceptance: ROADMAP; design: ADR-0019 (which gateway hostnames
+the dashboard trusts) and ADR-0020 (a chargeback usage export, amending the charter's
+chargeback non-goal); unknowns U51–U54. Usage periods are presets of 1, 7, 30 or 90 days;
+there is no export of usage; every handout and base URL uses `GATEWAY_URL`, which only a
+redeploy changes.
+
+P58 — Foundry & models lists only the Foundries connected to this API Management — is complete
+on `release/key-dashboard` as local commits; it is not pushed or deployed. Design: ADR-0018,
+amending the UI part of ADR-0017; U50 resolved.
 
 P56 — multi-Foundry discovery, attachment, account-bound key issue and guided help — is complete
 on `release/key-dashboard`. Design: ADR-0017; U46–U49 resolved.

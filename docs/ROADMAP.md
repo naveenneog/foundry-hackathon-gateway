@@ -251,6 +251,43 @@ Key Vault. Nothing here changes the gateway on `main`.
       image referenced once, PNG, alt text and names free of identifiers, provenance note) and
       the 28 document tests pass.
 
+- [ ] **P59** Custom usage range, chargeback export and an admin-set gateway DNS URL
+      *Acceptance:*
+      **Range.** The Overview and the short-lived and product usage views offer, beside 24 h,
+      7 d, 30 d and 90 d, a custom range of whole UTC dates (inclusive), with labelled date
+      inputs, keyboard use and a hint that usage is kept 90 days at no charge. The usage APIs
+      accept `days`, or `from` and `to`, never both; `days` alone behaves as before. The server
+      refuses with 400 anything but strict `YYYY-MM-DD`, `from` after `to`, `to` after today
+      (UTC) or `from` before today − 89 days. KQL holds only `datetime()` literals the code
+      builds from validated values. Buckets are hourly for 2 days or fewer, else daily, with
+      zero-filled series; the 60 s cache key includes the range.
+      **Chargeback.** An admin-only, audit-logged `POST /api/chargeback` and an Overview button
+      download `chargeback-<from>-<to>.csv` for the selected period, for both key kinds or one:
+      a header row, then one row per key and model with period start and end (UTC), kind, key
+      name, key id, issued to, every descriptive key tag (label, subject, budget, monthly
+      tokens, rotation days, product, issued by, valid from, expiry), status, Foundry account,
+      connection id, granted models, model, prompt, completion and total tokens, requests, first
+      and last seen. Usage whose key is gone is status `unknown` with its key id. Cells starting
+      with `=`, `+`, `-`, `@`, tab or CR get a leading `'`; quoting follows RFC 4180. No key value,
+      token or secret appears. No currency column (ADR-0020).
+      **Gateway URL.** Settings has **Gateway URL (custom domain)**: an admin sets or resets a
+      public `https://<hostname>` (lowercase; no path, query, user info, port other than 443, IP
+      literal or wildcard). It is saved only if ARM lists the hostname as a Proxy (gateway)
+      hostname of this API Management, otherwise 400 saying to add the custom domain to API
+      Management first. It is stored in Key Vault (`console-gateway-url`) and audit-logged with
+      the old and new values. One resolver, `effectiveGatewayUrl()`, supplies the URL to new
+      single and bulk handouts, reveal and copy, `keys.csv`, the export bundle, Foundry
+      connection base URLs and the UI; a test fails if a module bypasses it. Changes apply
+      without a restart (30 s cache per replica; the saving replica at once). The dashboard never
+      sends a request to the admin-provided URL. The UI says that the API Management URL keeps
+      working. The demo offers a custom domain to try.
+      **Also:** help steps with Show me for all three, Escape still closes the guide; light and
+      dark themes; ADR-0019, ADR-0020; CONSOLE, README, CHANGELOG, STATUS updated.
+      *Why:* requested 2026-10-24: "custom date filter for the date range and export of
+      chargeback report, with all labels, and DNS url, if the admin updates that, apim url should
+      be replaced with the admin provided DNS url in the keys generated and copy and wherever
+      APIM url is shown".
+
 - [x] **P58** Foundry & models lists only the Foundries connected to this API Management
       *Acceptance:* the page's account list, lede and count cover only connected accounts (the
       default connection and each attached one). Unconnected and unreadable accounts appear only
@@ -409,8 +446,20 @@ Key Vault. Nothing here changes the gateway on `main`.
 
 ---
 
+## Later (not requirements)
+
+- [ ] **Per-model rates for the chargeback report**
+      *Idea:* an optional, admin-maintained rate per model (per million prompt and completion
+      tokens, in one currency) that adds a cost column to the P59 chargeback CSV.
+      *Why not now:* Foundry pricing differs by model, region and deployment type, and Claude
+      models on Foundry are billed in CCU, so the dashboard has no rate it could state as fact
+      (ADR-0020). The CSV carries token counts, which a spreadsheet can multiply by any rate.
+
+---
+
 ## Deferred (explicitly not now)
 
 - Entra ID auth path — charter non-goal; participants are external and short-lived.
 - Multi-region, autoscale, PTU — an event runs in one region on one unit.
-- Chargeback invoicing — attribution here is for observation, not finance.
+- Chargeback invoicing — prices, invoices and billing integration. P59 exports measured usage
+  per key and model for chargeback, without prices (ADR-0020).

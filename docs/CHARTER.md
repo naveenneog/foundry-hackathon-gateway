@@ -27,7 +27,9 @@ disposable, hard-capped access that expires by itself.**
 
 - **Entra ID / OAuth.** Deliberately excluded. Hackathon participants may be external, short-lived,
   and using machines we do not manage. Key-based auth is the explicit choice (see ADR-0002).
-- Multi-tenant billing or chargeback invoicing. Attribution is for observation, not finance.
+- Multi-tenant billing or chargeback invoicing: prices, invoices, billing integration. An
+  admin-only export of measured token usage per key and model, for chargeback, is in scope
+  ([ADR-0020](adr/0020-chargeback-usage-export.md)); it carries no prices.
 - Model fine-tuning, RAG, agent hosting, or anything past inference.
 - Production-grade HA. Single region, single APIM unit is fine for an event.
 

@@ -61,6 +61,10 @@ assumption is only closed if it names its blast radius and the detector that wou
 | U48 | Which gateway inference role and endpoint audience apply to attached AIServices and OpenAI accounts? | RESOLVED |
 | U49 | Why does a second Foundry resolve publicly outside the VNet but fail DNS from the gateway? | RESOLVED |
 | U50 | Can the docked setup guide be used while a modal dialog is open? | RESOLVED |
+| U51 | Which ARM field lists an API Management instance's gateway hostnames, in which api-version, and can the dashboard identity read it? | RESOLVED |
+| U52 | Does API Management keep answering on its default `azure-api.net` hostname after a custom gateway domain is added? | RESOLVED |
+| U53 | Does the Logs query API take an absolute start/end window, and in which literal does KQL take an instant? | RESOLVED |
+| U54 | Can a Key Vault secret be deleted and then created again under the same name? | RESOLVED |
 
 ---
 
@@ -70,6 +74,66 @@ assumption is only closed if it names its blast radius and the detector that wou
 None.
 
 ---
+
+### U51 — Gateway hostnames in ARM — RESOLVED
+
+`GET /subscriptions/{s}/resourceGroups/{rg}/providers/Microsoft.ApiManagement/service/{name}`
+with `api-version=2024-05-01` returns `properties.hostnameConfigurations`, a list of entries with
+`type`, `hostName`, `defaultSslBinding`, `certificateSource` and `certificateStatus`. `type` is
+one of `Proxy`, `Portal`, `Management`, `Scm`, `DeveloperPortal` and `ConfigurationApi`; the
+gateway's hostnames are `Proxy`, and the built-in `<name>.azure-api.net` is listed as a `Proxy`
+entry with `certificateSource: BuiltIn`
+([Api Management Service - Get, 2024-05-01](https://learn.microsoft.com/rest/api/apimanagement/api-management-service/get?view=rest-apimanagement-2024-05-01),
+read 2026-10-24). The console's APIM adapter already uses `2024-05-01` (`src/console/azure.mjs`),
+and `scripts/Apim.ps1` `Get-GatewayCustomHost` (P32) reads the same field through `az apim show`.
+The dashboard identity holds API Management Service Contributor on the instance; its actions
+include `Microsoft.ApiManagement/service/*`, which covers reading the service
+([built-in roles, integration](https://learn.microsoft.com/azure/role-based-access-control/built-in-roles/integration),
+updated 2026-08-11, read 2026-10-24). No infrastructure change is needed.
+
+Not measured live: no API Management instance in the subscription has a custom domain (P32
+found the same). Blast radius if the shape differs: the dashboard refuses every custom domain
+and keeps the API Management URL, which always works (U52). Detector: Settings lists the gateway
+custom domains ARM reports; an empty list beside a domain the portal shows is the mismatch.
+
+### U52 — The default gateway hostname after a custom domain is added — RESOLVED
+
+Yes. "The default **Gateway** endpoint remains available after you configure a custom Gateway
+domain name and cannot be deleted." API Management only accepts requests whose host header
+matches "The Gateway's default domain name" or "Any of the Gateway's configured custom domain
+names". Wildcard gateway domains are supported in the Developer, Basic, Standard,
+Standard v2, Premium and Premium v2 tiers
+([Configure a custom domain name](https://learn.microsoft.com/azure/api-management/configure-custom-domain),
+updated 2026-10-01, read 2026-10-24). So keys handed out with the API Management URL keep
+working after a custom domain is set, and the dashboard does not offer a wildcard as a base URL
+because it is not one address (as `admin.ps1` does since P32).
+
+### U53 — An absolute window for the usage query — RESOLVED
+
+The Logs query API's `timespan` is "an ISO 8601 duration (for example, `PT12H` for 12 hours) or
+a start/end pair separated by `/`"; when it is given in more than one place, the service uses
+the intersection
+([Request format for the Azure Monitor Logs query API](https://learn.microsoft.com/azure/azure-monitor/logs/api/request-format),
+updated 2026-05-20, read 2026-10-24). A KQL `datetime()` literal accepts ISO 8601, for example
+`2014-05-25T08:20:03.123456Z`, and is always UTC
+([The datetime data type](https://learn.microsoft.com/kusto/query/scalar-data-types/datetime?view=azure-monitor),
+read 2026-10-24). A custom range is therefore queried with
+`TimeGenerated >= datetime(<start>) and TimeGenerated < datetime(<end>)` and the same
+`<start>/<end>` as `timespan`, both formatted by `Date.prototype.toISOString()` from validated
+whole UTC days. The presets keep `ago(Nd)` and `P{N}D`.
+
+Not measured live in this packet (nothing is deployed). Blast radius: a custom range returns an
+error or no rows; the presets are unchanged. Detector: the first live custom-range view, listed
+for the next deployment in STATUS.
+
+### U54 — Recreating a deleted Key Vault secret — RESOLVED
+
+No, while it is soft-deleted: "a key vault object can't be created in a given vault if that key
+vault contains an object with the same name and which is in a deleted state"
+([Key Vault soft-delete overview](https://learn.microsoft.com/azure/key-vault/general/soft-delete-overview),
+updated 2026-06-12, read 2026-10-24). The gateway URL setting is therefore never deleted:
+**Reset to API Management URL** writes a new version of `console-gateway-url` holding
+`{"url":null}`. Each change is a new secret version, so the vault keeps the history.
 
 ### U50 — The setup guide while a modal dialog is open — RESOLVED
 

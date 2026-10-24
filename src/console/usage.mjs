@@ -7,7 +7,7 @@
 
 const DAY_MS = 86_400_000;
 const HOUR_MS = 3_600_000;
-export const PERIODS = [1, 7, 30];
+export const PERIODS = [1, 7, 30, 90];
 const KEY_ID_RE = /^[A-Za-z0-9_-]{1,80}$/;
 const METRICS = { total: "Total Tokens", prompt: "Prompt Tokens", completion: "Completion Tokens" };
 

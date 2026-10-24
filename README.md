@@ -87,7 +87,7 @@ az deployment group create -g <rg> --template-file infra/examples/private-foundr
 
 | | |
 |---|---|
-| ![Overview: active key counts, tokens and requests, short-lived and product usage over time](docs/images/console/console-overview.png) | **Overview.** Active short-lived and product keys, tokens and requests for 24 h, 7 d or 30 d, and both key types on one chart. |
+| ![Overview: active key counts, tokens and requests, short-lived and product usage over time](docs/images/console/console-overview.png) | **Overview.** Active short-lived and product keys, tokens and requests for 24 h, 7 d, 30 d or 90 d, and both key types on one chart. |
 | ![Short-lived keys: usage, by model, and the key list with active and archived views](docs/images/console/console-keys.png) | **Short-lived keys** and **Product keys** are separate pages. Each has usage by day and by model, an active or archived key list, search, and a per-key drawer with its own chart. |
 | ![Issue a short-lived key: issued to, subject, one or several models, start delay, validity and budget](docs/images/console/console-issue-signed.png) | **Issue one.** Choose **One model** or **Several models** explicitly. **Starts in** delays activation, as `admin.ps1` does. The key is shown once, masked, with Copy. |
 | ![Bulk issue: shared settings and CSV rows](docs/images/console/console-short-lived-bulk.png) | **Issue in bulk.** Paste or upload CSV rows. The dashboard returns `keys.csv`, to send each person their row, and `index.csv`, which holds no keys. |

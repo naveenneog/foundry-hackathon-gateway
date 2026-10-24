@@ -113,6 +113,13 @@ automation deletes them 30 days after archive. Deletion is a Key Vault soft dele
 
 A change to a product key reaches the gateway within about 20 seconds (16 s measured).
 
+Usage charts cover 24 h, 7 d, 30 d or 90 d. The data is the gateway's `AppMetrics` table, an
+Application Insights table that keeps 90 days at no charge, even though the workspace default is
+30 days ([Learn: log tables with 90-day default retention](https://learn.microsoft.com/azure/azure-monitor/logs/data-retention-configure#log-tables-with-90-day-default-retention)).
+Usage older than 90 days is removed. Raising the table's retention (up to 730 days of analytics
+retention) keeps more, at an [extra cost](https://azure.microsoft.com/pricing/details/monitor/).
+Check a workspace with `az monitor log-analytics workspace table show --name AppMetrics`.
+
 ### Foundry discovery, backend attachment and model pinning
 
 **Foundry & models** discovers AIServices and Azure OpenAI accounts in the configured subscription,

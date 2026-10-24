@@ -6,6 +6,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · [Semantic Ve
 ## [Unreleased]
 
 ### Added
+- **90-day usage view (P57).** Usage charts and tables offer 24 h, 7 d, 30 d and 90 d. The
+  gateway's `AppMetrics` data is kept 90 days at no charge; older usage is not retained.
 - **Multiple Foundry backends (P56).** The deployed-model list discovers accounts and deployments
   across the configured subscription, with visible permission errors and explicit refresh.
   Administrators can attach another Foundry, pin its models and select it during single or bulk

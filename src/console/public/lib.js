@@ -3,7 +3,7 @@
 
 export const HOUR = 3_600_000;
 export const DAY = 24 * HOUR;
-export const PERIODS = Object.freeze([1, 7, 30]);
+export const PERIODS = Object.freeze([1, 7, 30, 90]);
 export const BATCH_SIZE = 50;
 export const ARCHIVE_DAYS = 30;
 const MAX_BUCKETS = 400;

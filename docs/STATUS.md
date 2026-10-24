@@ -9,6 +9,18 @@ ADR-0016. App Service quota in eastus2 is 0 (U40), so Container Apps is the live
 Service template builds; ARM validate/what-if is blocked by the zero quota. The live dashboard has no IP restriction; Entra
 sign-in and the admin role remain required.
 
+### P57 — 90-day usage view — DONE
+
+Usage periods were 1, 7 and 30 days. The `AppMetrics` table keeps 90 days at no charge
+(Learn, data-retention-configure, retrieved 2026-10-24; live table on
+`log-hackgwrv6pom6njwpfm`: retentionInDays 90, totalRetentionInDays 90, default). The server
+and browser now offer 90 days; other periods return 400. Longer history (table retention or a
+roll-up store) has a cost and is not built; it needs an owner decision.
+
+Council: Architect PASS (one period list per side, parity test). Coder PASS (two-line change,
+daily buckets reused). QA PASS (RED failed on the missing 90; 365 refused). UX PASS (fourth
+segment in the existing control). Security PASS (period still allow-listed before KQL).
+
 ### P56 — multi-Foundry discovery, attachment, selection and highlighted help — DONE
 
 The catalogue now discovers AIServices and OpenAI accounts across the configured subscription.

@@ -102,3 +102,16 @@ test("service usage without a workspace says so instead of failing", async () =>
   assert.equal(u.total.tokens, 0);
   assert.match(u.note, /not configured/);
 });
+
+test("a 90-day view uses data the AppMetrics table already retains; other periods are refused", async () => {
+  const { PERIODS } = await import("../src/console/usage.mjs");
+  const ui = await import("../src/console/public/lib.js");
+  assert.deepEqual(PERIODS, [1, 7, 30, 90]);
+  assert.deepEqual([...ui.PERIODS], PERIODS, "the browser offers exactly what the server accepts");
+  assert.match(buildUsageQuery({ kind: "jwt", days: 90 }), /ago\(90d\)[\s\S]*bin\(TimeGenerated, 1d\)/);
+  const h = harness();
+  h.service.setUsageSource({ async query(q, o) { assert.equal(o.timespan, "P90D"); return []; } });
+  const u = await h.service.usage(ADMIN, { kind: "jwt", days: 90 });
+  assert.equal(u.series.length, 90);
+  await assert.rejects(h.service.usage(ADMIN, { kind: "jwt", days: 365 }), { status: 400 });
+});

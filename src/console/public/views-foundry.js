@@ -1,16 +1,19 @@
-// Key Dashboard — Foundry & models (ADR-0017): every Foundry and Azure OpenAI account in the
-// subscription with its deployments. Attach an account, see the access it still needs, test it,
-// and pin its deployments to aliases of its own. The chosen account is kept by ARM id while the
-// page is open. Nothing polls: Refresh from Azure re-reads accounts, deployments, pins and config.
+// Key Dashboard — Foundry & models (ADR-0017, ADR-0018): the Foundries connected to this API
+// Management, that is the default account and each attached one, with their deployments. See the
+// access each still needs, test it, and pin its deployments to aliases of its own. The
+// subscription's other accounts are listed only in Connect another Foundry (foundry-connect.js),
+// which attaches them through this view. The chosen account is kept by ARM id while the page is
+// open. Nothing polls: Refresh from Azure re-reads accounts, deployments, pins and config.
 
 import { apiPath, cachedGet, invalidate, post } from "./api.js";
 import {
   addChildren, badge, busy, confirmDialog, copyButton, el, emptyState, errorState, icon, loadingState, routeBadge, setChildren, toast, uid,
 } from "./dom.js";
 import {
-  accountsOf, accountStatus, attachBody, attachSummary, commandsFor, deploymentState, FOUNDRY_CACHES, foreignAnswer, KIND_LABEL, matchesAccount, matchesDeployment, parseChoice,
-  pickAccount, pinBlockReason, pinBody, routeReason, summaryLine, testAvailability, testBody, testSummary, unpinBody,
+  accountsOf, accountStatus, attachBody, attachSummary, commandsFor, connectedAccounts, connectedLine, deploymentState, FOUNDRY_CACHES, foreignAnswer, KIND_LABEL,
+  matchesAccount, matchesDeployment, parseChoice, pickAccount, pinBlockReason, pinBody, routeReason, testAvailability, testBody, testSummary, unpinBody,
 } from "./foundry.js";
+import { accountCard, openConnectDialog } from "./foundry-connect.js";
 import { checkAlias, fmtInt, ROUTE_LABEL } from "./lib.js";
 
 const WIRE_LABEL = { "openai-chat-completions": "OpenAI chat completions", "anthropic-messages": "Anthropic Messages", unknown: "Unknown format" };
@@ -25,6 +28,31 @@ function outcomeOf(id) {
   if (!outcomes.has(key)) outcomes.set(key, {});
   return outcomes.get(key);
 }
+
+/** The role setup command, shown and copied for an operator; the dashboard never runs it. */
+function setupBlock(setup, helpFocus) {
+  if (!setup) return el("p", { class: "field-hint" }, "The server sent no setup command for this account.");
+  const copy = copyButton(() => setup, { label: "Copy command", what: "Setup command" });
+  if (helpFocus) copy.setAttribute("data-help-focus", "");
+  return [el("p", { class: "field-hint" }, "Have someone who can assign roles on the account run this in PowerShell. The dashboard shows it and never runs it."),
+    el("pre", { class: "snippet-code" }, el("code", {}, setup)), el("div", { class: "row" }, copy)];
+}
+
+/** An unconnected account's operator commands, for Connect another Foundry. */
+const candidateCommands = (a) => [setupBlock(a.setupCommand, false), a.networkCommand ? networkSetup(a.networkCommand, false) : null];
+
+/** The optional private-network command: copy only, closed unless the last test points at the network. */
+function networkSetup(command, suggested) {
+  return el("details", { class: ["disclosure", "network-setup", suggested ? "is-suggested" : null], open: suggested },
+    el("summary", {}, "Private network setup (optional)"),
+    el("div", {},
+      el("p", {}, "Only for an account that API Management must reach privately. It creates a private endpoint and a private DNS record for this account in the gateway's virtual network. It does not change the account's public network access or firewall."),
+      el("p", { class: "field-hint" }, "Run it as an operator in PowerShell; the dashboard never runs it. A private endpoint is billed by the hour and for the data it processes."),
+      el("pre", { class: "snippet-code" }, el("code", {}, command)),
+      el("div", { class: "row" }, copyButton(() => command, { label: "Copy network command", what: "Network setup command" }))));
+}
+
+const accountBadges = (a) => [a.isDefault ? badge("default", "info", "The gateway's original Foundry") : null, a.error ? badge("check access", "warn", a.error) : null];
 
 function card(title, attrs, ...children) {
   const id = uid("card");
@@ -48,7 +76,7 @@ export function renderFoundry(root, ctx) {
   guide.addEventListener("click", () => ctx.help?.("discover", guide));
   const refresh = el("button", { type: "button", class: "btn btn-secondary", "data-help-focus": true }, icon("refresh"), "Refresh from Azure");
   const summary = el("p", { class: "count", "aria-live": "polite" });
-  const filter = el("input", { type: "search", class: "input", placeholder: "Filter accounts", "aria-label": "Filter Foundry accounts" });
+  const filter = el("input", { type: "search", class: "input", placeholder: "Filter connected Foundries", "aria-label": "Filter connected Foundries" });
   const filterBox = el("div", { class: "search", hidden: true }, icon("search", "icon search-icon"), filter);
   const noteSlot = el("div", {});
   const listSlot = el("div", {});
@@ -67,14 +95,14 @@ export function renderFoundry(root, ctx) {
   addChildren(root,
     el("header", { class: "view-head" },
       el("div", {}, el("h1", { class: "view-title", tabindex: "-1" }, "Foundry & models"),
-        el("p", { class: "lede" }, "Every Foundry and Azure OpenAI account in the subscription, with its deployments. Attach an account to give it gateway routes, pin its models to aliases, then issue keys for it.")),
+        el("p", { class: "lede" }, "The Foundry and Azure OpenAI accounts connected to this API Management, with their deployments. Pin a Foundry's models to aliases, then issue keys for it. Connect another Foundry to add one.")),
       el("div", { class: "view-actions" }, guide)),
     el("section", { class: "card", "aria-labelledby": accountsId, "data-help": "foundry-accounts" },
-      el("div", { class: "card-head" }, el("h2", { class: "card-title", id: accountsId }, "Foundry accounts"), refresh),
-      el("p", { class: "field-hint" }, "Listing an account needs only read access to its metadata. It says nothing about whether the gateway may call it."),
+      el("div", { class: "card-head" }, el("h2", { class: "card-title", id: accountsId }, "Connected Foundries"), refresh),
+      el("p", { class: "field-hint" }, "Each has gateway routes, aliases and a key audience of its own in this API Management. Keys are issued only for these Foundries."),
       el("div", { class: "toolbar" }, filterBox, summary), noteSlot, listSlot),
     el("section", { class: "card", "aria-labelledby": accountTitle.getAttribute("id") }, accountTitle, detailsSlot,
-      subsection("Gateway routes", "plug", { "data-help": "foundry-attach" }, routesSlot),
+      subsection("Gateway routes", "plug", {}, routesSlot),
       subsection("Access and connection test", "key", { "data-help": "foundry-access" }, accessSlot)),
     card("Pinned aliases", { "data-help": "foundry-pins" }, pinsHint, pinsSlot),
     card("Deployments", { "data-help": "foundry-deployments" }, depHint,
@@ -101,8 +129,9 @@ export function renderFoundry(root, ctx) {
     }
     if (!root.isConnected) return;
     const accounts = accountsOf(data);
-    discovery = { accounts, data };
-    selected = pickAccount(accounts, chosenId, data.defaultFoundryId);
+    const connected = connectedAccounts(accounts);
+    discovery = { accounts, connected, data };
+    selected = pickAccount(connected, chosenId, data.defaultFoundryId);
     chosenId = selected?.id ?? null;
     drawAccounts();
     await loadModels(fresh);
@@ -137,34 +166,37 @@ export function renderFoundry(root, ctx) {
   // ── Accounts ──
 
   function drawAccounts() {
-    const { accounts, data } = discovery;
-    summary.textContent = summaryLine(accounts);
+    const { connected, data } = discovery;
+    summary.textContent = connectedLine(connected);
     const note = typeof data.note === "string" ? data.note.trim() : "";
     setChildren(noteSlot, note ? el("div", { class: "callout callout-warn" }, icon("alert", "icon callout-icon"), el("p", {}, note)) : null);
-    filterBox.hidden = accounts.length < FILTER_FROM;
-    if (!accounts.length) {
-      setChildren(listSlot, emptyState("No Foundry accounts were found.",
-        `The dashboard looks for AI Services and Azure OpenAI accounts in subscription ${data.subscriptionId || "(not reported)"}. Create one, or give the dashboard read access there, then refresh.`));
+    filterBox.hidden = connected.length < FILTER_FROM;
+    if (!connected.length) {
+      setChildren(listSlot, el("div", { "data-help": "foundry-attach" }, emptyState("No Foundry is connected to this API Management yet.",
+        "Keys can be issued only for a Foundry that API Management routes to. Connect a Foundry or Azure OpenAI account to give it gateway routes, then pin its models.",
+        connectButton("btn-primary"))));
       return;
     }
-    const shown = accounts.filter((a) => matchesAccount(a, filter.value));
+    const shown = connected.filter((a) => matchesAccount(a, filter.value));
     const name = uid("account");
-    setChildren(listSlot, shown.length
-      ? el("fieldset", { class: "choice-list" }, el("legend", { class: "sr-only" }, "Foundry account"), shown.map((a) => accountOption(a, name)))
-      : emptyState("No accounts match.", "Try another filter."));
+    setChildren(listSlot,
+      shown.length
+        ? el("fieldset", { class: "choice-list" }, el("legend", { class: "sr-only" }, "Connected Foundry"),
+          shown.map((a) => accountCard(a, { name, checked: a.id === selected?.id, onChoose: choose, badges: accountBadges(a) })))
+        : emptyState("No connected Foundry matches.", "Try another filter."),
+      el("div", { class: "action-row connect-row", "data-help": "foundry-attach" },
+        el("div", {}, el("p", { class: "field-hint" }, "Other accounts in the subscription are listed only once connected. Connecting one gives it gateway routes, aliases and a key audience of its own.")),
+        connectButton("btn-secondary")));
   }
 
-  function accountOption(a, name) {
-    const st = accountStatus(a);
-    const input = el("input", { type: "radio", class: "choice-input", name, value: a.id, checked: a.id === selected?.id });
-    input.addEventListener("change", () => { if (input.checked) choose(a); });
-    const count = a.deployments === null ? "Deployments not counted" : `${fmtInt(a.deployments)} ${a.deployments === 1 ? "deployment" : "deployments"}`;
-    return el("label", { class: ["choice-card", `is-${st.state}`] }, input,
-      el("span", { class: "choice-text" },
-        el("span", { class: "choice-name" }, a.name),
-        el("span", { class: "choice-meta" }, [a.resourceGroup, a.location, KIND_LABEL[a.kind] ?? a.kind].filter(Boolean).join(" · ")),
-        el("span", { class: a.error ? "choice-meta choice-error" : "choice-meta" }, a.error ?? count)),
-      el("span", { class: "choice-badges" }, badge(st.label, st.tone), a.isDefault ? badge("default", "info", "The gateway's original Foundry") : null));
+  /** Opens Connect another Foundry over the accounts discovery found; one button at a time carries data-focus-id. */
+  function connectButton(variant) {
+    const button = el("button", { type: "button", class: ["btn", variant], "data-help-focus": true, "data-focus-id": "foundry-connect" }, icon("plug"), "Connect another Foundry");
+    button.addEventListener("click", () => openConnectDialog(ctx, {
+      accounts: discovery.accounts, subscriptionId: discovery.data.subscriptionId, opener: button,
+      attach: attachAccount, attached: afterAttach, commands: candidateCommands,
+    }));
+    return button;
   }
 
   // ── The chosen account ──
@@ -173,7 +205,7 @@ export function renderFoundry(root, ctx) {
     const a = selected;
     accountTitle.textContent = a ? a.name : "Foundry account";
     if (!a) {
-      setChildren(detailsSlot, el("p", { class: "muted" }, discovery?.error ? "The account list could not be loaded." : "Choose an account above."));
+      setChildren(detailsSlot, el("p", { class: "muted" }, discovery?.error ? "The account list could not be loaded." : "Connect a Foundry to see its routes, access, pins and deployments."));
       for (const slot of [routesSlot, accessSlot, pinsSlot, depSlot]) setChildren(slot);
       pinsHint.textContent = "";
       depHint.textContent = "";
@@ -205,40 +237,20 @@ export function renderFoundry(root, ctx) {
     setChildren(detailsSlot, el("dl", { class: "details" }, rows));
   }
 
+  /** A connected account's routes. Attaching another account happens in Connect another Foundry. */
   function drawRoutes(a) {
-    const out = outcomeOf(a.id);
     const how = el("button", { type: "button", class: "btn btn-ghost btn-xs" }, icon("help"), "How attaching works");
     how.addEventListener("click", () => ctx.help?.("attach", how));
-    if (a.connected) {
-      const base = el("span", { class: "mono id-text" }, "loading…");
-      setChildren(routesSlot,
-        a.isDefault
-          ? el("p", {}, "The gateway's default Foundry: its original routes, aliases and keys.")
-          : el("p", {}, "Attached as connection ", el("span", { class: "mono" }, a.connectionId ?? "not reported"), ", with its own routes, aliases and key audience."),
-        el("p", { class: "field-hint" }, "Keys for this Foundry call ", base),
-        out.attach ? notice(out.attach) : null,
-        el("div", { class: "row" }, how));
-      showBaseUrl(a, base);
-      return;
-    }
-    if (a.error) {
-      setChildren(routesSlot,
-        el("div", { class: "callout callout-bad" }, icon("alert", "icon callout-icon"), el("div", {},
-          el("p", {}, el("strong", {}, "The dashboard cannot read this account. "), a.error),
-          el("p", {}, "Attaching needs the account and its deployments to be readable. Give the dashboard read access there, then refresh."))),
-        el("div", { class: "row" }, how));
-      return;
-    }
-    const attach = el("button", { type: "button", class: "btn btn-primary", "data-help-focus": true }, icon("plug"), `Attach ${a.name}`);
-    const progress = el("p", { class: "field-hint", "aria-live": "polite" });
-    attach.addEventListener("click", busy(attach, () => attachAccount(a, progress)));
+    const base = el("span", { class: "mono id-text" }, "loading…");
+    const attached = outcomeOf(a.id).attach;
     setChildren(routesSlot,
-      el("p", {}, "Not attached: its deployments can be browsed, but no gateway route reaches it and no key can be issued for it."),
-      el("p", { class: "field-hint" }, "Attach creates its own routes, alias maps and key audience in API Management. It does not grant the gateway access or open private networking."),
-      out.attachError ? el("div", { class: "callout callout-bad" }, icon("alert", "icon callout-icon"), el("div", {},
-        el("p", {}, el("strong", {}, "Attaching failed. "), out.attachError),
-        el("p", {}, "Fix the cause, then select Attach again: it repairs a partial attempt."))) : null,
-      el("div", { class: "row" }, attach, how), progress);
+      a.isDefault
+        ? el("p", {}, "The gateway's default Foundry: its original routes, aliases and keys.")
+        : el("p", {}, "Attached as connection ", el("span", { class: "mono" }, a.connectionId ?? "not reported"), ", with its own routes, aliases and key audience."),
+      el("p", { class: "field-hint" }, "Keys for this Foundry call ", base),
+      attached ? notice(attached) : null,
+      el("div", { class: "row" }, how));
+    showBaseUrl(a, base);
   }
 
   async function showBaseUrl(a, node) {
@@ -250,30 +262,28 @@ export function renderFoundry(root, ctx) {
     }
   }
 
+  /** Confirms, then attaches `a`: true once API Management routes to it, false when cancelled. Connect another Foundry calls it. */
   async function attachAccount(a, progress) {
     const ok = await confirmDialog({
       title: `Attach ${a.name}?`, tone: "primary", confirmLabel: "Attach Foundry",
       message: "API Management gets gateway routes for this account, with its own alias maps and key audience. Existing routes, aliases and keys do not change.",
       points: ["It does not grant the gateway access to the account or open private networking.", "Next: run the setup command it shows, pin aliases, then test the connection."],
     });
-    if (!ok) return;
-    const out = outcomeOf(a.id);
-    out.attachError = null;
+    if (!ok) return false;
     progress.textContent = `Attaching ${a.name}. API Management can take a minute or two.`;
-    try {
-      out.attach = attachSummary(await post("/api/foundries/attach", attachBody(a)));
-    } catch (error) {
-      out.attachError = error.message;
-      if (selected?.id === a.id) {
-        drawRoutes(a);
-        routesSlot.querySelector("[data-help-focus]")?.focus();
-      }
-      throw error;
-    }
+    outcomeOf(a.id).attach = attachSummary(await post("/api/foundries/attach", attachBody(a)));
+    return true;
+  }
+
+  /** After an attach: the account joins the connected list, selected. Its access section takes focus unless the admin is busy elsewhere. */
+  async function afterAttach(a) {
+    const active = document.activeElement;
+    const idle = !active || active === document.body || listSlot.contains(active);
     invalidate(...FOUNDRY_CACHES);
+    chosenId = a.id;
     toast(`Routing configured for ${a.name}. Access is not verified yet: run the setup command, pin an alias, then test.`);
     await load(true);
-    if (selected?.id === a.id) (accessSlot.querySelector("[data-help-focus]") ?? accountTitle)?.focus();
+    if (idle && root.isConnected && selected?.id === a.id) (accessSlot.querySelector("[data-help-focus]") ?? accountTitle).focus();
   }
 
   function drawAccess() {
@@ -281,30 +291,14 @@ export function renderFoundry(root, ctx) {
     if (!a) return setChildren(accessSlot);
     const out = outcomeOf(a.id);
     const { setup, network } = commandsFor(out.attach, models && !models.error ? models : null, a);
-    const copy = setup ? copyButton(() => setup, { label: "Copy command", what: "Setup command" }) : null;
-    copy?.setAttribute("data-help-focus", "");
     const networkBox = network ? networkSetup(network, out.test?.suggestNetwork === true) : null;
-    const availability = !a.connected || (models && !models.error) ? testAvailability(a, models?.pins)
+    const availability = models && !models.error ? testAvailability(a, models.pins)
       : { allowed: false, reason: models?.error ? "This Foundry's pins could not be read; see Deployments below." : "Loading this Foundry's pins…", choices: [] };
     setChildren(accessSlot,
       el("p", {}, "The gateway calls this account with its managed identity, which needs an inference role here. The dashboard only reads metadata, so it cannot grant that role."),
-      setup
-        ? [el("p", { class: "field-hint" }, "Have someone who can assign roles on the account run this in PowerShell. The dashboard shows it and never runs it."),
-          el("pre", { class: "snippet-code" }, el("code", {}, setup)), el("div", { class: "row" }, copy)]
-        : el("p", { class: "field-hint" }, a.connected ? "The server sent no setup command for this account." : "The setup command appears once the account is attached."),
+      setupBlock(setup, true),
       networkBox ?? el("p", { class: "field-hint" }, "Private endpoint? API Management must reach the account from its virtual network, with the account's private DNS zone linked to that network."),
-      testControls(a, availability, out, !copy, networkBox));
-  }
-
-  /** The optional private-network command: copy only, closed unless the last test points at the network. */
-  function networkSetup(command, suggested) {
-    return el("details", { class: ["disclosure", "network-setup", suggested ? "is-suggested" : null], open: suggested },
-      el("summary", {}, "Private network setup (optional)"),
-      el("div", {},
-        el("p", {}, "Only for an account that API Management must reach privately. It creates a private endpoint and a private DNS record for this account in the gateway's virtual network. It does not change the account's public network access or firewall."),
-        el("p", { class: "field-hint" }, "Run it as an operator in PowerShell; the dashboard never runs it. A private endpoint is billed by the hour and for the data it processes."),
-        el("pre", { class: "snippet-code" }, el("code", {}, command)),
-        el("div", { class: "row" }, copyButton(() => command, { label: "Copy network command", what: "Network setup command" }))));
+      testControls(a, availability, out, !setup, networkBox));
   }
 
   /** A test outcome; one that points at the network also points at the network command, when there is one. */
@@ -379,11 +373,6 @@ export function renderFoundry(root, ctx) {
   }
 
   function drawPins(a) {
-    if (!a.connected) {
-      pinsHint.textContent = `${a.name} is not attached, so it has no pins.`;
-      setChildren(pinsSlot, emptyState("Attach this Foundry first.", "Its aliases appear here once it is attached and a deployment is pinned."));
-      return;
-    }
     pinsHint.textContent = `Short-lived keys for ${a.name} grant these aliases. Each Foundry has its own pins, per route.`;
     const pins = models.pins ?? {};
     const routes = a.kind === "OpenAI" ? ["openai"] : ["openai", "claude"];
@@ -417,8 +406,8 @@ export function renderFoundry(root, ctx) {
     const list = sorted.filter((d) => matchesDeployment(d, search.value));
     const pinnable = all.filter(usable).length;
     depHint.textContent = `In ${a.name}. Product keys grant these deployment names directly; short-lived keys grant aliases pinned to them. Deployments the gateway cannot serve stay listed with the reason.`;
-    depCount.textContent = !all.length ? "" : `${fmtInt(all.length)} ${all.length === 1 ? "deployment" : "deployments"}${a.connected
-      ? `: ${fmtInt(pinnable)} can be pinned${all.length > pinnable ? `, ${fmtInt(all.length - pinnable)} cannot` : ""}` : ". Attach this Foundry to pin them"}${list.length < all.length ? ` · ${fmtInt(list.length)} shown` : ""}.`;
+    depCount.textContent = !all.length ? "" : `${fmtInt(all.length)} ${all.length === 1 ? "deployment" : "deployments"}: ${fmtInt(pinnable)} can be pinned${
+      all.length > pinnable ? `, ${fmtInt(all.length - pinnable)} cannot` : ""}${list.length < all.length ? ` · ${fmtInt(list.length)} shown` : ""}.`;
     if (!all.length) return setChildren(depSlot, emptyState("No deployments in this Foundry.", `Deploy a model in ${a.name}, then select Refresh from Azure.`));
     if (!list.length) {
       const clear = el("button", { type: "button", class: "btn btn-secondary btn-sm" }, "Clear search");
@@ -459,7 +448,7 @@ export function renderFoundry(root, ctx) {
     const pinned = Array.isArray(d.pinnedAs) ? d.pinnedAs : [];
     const state = deploymentState(d);
     const noRoute = routeReason(d);
-    return el("tr", { class: blocked && a.connected ? "row-muted" : null },
+    return el("tr", { class: blocked ? "row-muted" : null },
       el("th", { scope: "row", class: "mono" }, d.deployment),
       el("td", {}, d.model ?? "—", d.version ? el("span", { class: "cell-sub" }, `version ${d.version}`) : null),
       el("td", {}, el("span", {}, WIRE_LABEL[d.wire] ?? d.wire ?? "—"), el("span", { class: "cell-sub" }, d.route ? routeBadge(d.route) : badge("no route", "grey")),

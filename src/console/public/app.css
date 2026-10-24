@@ -500,6 +500,13 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--primary); }
 .foundry-choice > legend { padding: 0 6px; }
 .foundry-choice.is-invalid { border-color: var(--danger); }
 .foundry-target { margin: 0; padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); font-weight: 600; overflow-wrap: anywhere; }
+/* Connect another Foundry: the title and actions stay put while the list and the chosen account scroll. */
+.connect-dialog[open] { display: flex; flex-direction: column; }
+.connect-dialog .dialog-body { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.connect-dialog .choice-list { max-height: min(40vh, 22rem); padding: 2px; overflow-y: auto; overscroll-behavior: contain; }
+.connect-actions { align-items: center; }
+.connect-progress { flex: 1; min-width: 0; }
+.connect-details > .id-text { margin: 0; }
 
 /* ── Setup guide and highlights ────────────────────────────────────────── */
 

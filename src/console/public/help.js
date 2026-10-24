@@ -12,16 +12,16 @@ export const STEPS = Object.freeze([
   {
     id: "discover", title: "Find Foundry accounts", where: "Foundry & models", routes: ["models"], go: "models", target: "foundry-accounts",
     text: [
-      "The dashboard lists every Foundry (AI Services) and Azure OpenAI account in its Azure subscription, with each account's model deployments.",
-      "It reads metadata only: account and deployment read access. That access does not mean the gateway may call a model.",
+      "Foundry & models lists the Foundries connected to this API Management: the gateway's default account and each attached one. Only these get pinned aliases and keys.",
+      "Connect another Foundry lists the other Foundry (AI Services) and Azure OpenAI accounts in the dashboard's Azure subscription. Listing reads metadata only: account and deployment read access. That access does not mean the gateway may call a model.",
       "Deployed something new? Select Refresh from Azure; nothing refreshes by itself. An account the dashboard cannot read shows its error, never an empty list.",
     ],
   },
   {
     id: "attach", title: "Attach a Foundry", where: "Foundry & models", routes: ["models"], go: "models", target: "foundry-attach",
     text: [
-      "Attach gives the account its own gateway routes, alias maps and key audience in API Management. The default account keeps its original routes.",
-      "Attaching configures routing only. It does not grant permissions or open private networks, so it is no proof that requests will work.",
+      "Connect another Foundry opens the accounts this API Management does not route to yet, with search. Choose one and select Attach: it gets its own gateway routes, alias maps and key audience in API Management. The default account keeps its original routes.",
+      "Attaching configures routing only. It does not grant permissions or open private networks, so it is no proof that requests will work. The account then joins the connected list, selected for the next steps.",
     ],
   },
   {
@@ -43,7 +43,7 @@ export const STEPS = Object.freeze([
     id: "issue", title: "Choose the Foundry when issuing", where: "Short-lived keys, Issue one", go: "issue", target: "issue-foundry",
     routes: ["short-lived/issue", "short-lived/bulk", "product/issue", "product/bulk"],
     text: [
-      "Single and bulk issue start with the Foundry. Only attached accounts are offered, and a key can call only that Foundry's models.",
+      "Single and bulk issue start with the Foundry. Only Foundries connected to this API Management are offered, and a key can call only that Foundry's models.",
       "Changing the Foundry clears the model choice, so a key never mixes accounts. The base URL shown is the one its keys use.",
     ],
   },

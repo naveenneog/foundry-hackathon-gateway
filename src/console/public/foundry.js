@@ -96,13 +96,6 @@ export function summarize(accounts) {
   };
 }
 
-export function summaryLine(accounts) {
-  const s = summarize(accounts);
-  if (!s.total) return "No Foundry accounts were found in this subscription.";
-  const parts = [s.connected && `${s.connected} connected`, s.available && `${s.available} not attached`, s.unreadable && `${s.unreadable} unreadable`].filter(Boolean);
-  return `${plural(s.total, "Foundry account")}: ${parts.join(", ")}. ${plural(s.deployments, "deployment")}${s.deploymentsKnown ? "" : " in the accounts that could be read"}.`;
-}
-
 /** The connected list's count: Foundries connected to this API Management and their deployments, nothing else. */
 export function connectedLine(accounts) {
   const s = summarize(connectedAccounts(accounts));

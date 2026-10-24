@@ -81,9 +81,9 @@ test("accounts: the default first, then by name; ids kept exactly; an unreadable
   assert.match(shaky.detail, /could not be listed/);
 
   assert.deepEqual(foundry.summarize(accounts), { total: 4, connected: 2, available: 1, unreadable: 1, deployments: 6, deploymentsKnown: false });
-  const line = foundry.summaryLine(accounts);
-  for (const part of [/4 Foundry accounts/, /2 connected/, /1 not attached/, /1 unreadable/, /6 deployments/]) assert.match(line, part);
-  assert.match(foundry.summaryLine([]), /No Foundry accounts/);
+  assert.equal(foundry.connectedLine(accounts), "2 Foundries connected to this API Management · 5 deployments.", "the page counts connected Foundries only (P58)");
+  assert.equal(foundry.candidatesLine(accounts), "2 accounts not connected: 1 can be attached, 1 unreadable.", "Connect another Foundry counts the rest");
+  assert.equal(foundry.connectedLine([]), "");
 
   assert.deepEqual(foundry.accountsOf({ accounts: [{ name: "no id" }, null, "x"] }), [], "entries without an id are not accounts");
   const twice = foundry.accountsOf({ accounts: [{ id: RESEARCH, name: "a" }, { id: RESEARCH.toUpperCase(), name: "b" }] });

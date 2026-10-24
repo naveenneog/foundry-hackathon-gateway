@@ -275,14 +275,16 @@ export function renderFoundry(root, ctx) {
     return true;
   }
 
-  /** After an attach: the account joins the connected list, selected. Its access section takes focus unless the admin is busy elsewhere. */
+  /** After an attach: the account joins the connected list, selected. Its access section takes focus unless the admin has moved focus elsewhere. */
   async function afterAttach(a) {
-    const active = document.activeElement;
-    const idle = !active || active === document.body || listSlot.contains(active);
     invalidate(...FOUNDRY_CACHES);
     chosenId = a.id;
     toast(`Routing configured for ${a.name}. Access is not verified yet: run the setup command, pin an alias, then test.`);
     await load(true);
+    // Checked after the reload, which can take a while: the reload replaced the list, so focus left
+    // there (or on the dialog's opener) is now on <body>; anywhere else, the admin put it.
+    const active = document.activeElement;
+    const idle = !active || active === document.body || listSlot.contains(active);
     if (idle && root.isConnected && selected?.id === a.id) (accessSlot.querySelector("[data-help-focus]") ?? accountTitle).focus();
   }
 

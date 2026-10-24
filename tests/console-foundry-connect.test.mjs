@@ -87,8 +87,9 @@ function type(input, value) {
 }
 
 /**
- * Renders Foundry & models. Discovery answers come from `answers`, the last one repeating; each
- * account's models are an empty list; `attach(body)` answers POST /api/foundries/attach.
+ * Renders Foundry & models. Discovery answers come from `answers`, the last one repeating; an
+ * answer may be a promise, to hold it back. Each account's models are an empty list;
+ * `attach(body)` answers POST /api/foundries/attach.
  */
 async function mountFoundry(answers, { attach } = {}) {
   const doc = fakeDom();
@@ -105,7 +106,7 @@ async function mountFoundry(answers, { attach } = {}) {
   const queue = [...answers];
   const helpCalls = [];
   const ctx = {
-    foundries: async () => structuredClone(queue.length > 1 ? queue.shift() : queue[0]),
+    foundries: async () => structuredClone(await (queue.length > 1 ? queue.shift() : queue[0])),
     config: async (foundryId) => ({ foundryId, gatewayUrl: "https://gw.example" }),
     help: (step, opener) => helpCalls.push({ step, opener, dialogsOpen: doc.querySelectorAll("dialog[open]").length }),
   };
@@ -267,6 +268,30 @@ test("an attach that finishes after the dialog was closed still selects the acco
     assert.deepEqual(radios(page.view), [MAIN, SPARE, RESEARCH], "the account joined the connected list");
     assert.equal(page.view.querySelector('input[type="radio"]:checked')?.value, SPARE, "selected");
     assert.equal(page.doc.activeElement, elsewhere, "focus stays where the admin is working");
+  } finally {
+    unmount();
+  }
+});
+
+test("an admin who moves focus while the page reloads after an attach keeps it", async () => {
+  const after = FIVE();
+  Object.assign(after.accounts[2], { connected: true, connectionId: "f00000000000a" });
+  let release;
+  const reloaded = new Promise((resolve) => { release = () => resolve(after); });
+  const page = await mountFoundry([FIVE(), reloaded], { attach: (body) => reply(200, { attached: true, foundryId: body.foundryId, connectionId: "f00000000000a" }) });
+  try {
+    const { dialog } = openConnect(page);
+    pick(dialog, NEW);
+    button(dialog, /^Attach foundry-new$/).click();
+    button(openDialogs(page.doc).at(-1), /^Attach Foundry$/).click();
+    await settle();
+    assert.equal(openDialogs(page.doc).length, 0, "the dialog closed and the page is reloading");
+    const elsewhere = page.view.querySelector('input[aria-label="Search deployments"]');
+    elsewhere.focus();
+    release();
+    await settle();
+    assert.equal(page.view.querySelector('input[type="radio"]:checked')?.value, NEW, "the account is selected");
+    assert.equal(page.doc.activeElement, elsewhere, "focus stays where the admin moved it during the reload");
   } finally {
     unmount();
   }

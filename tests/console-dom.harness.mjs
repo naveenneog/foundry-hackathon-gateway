@@ -30,7 +30,9 @@ const matches = (node, selector) => selector.split(",").some((s) => matchesCompo
 
 /** Enough DOM for el(), the guide panel, highlights, views, dialogs, focus and bubbling events. */
 export function fakeDom() {
-  const doc = { activeElement: null, listeners: {} };
+  let focused = null;
+  // As in a browser, focus on an element that has been removed falls back to <body>.
+  const doc = { listeners: {}, get activeElement() { return focused?.isConnected ? focused : doc.body; } };
   const below = (node, out = []) => {
     for (const c of node.children) if (c.nodeType === 1) { out.push(c); below(c, out); }
     return out;
@@ -85,7 +87,7 @@ export function fakeDom() {
         return !event.defaultPrevented;
       },
       click: () => { if (!node.disabled) node.dispatchEvent(fakeEvent("click")); },
-      focus: (options) => { doc.activeElement = node; node.focusOptions = options; },
+      focus: (options) => { focused = node; node.focusOptions = options; },
       scrollIntoView: (options) => { node.scrolledWith = options; },
       /** Rendered boxes: none when hidden, inside a closed dialog or a closed <details> (its summary aside), or detached. */
       getClientRects() {

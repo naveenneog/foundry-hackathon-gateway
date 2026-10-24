@@ -387,7 +387,7 @@ export function createService({ vault, arm, foundry = null, packTemplate: initia
   }
 
   const setPackTemplate = (xml) => { packTemplate = xml; };
-  const usageFns = usageApi({ vault, clock, owns, kindOf, visibleKey, ServiceError, requireAdmin });
+  const usageFns = usageApi({ vault, clock, owns, kindOf, visibleKey, ServiceError, requireAdmin, audit, defaultFoundry: connections.defaultFoundry });
   const revocations = {
     async add(jti) {
       const current = (await arm.getNamedValue(NV.revoked))?.value ?? ",";

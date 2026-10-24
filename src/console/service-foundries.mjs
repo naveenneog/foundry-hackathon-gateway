@@ -145,5 +145,6 @@ export function foundriesApi({ foundry, vault, arm, gatewayUrl, vnetName, connec
       : `Gateway returned ${response.status}. Check model pins, APIM inference permission, private networking and DNS; wait for APIM/RBAC propagation before retrying.` };
   }
 
-  return { connectionFor, connectionForKey, getAccount, setupCommand, networkCommand, discoverFoundries, listFoundries, attachFoundry, testFoundry };
+  return { connectionFor, connectionForKey, getAccount, setupCommand, networkCommand, discoverFoundries, listFoundries, attachFoundry, testFoundry,
+    defaultFoundry: Object.freeze({ id: legacy.id, name: legacy.name }) };
 }

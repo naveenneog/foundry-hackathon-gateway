@@ -13,7 +13,9 @@ export function csvSafe(value) {
   return /[",\r\n]/.test(v) ? `"${v.replaceAll('"', '""')}"` : v;
 }
 
-const table = (header, rows) => [header.join(","), ...rows.map((r) => r.map(csvSafe).join(","))].join("\r\n");
+/** A header row, then one row per record; every cell through csvSafe; CRLF between records (RFC 4180). */
+export const csvTable = (header, rows) => [header.join(","), ...rows.map((r) => r.map(csvSafe).join(","))].join("\r\n");
+const table = csvTable;
 
 /** @param {object[]} issued rows from issueJwtBulk / issueProductBulk @param {"jwt"|"product"} kind */
 export function keysCsv(issued, kind) {

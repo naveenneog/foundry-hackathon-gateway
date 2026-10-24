@@ -89,6 +89,7 @@ const routes = [
   ["POST", new RegExp(`^/api/keys/${NAME}/delete$`), "delete", ({ service, actor, m }) => service.deleteKey(actor, m[1])],
   ["GET", /^\/api\/usage$/, "read-own", ({ service, actor, q }) => service.usage(actor, { kind: q.get("kind") ?? undefined, ...periodOf(q) })],
   ["GET", new RegExp(`^/api/usage/${NAME}$`), "read-own", ({ service, actor, m, q }) => service.keyUsage(actor, m[1], periodOf(q))],
+  ["POST", /^\/api\/chargeback$/, "report", ({ service, actor, body }) => service.chargeback(actor, body)],
   ["POST", /^\/api\/export$/, "export", ({ service, actor, body }) => service.exportBundle(actor, body)],
 ];
 

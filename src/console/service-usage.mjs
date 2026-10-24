@@ -1,6 +1,7 @@
 /** Console service: usage per key from the gateway's workspace (P52). Composed into createService. */
 
 import { buildUsageQuery, aggregateUsage, resolvePeriod, usageGrid } from "./usage.mjs";
+import { chargebackReport, CHARGEBACK_KINDS } from "./chargeback.mjs";
 import { InputError } from "./validate.mjs";
 
 const CACHE_MS = 60_000;
@@ -9,7 +10,7 @@ const HOUR_MS = 3_600_000;
 const NO_SOURCE = "Usage is not configured: the dashboard has no Log Analytics workspace.";
 const iso = (ms) => new Date(ms).toISOString();
 
-export function usageApi({ vault, clock, owns, kindOf, visibleKey, ServiceError, requireAdmin }) {
+export function usageApi({ vault, clock, owns, kindOf, visibleKey, ServiceError, requireAdmin, audit, defaultFoundry }) {
   let source = null;
   const cache = new Map();
   const setUsageSource = (la) => { source = la; cache.clear(); };
@@ -78,5 +79,24 @@ export function usageApi({ vault, clock, owns, kindOf, visibleKey, ServiceError,
     return { name, kind, ...covers(p, now), total: u.total, series: u.series, byModel: u.byModel };
   }
 
-  return { setUsageSource, usage, keyUsage };
+  /**
+   * The chargeback CSV for a period (ADR-0020): one row per key and model with usage, for both
+   * kinds or one, from the same cached rows the usage views read. Admin only; audit-logged.
+   */
+  async function chargeback(actor, { kind = "all", days, from, to } = {}) {
+    requireAdmin(actor);
+    const kinds = typeof kind === "string" ? CHARGEBACK_KINDS.get(kind) : undefined;
+    if (!kinds) throw new ServiceError(400, "kind must be all, jwt or product.");
+    const p = period({ days, from, to });
+    if (!source) throw new ServiceError(409, NO_SOURCE);
+    const secrets = await vault.listSecrets();
+    const sources = [];
+    for (const k of kinds) sources.push({ kind: k, rows: await rowsFor(k, p, undefined) });
+    const report = chargebackReport(sources, { secrets, kindOf, keyIdOf, period: p, now: clock(), defaultFoundry });
+    audit(actor, "export-chargeback", { from: report.from, to: report.to, kind, rows: report.rows });
+    return { filename: `chargeback-${report.from}-${report.to}.csv`, csv: report.csv, rows: report.rows, totals: report.totals,
+      from: report.from, to: report.to, kind };
+  }
+
+  return { setUsageSource, usage, keyUsage, chargeback };
 }

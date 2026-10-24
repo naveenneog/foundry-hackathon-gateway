@@ -1,9 +1,13 @@
 /** Console service: usage per key from the gateway's workspace (P52). Composed into createService. */
 
-import { buildUsageQuery, aggregateUsage, bucketFor, PERIODS } from "./usage.mjs";
+import { buildUsageQuery, aggregateUsage, resolvePeriod, usageGrid } from "./usage.mjs";
+import { InputError } from "./validate.mjs";
 
 const CACHE_MS = 60_000;
 const CACHE_MAX = 64;
+const HOUR_MS = 3_600_000;
+const NO_SOURCE = "Usage is not configured: the dashboard has no Log Analytics workspace.";
+const iso = (ms) => new Date(ms).toISOString();
 
 export function usageApi({ vault, clock, owns, kindOf, visibleKey, ServiceError, requireAdmin }) {
   let source = null;
@@ -12,52 +16,66 @@ export function usageApi({ vault, clock, owns, kindOf, visibleKey, ServiceError,
 
   const keyIdOf = (s) => (kindOf(s) === "jwt" ? s.tags?.jti : s.tags?.subscription);
 
-  function period(days) {
-    const d = Number(days ?? 7);
-    if (!PERIODS.includes(d)) throw new ServiceError(400, `Period must be ${PERIODS.join(", ")} days.`);
-    return d;
+  /** `days`, or `from` and `to` (P59); 400 for anything else. */
+  function period(query) {
+    try {
+      return resolvePeriod(query, clock());
+    } catch (e) {
+      if (e instanceof InputError) throw new ServiceError(400, e.message);
+      throw e;
+    }
   }
 
-  /** Rows are the same for every viewer; only the filtering differs, so they are cached once. */
-  async function rowsFor(kind, days, keyId) {
-    const key = `${kind}|${days}|${keyId ?? ""}`;
+  /** What an answer covers: the period, its window (a range ending today ends now) and its bucket size. */
+  const covers = (p, now) => ({
+    days: p.days, ...(p.range ? { range: p.range } : {}),
+    from: iso(p.start), to: iso(p.range ? Math.min(p.end - 1, now) : now), bucket: p.bucket.ms === HOUR_MS ? "hour" : "day",
+  });
+
+  /** Rows are the same for every viewer; only the filtering differs, so they are cached once per kind, period and key. */
+  async function rowsFor(kind, p, keyId) {
+    const key = `${kind}|${p.key}|${keyId ?? ""}`;
     const hit = cache.get(key);
     if (hit && clock() - hit.at < CACHE_MS) return hit.rows;
-    const rows = await source.query(buildUsageQuery({ kind, days, keyId }), { timespan: `P${days}D` });
+    const timespan = p.range ? `${iso(p.start)}/${iso(p.end)}` : `P${p.days}D`;
+    const rows = await source.query(buildUsageQuery({ kind, period: p, keyId }), { timespan });
     if (cache.size >= CACHE_MAX) cache.delete(cache.keys().next().value);
     cache.set(key, { at: clock(), rows });
     return rows;
   }
 
-  const empty = (kind, days, note) => ({ kind, days, ...aggregateUsage([], { keys: new Map(), includeUnknown: false, days, bucket: bucketFor(days), now: clock() }), note });
+  const empty = (p, note) => {
+    const now = clock();
+    return { ...covers(p, now), ...aggregateUsage([], { keys: new Map(), includeUnknown: false, grid: usageGrid(p, now) }), note };
+  };
 
-  async function usage(actor, { kind, days } = {}) {
+  async function usage(actor, { kind, days, from, to } = {}) {
     requireAdmin(actor);
     if (!["jwt", "product"].includes(kind)) throw new ServiceError(400, "kind must be jwt or product.");
-    const d = period(days);
-    if (!source) return empty(kind, d, "Usage is not configured: the dashboard has no Log Analytics workspace.");
+    const p = period({ days, from, to });
+    if (!source) return { kind, ...empty(p, NO_SOURCE) };
     const keys = new Map();
     for (const s of await vault.listSecrets()) {
       if (kindOf(s) === kind && owns(actor, s) && keyIdOf(s)) keys.set(keyIdOf(s), { name: s.name, owner: s.tags.owner ?? null, label: s.tags.label });
     }
-    const rows = await rowsFor(kind, d, undefined);
+    const rows = await rowsFor(kind, p, undefined);
     const now = clock();
-    return { kind, days: d, from: new Date(now - d * 86_400_000).toISOString(), to: new Date(now).toISOString(),
-      ...aggregateUsage(rows, { keys, includeUnknown: actor?.role === "admin", days: d, bucket: bucketFor(d), now }) };
+    return { kind, ...covers(p, now), ...aggregateUsage(rows, { keys, includeUnknown: actor?.role === "admin", grid: usageGrid(p, now) }) };
   }
 
-  async function keyUsage(actor, name, { days } = {}) {
+  async function keyUsage(actor, name, { days, from, to } = {}) {
     requireAdmin(actor);
     const s = await visibleKey(actor, name);
-    const d = period(days);
+    const p = period({ days, from, to });
     const kind = kindOf(s);
-    if (!source) return { name, ...empty(kind, d, "Usage is not configured: the dashboard has no Log Analytics workspace.") };
+    if (!source) return { name, kind, ...empty(p, NO_SOURCE) };
     const id = keyIdOf(s);
-    if (!id) return { name, ...empty(kind, d, "This key has no id the gateway reports usage under.") };
-    const rows = await rowsFor(kind, d, id);
+    if (!id) return { name, kind, ...empty(p, "This key has no id the gateway reports usage under.") };
+    const rows = await rowsFor(kind, p, id);
     const keys = new Map([[id, { name, owner: s.tags.owner ?? null, label: s.tags.label }]]);
-    const u = aggregateUsage(rows, { keys, includeUnknown: false, days: d, bucket: bucketFor(d), now: clock() });
-    return { name, kind, days: d, total: u.total, series: u.series, byModel: u.byModel };
+    const now = clock();
+    const u = aggregateUsage(rows, { keys, includeUnknown: false, grid: usageGrid(p, now) });
+    return { name, kind, ...covers(p, now), total: u.total, series: u.series, byModel: u.byModel };
   }
 
   return { setUsageSource, usage, keyUsage };

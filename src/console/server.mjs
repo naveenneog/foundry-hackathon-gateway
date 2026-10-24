@@ -54,6 +54,8 @@ class HttpError extends Error {
 }
 
 const NAME = "([A-Za-z0-9-]{1,127})";
+/** A usage period from the query string: days, or from and to (P59). The service validates them. */
+const periodOf = (q) => ({ days: q.get("days") ?? undefined, from: q.get("from") ?? undefined, to: q.get("to") ?? undefined });
 /** [method, pattern, action for can(), handler(ctx)] — action "open" skips authentication. */
 const routes = [
   ["GET", /^\/healthz$/, "open", () => ({ status: 200, body: { ok: true } })],
@@ -84,8 +86,8 @@ const routes = [
   ["POST", new RegExp(`^/api/keys/${NAME}/owner$`), "owner", ({ service, actor, m, body }) => service.setOwner(actor, m[1], body)],
   ["POST", new RegExp(`^/api/keys/${NAME}/archive$`), "archive", ({ service, actor, m }) => service.archiveKey(actor, m[1])],
   ["POST", new RegExp(`^/api/keys/${NAME}/delete$`), "delete", ({ service, actor, m }) => service.deleteKey(actor, m[1])],
-  ["GET", /^\/api\/usage$/, "read-own", ({ service, actor, q }) => service.usage(actor, { kind: q.get("kind") ?? undefined, days: q.get("days") ?? undefined })],
-  ["GET", new RegExp(`^/api/usage/${NAME}$`), "read-own", ({ service, actor, m, q }) => service.keyUsage(actor, m[1], { days: q.get("days") ?? undefined })],
+  ["GET", /^\/api\/usage$/, "read-own", ({ service, actor, q }) => service.usage(actor, { kind: q.get("kind") ?? undefined, ...periodOf(q) })],
+  ["GET", new RegExp(`^/api/usage/${NAME}$`), "read-own", ({ service, actor, m, q }) => service.keyUsage(actor, m[1], periodOf(q))],
   ["POST", /^\/api\/export$/, "export", ({ service, actor, body }) => service.exportBundle(actor, body)],
 ];
 

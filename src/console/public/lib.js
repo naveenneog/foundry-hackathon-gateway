@@ -387,7 +387,8 @@ export function niceTicks(min, max, count = 4, { integer = false } = {}) {
 
 export const scaleLinear = (d0, d1, r0, r1) => (v) => (d1 === d0 ? (r0 + r1) / 2 : r0 + ((v - d0) * (r1 - r0)) / (d1 - d0));
 
-export const bucketMs = (days) => (days <= 1 ? HOUR : DAY);
+/** Hourly buckets for two days or fewer, daily beyond, as the server bins them (usage.mjs bucketFor). */
+export const bucketMs = (days) => (days <= 2 ? HOUR : DAY);
 
 /**
  * Aligns one or more `[{ t, tokens }]` series on a dense bucket grid (hours for one day, else

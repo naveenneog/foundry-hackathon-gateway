@@ -251,6 +251,21 @@ Key Vault. Nothing here changes the gateway on `main`.
       image referenced once, PNG, alt text and names free of identifiers, provenance note) and
       the 28 document tests pass.
 
+- [ ] **P60** The UI is called liteAPIM
+      *Acceptance:* the header brand reads `liteAPIM`, in that exact casing; the "Foundry Gateway"
+      line and the "Key Dashboard" subtitle are dropped, because keeping the old name beside the
+      new one on every page would leave two product names. The page title ends "· liteAPIM"; the
+      sign-in gate, the no-script note, the start-up failure message and the demo's start-up
+      line say liteAPIM; the setup guide introduces "liteAPIM (the admin key dashboard)". No
+      user-facing "Key Dashboard", "Key Console" or "Foundry Gateway" remains in the browser
+      modules, the HTML or the messages the server and the demo print; a test fails if one comes
+      back, and the test is shown to catch one. README, CONSOLE.md and INSTALL.md name the UI
+      "liteAPIM (the admin key dashboard)" on first mention, then liteAPIM. Unchanged: the
+      repository, Azure resource names and display names, environment variables, API paths, Key
+      Vault secret names, the app registration `hackgw-key-console`, JWT audiences, file names,
+      and the CSV and export schemas. ADR-0015 records the name.
+      *Why:* requested 2026-10-24: "Also rebrand the UI as liteAPIM".
+
 - [x] **P59** Custom usage range, chargeback export and an admin-set gateway DNS URL
       *Acceptance:*
       **Range.** The Overview and the short-lived and product usage views offer, beside 24 h,

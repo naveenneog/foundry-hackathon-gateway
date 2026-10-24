@@ -1,8 +1,12 @@
 # Status
 
-**Active packet:** none. P59 — custom usage range, chargeback export and an admin-set gateway DNS
-URL — is complete on `release/key-dashboard` as local commits; it is not pushed or deployed.
-Design: ADR-0019 and ADR-0020; U51–U54 resolved.
+**Active packet:** P60 — the UI is called liteAPIM, on `release/key-dashboard`. Acceptance:
+ROADMAP. The header reads "Foundry Gateway" over "Key Dashboard", the page title is
+"Key Dashboard · Foundry Gateway Key Console", and the docs call the app the Key Dashboard.
+
+P59 — custom usage range, chargeback export and an admin-set gateway DNS URL — is complete on
+`release/key-dashboard` as local commits; it is not pushed or deployed. Design: ADR-0019 and
+ADR-0020; U51–U54 resolved.
 
 P58 — Foundry & models lists only the Foundries connected to this API Management — is complete
 on `release/key-dashboard` as local commits; it is not pushed or deployed. Design: ADR-0018,

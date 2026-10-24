@@ -6,7 +6,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 
-import { parseGatewayOrigin, gatewayHostnames, gatewayUrlApi, GATEWAY_URL_SECRET, GATEWAY_URL_TTL_MS } from "../src/console/gateway-url.mjs";
+import { parseGatewayOrigin, gatewayHostnames, gatewayUrlApi, GATEWAY_URL_SECRET_NAME, GATEWAY_URL_TTL_MS } from "../src/console/gateway-url.mjs";
 import { apim } from "../src/console/azure.mjs";
 import { createService } from "../src/console/service.mjs";
 import { createHandler } from "../src/console/server.mjs";
@@ -70,14 +70,14 @@ test("setting the gateway URL: admin only, strict input, and only a gateway host
   for (const url of ["https://developer.contoso.example", "https://api.wild.example", "https://elsewhere.example"]) {
     await assert.rejects(h.service.setGatewayUrl(ADMIN, { url }), { status: 400, message: /not a gateway hostname of this API Management\. Add it as a custom domain/ }, url);
   }
-  assert.equal(h.vault.secrets.has(GATEWAY_URL_SECRET), false, "nothing stored after a refusal");
+  assert.equal(h.vault.secrets.has(GATEWAY_URL_SECRET_NAME), false, "nothing stored after a refusal");
   assert.equal(h.audit.some((e) => /gateway-url/.test(e.action)), false);
 
   const r = await h.service.setGatewayUrl(ADMIN, { url: "HTTPS://AI.Contoso.Example/" });
   assert.equal(r.changed, true);
   assert.equal(r.effectiveUrl, "https://ai.contoso.example");
   assert.equal(r.apimUrl, "https://gw.example.net");
-  const secret = h.vault.secrets.get(GATEWAY_URL_SECRET);
+  const secret = h.vault.secrets.get(GATEWAY_URL_SECRET_NAME);
   assert.deepEqual(JSON.parse(secret.value), { url: "https://ai.contoso.example" });
   assert.equal(secret.contentType, "application/json");
   assert.deepEqual(secret.tags, { kind: "gateway-url", updatedBy: ADMIN.name, updatedAt: "2026-10-16T09:00:00.000Z" });
@@ -86,20 +86,20 @@ test("setting the gateway URL: admin only, strict input, and only a gateway host
 
   const again = await h.service.setGatewayUrl(ADMIN, { url: "https://ai.contoso.example" });
   assert.equal(again.changed, false);
-  assert.equal(h.vault.calls.filter(([op, name]) => op === "setSecret" && name === GATEWAY_URL_SECRET).length, 1, "an unchanged URL writes no new version");
+  assert.equal(h.vault.calls.filter(([op, name]) => op === "setSecret" && name === GATEWAY_URL_SECRET_NAME).length, 1, "an unchanged URL writes no new version");
 });
 
 test("reset writes an empty setting instead of deleting the secret, logs both URLs, and the API Management URL is back at once", async () => {
   const h = withDomain(harness());
   const before = await h.service.resetGatewayUrl(ADMIN);
   assert.equal(before.changed, false, "nothing to reset");
-  assert.equal(h.vault.secrets.has(GATEWAY_URL_SECRET), false, "and nothing written");
+  assert.equal(h.vault.secrets.has(GATEWAY_URL_SECRET_NAME), false, "and nothing written");
   await h.service.setGatewayUrl(ADMIN, { url: "https://ai.contoso.example" });
   const r = await h.service.resetGatewayUrl(ADMIN);
   assert.equal(r.changed, true);
   assert.equal(r.effectiveUrl, "https://gw.example.net");
   assert.equal(r.customUrl, null);
-  assert.deepEqual(JSON.parse(h.vault.secrets.get(GATEWAY_URL_SECRET).value), { url: null });
+  assert.deepEqual(JSON.parse(h.vault.secrets.get(GATEWAY_URL_SECRET_NAME).value), { url: null });
   assert.equal(h.vault.calls.some(([op]) => op === "deleteSecret"), false, "a deleted secret could not be written again while soft-deleted (U54)");
   const reset = h.audit.find((e) => e.action === "reset-gateway-url");
   assert.deepEqual({ from: reset.from, to: reset.to }, { from: "https://ai.contoso.example", to: "https://gw.example.net" });
@@ -139,7 +139,7 @@ test("another replica picks the change up within 30 s; a domain removed from API
 
   h.arm.hostnameConfigurations.push(CUSTOM, { type: "Proxy", hostName: "evil.example" });
   for (const value of ["not json", JSON.stringify({ url: "https://evil.example/x" }), JSON.stringify({ url: "http://evil.example" }), JSON.stringify({ url: 7 })]) {
-    h.vault.secrets.get(GATEWAY_URL_SECRET).value = value;
+    h.vault.secrets.get(GATEWAY_URL_SECRET_NAME).value = value;
     h.clock.now += GATEWAY_URL_TTL_MS;
     assert.equal((await h.service.config()).gatewayUrl, "https://gw.example.net", value);
     assert.match((await h.service.gatewayUrlStatus(ADMIN)).problem, /not a valid https origin/, value);
@@ -248,7 +248,7 @@ test("a host the URL standard reads as an IPv4 number is refused with 400, and i
   const h = harness();
   h.arm.hostnameConfigurations.push({ type: "Proxy", hostName: "foo.0x7f" });
   await assert.rejects(h.service.setGatewayUrl(ADMIN, { url: "https://foo.0x7f" }), { status: 400 });
-  h.vault.secrets.set(GATEWAY_URL_SECRET, { name: GATEWAY_URL_SECRET, value: JSON.stringify({ url: "https://foo.0x7f" }), tags: { kind: "gateway-url" } });
+  h.vault.secrets.set(GATEWAY_URL_SECRET_NAME, { name: GATEWAY_URL_SECRET_NAME, value: JSON.stringify({ url: "https://foo.0x7f" }), tags: { kind: "gateway-url" } });
   assert.equal((await h.service.config()).gatewayUrl, "https://gw.example.net");
   assert.match((await h.service.gatewayUrlStatus(ADMIN)).problem, /not a valid https origin/);
 });

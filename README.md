@@ -70,24 +70,16 @@ more to connect, usage of a key no longer in Key Vault, and a gateway custom dom
 
 ### Install on Azure
 
-```powershell
-# 1. Network, private Foundry, APIM Standard v2   (docs/PRIVATE-ENDPOINT.md)
-az deployment group create -g <rg> --template-file infra/examples/private-foundry-test.bicep --parameters "@params.json"
-# 2. Gateway: short-lived key routes /v1 and /claude
-./admin.ps1                     # option 1
-# 3. Product key routes and the private Key Vault
-./poc/products-keyvault/scripts/Deploy-Poc.ps1 -Subscription <sub> -ResourceGroup <rg> -ApimName <apim> -FoundryAccountName <foundry>
-./poc/products-keyvault/scripts/Invoke-PocRunner.ps1 -Subscription <sub> -ResourceGroup <rg> -VaultName <vault> -Step Deploy
-# 4. liteAPIM: Container Apps by default; -Hosting AppService for App Service + Function App
-./scripts/Deploy-Console.ps1 -Subscription <sub> -ResourceGroup <rg>
-```
-
-**[→ Install and setup guide](docs/INSTALL.md)** covers:
-- requirements and permissions;
-- each step, and what it creates and grants;
-- the first sign-in;
-- a first key in Claude Code;
-- troubleshooting and removal.
+The setup differs depending on whether API Management and the private Key Vault already exist.
+The [install and setup guide](docs/INSTALL.md) starts by helping choose a path. For a new test
+environment, it shows how to create the required `params.json`, deploy a dedicated APIM/Foundry
+stack, configure the gateway with `admin.ps1`, deploy product routes with `Deploy-Poc.ps1`, run
+the runner's `-Step Deploy`, and install liteAPIM. For an existing environment, it identifies
+which steps can be skipped. The guide also lists required Azure permissions, expected results,
+verification, troubleshooting and removal steps. Its PowerShell examples define the values they
+use instead of asking readers to run placeholder commands.
+The final web-app step uses [`scripts/Deploy-Console.ps1`](scripts/Deploy-Console.ps1); it adopts
+the APIM, vault, VNet and workspace created or selected by the earlier steps.
 
 ### Use it
 

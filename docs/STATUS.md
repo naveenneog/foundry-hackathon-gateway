@@ -1,25 +1,48 @@
 # Status
 
-**Active packet:** none. P60 — the UI is called liteAPIM — is complete on `release/key-dashboard`
-as local commits; it is not pushed or deployed. The next candidate is P61 (narrow-screen layout
-on Foundry & models and the top bar, found during P60's browser check; ROADMAP).
-
-P59 — custom usage range, chargeback export and an admin-set gateway DNS URL — is complete on
-`release/key-dashboard` as local commits; it is not pushed or deployed. Design: ADR-0019 and
-ADR-0020; U51–U54 resolved.
-
-P58 — Foundry & models lists only the Foundries connected to this API Management — is complete
-on `release/key-dashboard` as local commits; it is not pushed or deployed. Design: ADR-0018,
-amending the UI part of ADR-0017; U50 resolved.
-
-P56 — multi-Foundry discovery, attachment, account-bound key issue and guided help — is complete
-on `release/key-dashboard`. Design: ADR-0017; U46–U49 resolved.
+**Active packet:** none. P60 and the preceding P59 and P58 changes are published on
+`release/key-dashboard` and deployed to the live app. P60's release commit is `08dc5ee`. The next
+candidate is P61 (narrow-screen layout on Foundry & models and the top bar, found during P60's
+browser check; ROADMAP).
 
 P55 (release branch) and P49–P54 are published on `release/key-dashboard`, not merged to `main`.
 Design: ADR-0015; owner amendment:
 ADR-0016. App Service quota in eastus2 is 0 (U40), so Container Apps is the live path. The App
 Service template builds; ARM validate/what-if is blocked by the zero quota. The live dashboard has no IP restriction; Entra
 sign-in and the admin role remain required.
+
+### P62 — Installation guide for a novice administrator — DONE
+
+The owner asked for the deployment guide to be assessed from a novice human user's perspective,
+rated and improved.
+
+- Clarified the two starting points and which infrastructure the liteAPIM installer does not
+  create.
+- Replaced unresolved PowerShell placeholder commands with prompts and defined variables.
+- Added the missing `params.json` creation step for a new test stack, expected deployment outputs,
+  first-success checks and a safer removal explanation.
+- Replaced the incomplete Claude curl example with a PowerShell request that reads the key
+  without echoing it. Updated the README's Azure installation summary to direct readers to the
+  runnable guide.
+- Added a guide regression test for setup-path choice, input handling, placeholders and
+  verification checkpoints.
+
+**Novice-readability rating (1–5, based on path clarity, prerequisites, command usability,
+success checks and recovery/safety):** 2.0 before, 4.4 after. Subscores: path choice 1→5,
+prerequisites 3→4, command usability 1→4, success checks 2→5 and recovery/safety 3→4. The guide
+still depends on Azure quota, tenant permissions and a pre-existing Claude deployment for the
+from-scratch test path; those external prerequisites prevent a full 5/5.
+
+Council: Architect PASS (documentation clarifies existing resource boundaries without changing
+deployment behavior). Coder PASS (PowerShell blocks parsed; no implementation code changed). QA
+PASS (new docs test failed before the guide edits, then passed; links and markdown checks pass).
+UX PASS (paths, expected results and recovery are explicit; residual external requirements are
+called out). Security PASS (custom-domain trust and key separation remain unchanged; the test
+prompt does not echo the short-lived key).
+
+Verified 2026-10-25: `npm test` 794/794; packet gate 22 passed, 1 existing warning, 0 failed,
+3 skipped. The 8 focused documentation tests pass, and all 13 PowerShell code blocks parse. No
+Azure resources were changed.
 
 ### P60 — UI rebranded as liteAPIM — DONE
 

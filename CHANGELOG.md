@@ -5,6 +5,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · [Semantic Ve
 
 ## [Unreleased]
 
+### Changed
+- **Install guide reviewed from a first-time admin's perspective (P62).** It now distinguishes
+  existing gateway infrastructure from a new test stack, defines the Azure deployment inputs,
+  creates the required parameter file, shows expected outputs and checks, uses executable
+  PowerShell examples, and explains safe cleanup. README setup instructions now point to the full
+  guide instead of showing commands with unresolved placeholders.
+
 ### Added
 - **Custom usage range, chargeback report and an admin-set gateway URL (P59).**
   - Usage on the Overview, both key pages and the key drawer can cover a custom range of whole

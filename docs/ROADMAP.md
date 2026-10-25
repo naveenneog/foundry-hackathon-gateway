@@ -251,6 +251,18 @@ Key Vault. Nothing here changes the gateway on `main`.
       image referenced once, PNG, alt text and names free of identifiers, provenance note) and
       the 28 document tests pass.
 
+- [x] **P62** Installation guide for a novice administrator
+      *Acceptance:* the guide distinguishes an existing gateway environment from a new test
+      stack; identifies the Azure, tenant, permission, model metadata, quota and cost prerequisites;
+      has runnable PowerShell setup blocks with inputs defined, including creation of the
+      test-stack parameter file; explains expected deployment outputs, first sign-in, a safe key
+      smoke test, troubleshooting and scoped removal. The README links to these instructions and
+      does not repeat shell-invalid placeholder commands. Markdown links, the PowerShell snippets
+      and a docs regression test pass.
+      *Why:* requested 2026-10-25: rate and improve the deployment guide from a novice human
+      user's perspective.
+      *Verified 2026-10-25:* see P62 in STATUS; guide tests pass and all PowerShell blocks parse.
+
 - [ ] **P61** Narrow screens: Foundry & models and the top bar
       *Acceptance:* at 390 px and 320 px, in both themes, Foundry & models has no horizontal
       overflow: the Test connection model list (a `<select>` whose longest option, alias · route

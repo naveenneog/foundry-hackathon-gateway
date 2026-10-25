@@ -50,6 +50,23 @@ test("the install guide covers every step in order, with the text diagram and th
   assert.match(md, /ANTHROPIC_API_KEY/);
 });
 
+test("install guide separates setup paths, defines PowerShell inputs, and gives validation checkpoints", () => {
+  const md = read("docs/INSTALL.md");
+  assert.match(md, /Choose your starting point/);
+  assert.match(md, /An existing API Management gateway/);
+  assert.match(md, /new test environment/i);
+  assert.match(md, /Azure deployment: select your subscription and starting path/);
+  assert.match(md, /properties\.modelProviderData/);
+  assert.match(md, /Set-Content -Path \.\\params\.json/);
+  assert.match(md, /What success looks like/);
+  assert.match(md, /Verification checklist/);
+  const powershellBlocks = [...md.matchAll(/```powershell\r?\n([\s\S]*?)```/g)].map((m) => m[1]);
+  assert.ok(powershellBlocks.length > 0, "contains PowerShell commands");
+  for (const block of powershellBlocks) {
+    assert.doesNotMatch(block, /<[a-z][a-z0-9 _-]*>/i, "PowerShell blocks use defined variables, not shell-invalid angle placeholders");
+  }
+});
+
 test("package.json runs the demo", () => {
   assert.equal(JSON.parse(read("package.json")).scripts["dashboard:demo"], "node scripts/dashboard-demo.mjs");
 });

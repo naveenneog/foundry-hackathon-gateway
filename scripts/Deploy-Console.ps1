@@ -128,7 +128,7 @@ function Invoke-Az {
 # with -CreateNetwork, a liteAPIM-only VNet, recognised by name on later runs. Never a second
 # network beside a gateway VNet.
 function Resolve-ConsoleNetwork([string[]]$VnetNames, [string]$Suffix, [bool]$Create) {
-    $own = "vnet-liteapim-$Suffix"
+    $own = "vnet-console-$Suffix"
     $names = @($VnetNames | Where-Object { $_ })
     if ($names -contains $own) { return [pscustomobject]@{ name = $own; deploy = $Create; gatewayVnet = '' } }
     if ($names.Count) {

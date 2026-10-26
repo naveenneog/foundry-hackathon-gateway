@@ -79,7 +79,7 @@ test("P63 network choice: refuse with no VNet unless -CreateNetwork, reuse liteA
 $res = [ordered]@{}
 $cases = [ordered]@{
   none = @(@(), $false); noneCreate = @(@(), $true); gateway = @(@('vnet-hackgw-pe'), $false); gatewayCreate = @(@('vnet-hackgw-pe'), $true)
-  own = @(@('vnet-liteapim-sfx'), $false); ownCreate = @(@('vnet-liteapim-sfx'), $true)
+  own = @(@('vnet-console-sfx'), $false); ownCreate = @(@('vnet-console-sfx'), $true)
 }
 foreach ($k in $cases.Keys) {
   try { $n = Resolve-ConsoleNetwork $cases[$k][0] 'sfx' $cases[$k][1]; $res[$k] = @{ name = $n.name; deploy = $n.deploy; gatewayVnet = $n.gatewayVnet } }
@@ -87,11 +87,11 @@ foreach ($k in $cases.Keys) {
 }
 Write-Output ('RESULT:' + ($res | ConvertTo-Json -Compress -Depth 4))`));
   assert.match(r.none, /^ERR .*no virtual network.*-CreateNetwork/i);
-  assert.deepEqual(r.noneCreate, { name: "vnet-liteapim-sfx", deploy: true, gatewayVnet: "" });
+  assert.deepEqual(r.noneCreate, { name: "vnet-console-sfx", deploy: true, gatewayVnet: "" });
   assert.deepEqual(r.gateway, { name: "vnet-hackgw-pe", deploy: false, gatewayVnet: "vnet-hackgw-pe" });
   assert.match(r.gatewayCreate, /^ERR .*vnet-hackgw-pe/);
-  assert.deepEqual(r.own, { name: "vnet-liteapim-sfx", deploy: false, gatewayVnet: "" });
-  assert.deepEqual(r.ownCreate, { name: "vnet-liteapim-sfx", deploy: true, gatewayVnet: "" });
+  assert.deepEqual(r.own, { name: "vnet-console-sfx", deploy: false, gatewayVnet: "" });
+  assert.deepEqual(r.ownCreate, { name: "vnet-console-sfx", deploy: true, gatewayVnet: "" });
 });
 
 test("P63 the network prefix must be private IPv4, aligned, /16 to /26, and clear of the Standard v2 gateway's 10.61.0.0/16", { skip: !pwsh && "PowerShell 7 not found" }, () => {
@@ -107,12 +107,12 @@ Write-Output ('RESULT:' + ($res | ConvertTo-Json -Compress))`));
 
 test("P63 the billable resources -CreateNetwork adds are listed, with no VM or NAT gateway", { skip: !pwsh && "PowerShell 7 not found" }, () => {
   const r = resultOf(run(`${fns()}
-$res = @{ created = @(Get-LiteNetworkBillables 'vnet-liteapim-sfx' 'kv-poc-x' $true); reused = @(Get-LiteNetworkBillables 'vnet-liteapim-sfx' 'kv-poc-x' $false) }
+$res = @{ created = @(Get-LiteNetworkBillables 'vnet-console-sfx' 'kv-poc-x' $true); reused = @(Get-LiteNetworkBillables 'vnet-console-sfx' 'kv-poc-x' $false) }
 Write-Output ('RESULT:' + ($res | ConvertTo-Json -Compress))`));
   assert.ok(r.created.some((l) => /private endpoint pe-kv-poc-x/i.test(l)));
   assert.ok(r.created.some((l) => /private DNS zone privatelink\.vaultcore\.azure\.net/i.test(l)));
   assert.ok(!r.reused.some((l) => /private DNS zone/i.test(l)), "a reused zone is not a new charge");
-  assert.ok(r.created.some((l) => /vnet-liteapim-sfx.*no charge/i.test(l)));
+  assert.ok(r.created.some((l) => /vnet-console-sfx.*no charge/i.test(l)));
   assert.ok(![...r.created, ...r.reused].some((l) => /virtual machine|NAT/i.test(l)));
 });
 
@@ -185,7 +185,7 @@ Write-Output ('RESULT:' + ($res | ConvertTo-Json -Compress))`));
 test("P63 Standard v2 installs get exactly the old template parameters; Basic v2 adds only the Foundry group and an empty gateway VNet", { skip: !pwsh && "PowerShell 7 not found" }, () => {
   const r = resultOf(run(`${fns()}
 $same = @(Get-ExtraConsoleParameters ([pscustomobject]@{ name = 'ai'; resourceGroup = 'RG-HACKATHON-GATEWAY' }) ([pscustomobject]@{ name = 'vnet-hackgw-pe'; deploy = $false; gatewayVnet = 'vnet-hackgw-pe' }))
-$basic = @(Get-ExtraConsoleParameters ([pscustomobject]@{ name = 'ai'; resourceGroup = 'rg-contosohub' }) ([pscustomobject]@{ name = 'vnet-liteapim-x'; deploy = $true; gatewayVnet = '' }))
+$basic = @(Get-ExtraConsoleParameters ([pscustomobject]@{ name = 'ai'; resourceGroup = 'rg-contosohub' }) ([pscustomobject]@{ name = 'vnet-console-x'; deploy = $true; gatewayVnet = '' }))
 Write-Output ('RESULT:' + (@{ same = $same; basic = $basic } | ConvertTo-Json -Compress))`));
   assert.deepEqual(r.same ?? [], []);
   assert.deepEqual(r.basic, ["foundryResourceGroup=rg-contosohub", "gatewayVnetName="]);

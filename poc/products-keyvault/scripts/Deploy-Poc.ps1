@@ -1,13 +1,17 @@
 <#
     P37 proof of concept: deploy ../infra/poc.bicep onto an existing v2 API Management instance.
     Adds poc- routes, products and policies, one Key Vault, and Key Vault Secrets Officer for the
-    signed-in operator. Prints names and URLs only. See ../README.md.
+    signed-in operator. Prints names and URLs only. See ../README.md. -FoundryResourceGroup names
+    the Foundry's resource group when it is not the instance's (P63).
 #>
 param(
     [Parameter(Mandatory)][string]$Subscription,
     [Parameter(Mandatory)][string]$ResourceGroup,
     [Parameter(Mandatory)][string]$ApimName,
     [Parameter(Mandatory)][string]$FoundryAccountName,
+    # The Foundry's resource group when it is not the instance's (P63). Passed to the template
+    # only when it differs, so same-group deployments keep the same parameters.
+    [ValidatePattern('^[A-Za-z0-9_.-]{1,90}$')][string]$FoundryResourceGroup = '',
     [string]$AuditWorkspaceName = ''
 )
 $ErrorActionPreference = 'Stop'
@@ -29,6 +33,7 @@ $parameters = @(
     "operatorObjectId=$($claims.oid)"
     "operatorPrincipalType=$principalType"
 )
+if ($FoundryResourceGroup -and $FoundryResourceGroup -ne $ResourceGroup) { $parameters += "foundryResourceGroup=$FoundryResourceGroup" }
 if ($AuditWorkspaceName) { $parameters += "auditWorkspaceName=$AuditWorkspaceName" }
 
 $deployment = "poc-products-keyvault-$(Get-Date -Format 'yyyyMMddHHmmss')"

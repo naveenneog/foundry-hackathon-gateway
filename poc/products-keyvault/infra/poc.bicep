@@ -6,8 +6,11 @@
 @description('Existing API Management instance on a v2 tier: llm-token-limit meters the Anthropic Messages API only on v2 tiers.')
 param apimName string
 
-@description('Foundry account the routes call, in this resource group. The instance\'s managed identity must already hold Cognitive Services User on it.')
+@description('Foundry account the routes call. The instance\'s managed identity must already hold Cognitive Services User on it.')
 param foundryAccountName string
+
+@description('Resource group of the Foundry account; defaults to this one (P63, UNKNOWNS U60).')
+param foundryResourceGroup string = resourceGroup().name
 
 @description('Object id of the operator who issues and rotates keys. Gets Key Vault Secrets Officer on the vault.')
 param operatorObjectId string
@@ -85,6 +88,7 @@ resource apim 'Microsoft.ApiManagement/service@2024-05-01' existing = {
 
 resource foundry 'Microsoft.CognitiveServices/accounts@2024-10-01' existing = {
   name: foundryAccountName
+  scope: resourceGroup(foundryResourceGroup)
 }
 
 // The same derivation as infra/main.bicep: the account's published endpoint, not its name.

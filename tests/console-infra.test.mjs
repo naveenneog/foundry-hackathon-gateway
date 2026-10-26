@@ -33,7 +33,8 @@ test("console infra: identities get exactly the roles they use, no registry pass
   const jobRoles = [...bicep.matchAll(/principalId: job\.identity\.principalId[\s\S]*?roles\.(\w+)\)/g)].map((m) => m[1]);
   assert.deepEqual(jobRoles.sort(), ["apiManagementServiceContributor", "keyVaultSecretsOfficer"]);
   assert.match(bicep, /scope: workspace\n\s+name: guid\(workspace\.id, app\.id, roles\.logAnalyticsDataReader\)/);
-  assert.match(bicep, /scope: foundry\n\s+name: guid\(foundry\.id, app\.id, roles\.reader\)/);
+  // P63: the same-group assignment targets foundryInGroup; a Foundry elsewhere uses a module (U60).
+  assert.match(bicep, /scope: foundryInGroup\n\s+name: guid\(foundry\.id, app\.id, roles\.reader\)/);
   assert.match(bicep, /scope: registry\n\s+name: guid\(registry\.id, pullIdentity\.id/);
   assert.ok(!/Owner|'8e3af657|b24988ac/.test(bicep), "no Owner or Contributor");
   assert.ok(!/passwordSecretRef|adminUserEnabled: true/.test(bicep), "no registry admin credentials");

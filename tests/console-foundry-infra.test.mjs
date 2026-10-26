@@ -289,7 +289,10 @@ test("P56 network contract detector rejects accidental network recreation and pu
 test("P56 dashboard hosting exposes the gateway VNet name without adding it to automation", () => {
   for (const path of ["infra/console.bicep", "infra/console-appservice.bicep"]) {
     const source = read(path);
-    assert.match(source, /\{ name: 'GATEWAY_VNET_NAME', value: vnetName \}/);
+    // P63: console.bicep's gatewayVnetName defaults to vnetName and is empty for a liteAPIM-only network.
+    const value = path === "infra/console.bicep" ? "gatewayVnetName" : "vnetName";
+    assert.match(source, new RegExp(`\\{ name: 'GATEWAY_VNET_NAME', value: ${value} \\}`));
+    if (path === "infra/console.bicep") assert.match(source, /^param gatewayVnetName string = vnetName$/m);
     assert.equal(source.match(/name: 'GATEWAY_VNET_NAME'/g)?.length, 1, path);
     assert.ok(source.indexOf("name: 'GATEWAY_VNET_NAME'") > source.indexOf("name: 'FOUNDRY_ACCOUNT_ID'"), path);
   }

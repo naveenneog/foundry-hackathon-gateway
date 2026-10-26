@@ -30,6 +30,9 @@ param apimName string
 @description('Existing Foundry (AIServices) account whose deployments the dashboard lists and pins.')
 param foundryAccountName string
 
+@description('Resource group of that Foundry account; defaults to this one (P63, UNKNOWNS U60).')
+param foundryResourceGroup string = resourceGroup().name
+
 @description('Existing Log Analytics workspace that holds the gateway\'s token metrics (AppMetrics).')
 param workspaceName string
 
@@ -80,6 +83,15 @@ resource apim 'Microsoft.ApiManagement/service@2024-05-01' existing = {
 }
 
 resource foundry 'Microsoft.CognitiveServices/accounts@2024-10-01' existing = {
+  name: foundryAccountName
+  scope: resourceGroup(foundryResourceGroup)
+}
+
+var foundryInThisGroup = foundryResourceGroup =~ resourceGroup().name
+
+// The same account, declared in this resource group so the Reader assignment can target it; a
+// Foundry elsewhere gets Reader through console-foundry-reader.bicep instead.
+resource foundryInGroup 'Microsoft.CognitiveServices/accounts@2024-10-01' existing = if (foundryInThisGroup) {
   name: foundryAccountName
 }
 
@@ -260,10 +272,20 @@ resource webApim 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   properties: { principalId: web.identity.principalId, principalType: 'ServicePrincipal', roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', roles.apiManagementServiceContributor) }
 }
 
-resource webFoundry 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  scope: foundry
+resource webFoundry 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (foundryInThisGroup) {
+  scope: foundryInGroup
   name: guid(foundry.id, web.id, roles.reader)
   properties: { principalId: web.identity.principalId, principalType: 'ServicePrincipal', roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', roles.reader) }
+}
+
+module webFoundryElsewhere 'console-foundry-reader.bicep' = if (!foundryInThisGroup) {
+  name: 'console-foundry-reader-${uniqueString(web.id)}'
+  scope: resourceGroup(foundryResourceGroup)
+  params: {
+    foundryAccountName: foundryAccountName
+    principalId: web.identity.principalId
+    principalResourceId: web.id
+  }
 }
 
 resource webUsage 'Microsoft.Authorization/roleAssignments@2022-04-01' = {

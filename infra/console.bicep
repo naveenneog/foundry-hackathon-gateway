@@ -41,6 +41,12 @@ param allowedCidr string = ''
 @description('Existing Foundry (AIServices) account whose deployments the dashboard lists and pins.')
 param foundryAccountName string
 
+@description('Resource group of that Foundry account; defaults to this one (P63, UNKNOWNS U60).')
+param foundryResourceGroup string = resourceGroup().name
+
+@description('The gateway\'s own VNet, offered for Foundry private endpoints. Empty when liteAPIM has a network of its own and the gateway has none (Basic v2, P63).')
+param gatewayVnetName string = vnetName
+
 @description('Existing Log Analytics workspace that holds the gateway\'s token metrics (AppMetrics).')
 param workspaceName string
 
@@ -88,6 +94,15 @@ resource registry 'Microsoft.ContainerRegistry/registries@2023-07-01' existing =
 
 resource foundry 'Microsoft.CognitiveServices/accounts@2024-10-01' existing = {
   name: foundryAccountName
+  scope: resourceGroup(foundryResourceGroup)
+}
+
+var foundryInThisGroup = foundryResourceGroup =~ resourceGroup().name
+
+// The same account, declared in this resource group so the Reader assignment below can target
+// it; a Foundry elsewhere gets Reader through console-foundry-reader.bicep instead.
+resource foundryInGroup 'Microsoft.CognitiveServices/accounts@2024-10-01' existing = if (foundryInThisGroup) {
+  name: foundryAccountName
 }
 
 resource workspace 'Microsoft.OperationalInsights/workspaces@2023-09-01' existing = {
@@ -125,7 +140,8 @@ resource logs 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
 }
 
 resource env 'Microsoft.App/managedEnvironments@2024-03-01' = {
-  name: 'cae-${appName}'
+  // At most 32 characters (UNKNOWNS U59); shorter names are unchanged.
+  name: take('cae-${appName}', 32)
   location: location
   properties: {
     vnetConfiguration: {
@@ -180,7 +196,7 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
           resources: { cpu: json('0.5'), memory: '1Gi' }
           env: concat(settings, [
             { name: 'FOUNDRY_ACCOUNT_ID', value: foundry.id }
-            { name: 'GATEWAY_VNET_NAME', value: vnetName }
+            { name: 'GATEWAY_VNET_NAME', value: gatewayVnetName }
             { name: 'LOG_WORKSPACE_ID', value: workspace.properties.customerId }
             // The cron job below runs the automation; the dashboard never sweeps.
             { name: 'ROTATION_SWEEP_MINUTES', value: '0' }
@@ -266,7 +282,7 @@ resource apimContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = 
 
 // The automation: one sweep per schedule, then exit. Billed only while it runs; no ingress.
 resource job 'Microsoft.App/jobs@2024-03-01' = {
-  name: 'job-${appName}'
+  name: take('job-${appName}', 32)
   location: location
   identity: {
     type: 'SystemAssigned,UserAssigned'
@@ -303,13 +319,23 @@ resource job 'Microsoft.App/jobs@2024-03-01' = {
   }
 }
 
-resource foundryReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  scope: foundry
+resource foundryReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (foundryInThisGroup) {
+  scope: foundryInGroup
   name: guid(foundry.id, app.id, roles.reader)
   properties: {
     principalId: app.identity.principalId
     principalType: 'ServicePrincipal'
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', roles.reader)
+  }
+}
+
+module foundryReaderElsewhere 'console-foundry-reader.bicep' = if (!foundryInThisGroup) {
+  name: 'console-foundry-reader-${uniqueString(app.id)}'
+  scope: resourceGroup(foundryResourceGroup)
+  params: {
+    foundryAccountName: foundryAccountName
+    principalId: app.identity.principalId
+    principalResourceId: app.id
   }
 }
 

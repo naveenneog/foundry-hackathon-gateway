@@ -66,11 +66,11 @@ assumption is only closed if it names its blast radius and the detector that wou
 | U53 | Does the Logs query API take an absolute start/end window, and in which literal does KQL take an instant? | RESOLVED |
 | U54 | Can a Key Vault secret be deleted and then created again under the same name? | RESOLVED |
 | U55 | Do `llm-token-limit` and `llm-emit-token-metric` in a product-scope policy work on Basic v2? | OPEN |
-| U56 | Do Basic v2 limits on products, subscriptions, APIs or named values affect liteAPIM? | OPEN |
+| U56 | Do Basic v2 limits on products, subscriptions, APIs or named values affect liteAPIM? | RESOLVED |
 | U57 | Do a liteAPIM-only VNet and the vault's private endpoint let the app and the automation job reach the private vault by managed identity? | OPEN |
-| U58 | Which subnet does a Container Apps workload-profiles environment need, compared with consumption-only? | OPEN |
-| U59 | How long may Container Apps environment and job names be? | OPEN |
-| U60 | How does a resource-group Bicep deployment reference a Foundry, and assign a role on it, in another resource group? | OPEN |
+| U58 | Which subnet does a Container Apps workload-profiles environment need, compared with consumption-only? | RESOLVED |
+| U59 | How long may Container Apps environment and job names be? | ASSUMED |
+| U60 | How does a resource-group Bicep deployment reference a Foundry, and assign a role on it, in another resource group? | RESOLVED |
 
 ---
 
@@ -80,32 +80,83 @@ assumption is only closed if it names its blast radius and the detector that wou
 ### U55 — Product-scope token policies on Basic v2 — OPEN
 
 U41 measured `llm-emit-token-metric` at product scope on Standard v2 only. The product policy
-also uses `llm-token-limit` twice. Not yet known for Basic v2.
-
-### U56 — Basic v2 limits — OPEN
-
-liteAPIM creates one product per model set and one API per connected Foundry route. Basic v2's
-limits on products, subscriptions, APIs and named values are not yet checked.
+also uses `llm-token-limit` twice. Researched 2026-10-26: `llm-token-limit` "APPLIES TO:
+Developer | Basic | Basic v2 | Standard | Standard v2 | Premium | Premium v2", with policy scopes
+"global, workspace, product, API, operation"; the Anthropic Messages API is "currently supported
+in API Management v2 tiers"
+([llm-token-limit](https://learn.microsoft.com/azure/api-management/llm-token-limit-policy),
+updated 2026-06-26). `llm-emit-token-metric` applies to "All API Management tiers" with the same
+scopes ([llm-emit-token-metric](https://learn.microsoft.com/azure/api-management/llm-emit-token-metric-policy),
+updated 2026-09-17). To be measured live on the Basic v2 instance in P63.
 
 ### U57 — Private vault from a liteAPIM-only VNet — OPEN
 
 U39 and U44 were measured in the Standard v2 gateway's VNet, which already linked the vault's
 private DNS zone. A new VNet with only the vault's private endpoint is not yet measured.
 
-### U58 — Container Apps subnet requirements — OPEN
+### U56 — Basic v2 limits — RESOLVED
 
-`infra/console.bicep` uses a workload-profiles environment with a delegated `/27`. The
-documented minimum and delegation rule for each environment type are not yet cited.
+Learn's limits table for API Management, "introduced starting March 2026", gives per instance
+for Basic / Basic v2 against Standard / Standard v2: products 200 against 500, subscriptions
+15,000 against 25,000, named values 5,000 against 10,000, API operations 10,000 against 50,000,
+and loggers 100 against 200. The v2 gateway's policy document size is 16 KiB in every v2 tier
+([Azure subscription and service limits, API Management](https://learn.microsoft.com/azure/azure-resource-manager/management/azure-subscription-service-limits),
+updated 2026-09-29, read 2026-10-26). So on Basic v2:
 
-### U59 — Container Apps name lengths — OPEN
+- liteAPIM's `pk-` products (one per model set) and the `poc-` products share 200 products per
+  instance. The Basic v2 instance had none before P63.
+- product keys are APIM subscriptions, at most 15,000 per instance.
+- each connected Foundry adds four APIs and their operations (U47); 10,000 operations is far
+  above what liteAPIM creates.
+- the 16 KiB policy limit is the same as Standard v2, which U47 already met.
 
-The names derived from `apim-hackgwfl4s7jvpxekno` are 34 characters for the environment and
-the job. Their limits are not yet known.
+No liteAPIM code change is needed. The difference is recorded in INSTALL.md.
 
-### U60 — A Foundry in another resource group, in Bicep — OPEN
+### U58 — Container Apps subnet requirements — RESOLVED
 
-`console.bicep` assigns Reader with `scope: foundry`. Whether that works for an account in
-another resource group is not yet known.
+For a **workload profile environment**: "The minimum subnet size required for virtual network
+integration is `/27`" and "You must delegate your subnet to `Microsoft.App/environments`"; 12
+addresses are reserved for infrastructure, and a `/27` leaves 18 addresses, enough for 90
+Consumption-profile replicas. For a **consumption-only environment**: the minimum is `/23` and
+the subnet "must not be delegated to any services"
+([Configure virtual networks in Container Apps environments](https://learn.microsoft.com/azure/container-apps/custom-virtual-networks),
+updated 2026-05-19, read 2026-10-26). `infra/console.bicep` already creates a workload-profiles
+environment (`workloadProfiles: [ Consumption ]`) on a delegated subnet, so `-CreateNetwork`
+gives it a delegated `/27`. The subnet size cannot be changed after the environment is created
+(same page).
+
+### U59 — Container Apps name lengths — ASSUMED, with a detector
+
+Learn's naming rules list only `containerApps`: 2–32 characters, lowercase letters, numbers and
+hyphens, starting with a letter and ending with an alphanumeric
+([Naming rules, Microsoft.App](https://learn.microsoft.com/azure/azure-resource-manager/management/resource-name-rules#microsoftapp),
+updated 2026-08-07, read 2026-10-26). The template reference for `Microsoft.App/jobs` and
+`Microsoft.App/managedEnvironments` gives only the pattern `^[-\w\._\(\)]+$`
+([jobs](https://learn.microsoft.com/azure/templates/microsoft.app/jobs),
+[managedEnvironments](https://learn.microsoft.com/azure/templates/microsoft.app/managedenvironments),
+updated 2026-09-21, read 2026-10-26). A PUT on 2026-10-26 of a 34-character job name against a
+missing environment returned `ManagedEnvironmentNotFound`, the same as a 32-character name, so
+it did not show the limit. Assumption: jobs and environments follow the containerApps 32-character
+rule. `console.bicep` therefore truncates the environment and job names to 32 characters with
+`take()`. Names that are 32 characters or shorter, as on the Standard v2 install (28), are
+unchanged. Blast radius if wrong: none for correctness (a shorter name is valid under any
+limit). Detector: the live P63 deployment creates both resources.
+
+### U60 — A Foundry in another resource group, in Bicep — RESOLVED
+
+An `existing` resource takes a `scope` to read a resource in another resource group
+([Existing resources in Bicep](https://learn.microsoft.com/azure/azure-resource-manager/bicep/existing-resource),
+updated 2026-06-26, read 2026-10-26). An extension resource such as a role assignment applies
+to a resource through `scope`, but "to specify a different scope … use a module"
+([Set scope for extension resources](https://learn.microsoft.com/azure/azure-resource-manager/bicep/scope-extension-resources),
+updated 2026-08-05, read 2026-10-26). Measured on 2026-10-26 with Bicep 0.47.16: a role
+assignment with `scope:` on an account declared in another resource group fails to compile with
+`BCP139: A resource's scope must match the scope of the Bicep file for it to be deployable. You
+must use modules to deploy resources to a different scope`. So `poc.bicep` reads the Foundry with
+`scope: resourceGroup(foundryResourceGroup)`, and the dashboard templates keep their same-group
+Reader assignment under a condition and use a module (`infra/console-foundry-reader.bicep`)
+when the Foundry is elsewhere. The module computes the same assignment name,
+`guid(foundry.id, app.id, reader)`.
 
 ---
 

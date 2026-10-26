@@ -1,15 +1,50 @@
 # Status
 
-**Active packet:** none. P60 and the preceding P59 and P58 changes are published on
-`release/key-dashboard` and deployed to the live app. P60's release commit is `08dc5ee`. The next
-candidate is P61 (narrow-screen layout on Foundry & models and the top bar, found during P60's
-browser check; ROADMAP).
+**Active packet:** P63 — liteAPIM on an existing Basic v2 API Management with no virtual
+network (ROADMAP). P60 and the preceding P59 and P58 changes are published on
+`release/key-dashboard` and deployed to the live app. P60's release commit is `08dc5ee`. P61
+(narrow-screen layout on Foundry & models and the top bar) remains open.
 
 P55 (release branch) and P49–P54 are published on `release/key-dashboard`, not merged to `main`.
 Design: ADR-0015; owner amendment:
 ADR-0016. App Service quota in eastus2 is 0 (U40), so Container Apps is the live path. The App
 Service template builds; ARM validate/what-if is blocked by the zero quota. The live dashboard has no IP restriction; Entra
 sign-in and the admin role remain required.
+
+### P63 — liteAPIM on an existing Basic v2 API Management — IN PROGRESS
+
+The owner asked on 2026-10-26: "can you test this setup on basic v2 existing apim". Target: the
+project's own Basic v2 instance `apim-hackgwfl4s7jvpxekno` (`rg-hackathon-gateway`, no virtual
+network, system-assigned identity, routes `deepseek-gateway` and `claude-gateway` from P19), with
+Foundry `ai-contosohub530569751908` in a different resource group, `rg-contosohub`, which has
+public network access Enabled.
+
+Plan (2026-10-26):
+- Read-only probes on 2026-10-26 found these blockers, beyond the four the owner listed:
+  - the resource group holds two Application Insights components (`appi-hackgwfl4s7jvpxekno` and
+    the unrelated `appi-aum-aum-naveen`). `Deploy-Console.ps1` takes the first one listed, so it
+    could read usage from the wrong workspace;
+  - for this instance the derived Container Apps job name `job-ca-console-hackgwfl4s7jvpxekno` is
+    34 characters long, and the environment name `cae-ca-console-hackgwfl4s7jvpxekno` is also 34
+    (U59).
+- `poc.bicep` and `Deploy-Poc.ps1` take the Foundry from another resource group
+  (`-FoundryResourceGroup`, default the APIM's). Same-resource-group deployments keep the same
+  parameters and resources.
+- `Deploy-Console.ps1` takes `-FoundryResourceGroup` and `-FoundryAccountName`, falling back to
+  the current discovery. `console.bicep` and `console-appservice.bicep` keep the same-group
+  Reader role assignment unchanged and use a module for a Foundry in another group (U60).
+- With no VNet in the resource group, `Deploy-Console.ps1` refuses unless `-CreateNetwork` is
+  given. `-CreateNetwork` (Container Apps only) creates a liteAPIM-only VNet, a Container Apps
+  subnet, a private-endpoint subnet, the vault's private endpoint and the
+  `privatelink.vaultcore.azure.net` zone with its link (reused if the zone already exists), and
+  prints each billable resource. The vault stays public network access Disabled.
+- `Deploy-Console.ps1` refuses to repoint an app registration whose redirect URI belongs to
+  another app, unless `-TakeOverRegistration` is given. Without this guard, a second install
+  with the default `-AppRegistrationName` would replace the Standard v2 dashboard's redirect URI.
+- Unknowns U55–U60 are logged before implementation.
+- Live: `Deploy-Poc.ps1` and then `Deploy-Console.ps1 -AppRegistrationName
+  hackgw-key-console-basicv2 -CreateNetwork` on the Basic v2 instance. The APIM API list, named
+  values and the Standard v2 registration's redirect URIs are recorded before and after.
 
 ### P62 — Installation guide for a novice administrator — DONE
 

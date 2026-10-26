@@ -65,13 +65,47 @@ assumption is only closed if it names its blast radius and the detector that wou
 | U52 | Does API Management keep answering on its default `azure-api.net` hostname after a custom gateway domain is added? | RESOLVED |
 | U53 | Does the Logs query API take an absolute start/end window, and in which literal does KQL take an instant? | RESOLVED |
 | U54 | Can a Key Vault secret be deleted and then created again under the same name? | RESOLVED |
+| U55 | Do `llm-token-limit` and `llm-emit-token-metric` in a product-scope policy work on Basic v2? | OPEN |
+| U56 | Do Basic v2 limits on products, subscriptions, APIs or named values affect liteAPIM? | OPEN |
+| U57 | Do a liteAPIM-only VNet and the vault's private endpoint let the app and the automation job reach the private vault by managed identity? | OPEN |
+| U58 | Which subnet does a Container Apps workload-profiles environment need, compared with consumption-only? | OPEN |
+| U59 | How long may Container Apps environment and job names be? | OPEN |
+| U60 | How does a resource-group Bicep deployment reference a Foundry, and assign a role on it, in another resource group? | OPEN |
 
 ---
 
 
 ## Open
 
-None.
+### U55 — Product-scope token policies on Basic v2 — OPEN
+
+U41 measured `llm-emit-token-metric` at product scope on Standard v2 only. The product policy
+also uses `llm-token-limit` twice. Not yet known for Basic v2.
+
+### U56 — Basic v2 limits — OPEN
+
+liteAPIM creates one product per model set and one API per connected Foundry route. Basic v2's
+limits on products, subscriptions, APIs and named values are not yet checked.
+
+### U57 — Private vault from a liteAPIM-only VNet — OPEN
+
+U39 and U44 were measured in the Standard v2 gateway's VNet, which already linked the vault's
+private DNS zone. A new VNet with only the vault's private endpoint is not yet measured.
+
+### U58 — Container Apps subnet requirements — OPEN
+
+`infra/console.bicep` uses a workload-profiles environment with a delegated `/27`. The
+documented minimum and delegation rule for each environment type are not yet cited.
+
+### U59 — Container Apps name lengths — OPEN
+
+The names derived from `apim-hackgwfl4s7jvpxekno` are 34 characters for the environment and
+the job. Their limits are not yet known.
+
+### U60 — A Foundry in another resource group, in Bicep — OPEN
+
+`console.bicep` assigns Reader with `scope: foundry`. Whether that works for an account in
+another resource group is not yet known.
 
 ---
 

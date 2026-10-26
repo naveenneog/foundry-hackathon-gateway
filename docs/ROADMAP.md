@@ -251,6 +251,26 @@ Key Vault. Nothing here changes the gateway on `main`.
       image referenced once, PNG, alt text and names free of identifiers, provenance note) and
       the 28 document tests pass.
 
+- [ ] **P63** liteAPIM on an existing Basic v2 API Management with no virtual network
+      *Acceptance:* `Deploy-Poc.ps1 -FoundryResourceGroup` deploys the product routes and the
+      private vault onto an APIM whose Foundry is in another resource group; without the
+      parameter the deployment parameters and resources are unchanged. `Deploy-Console.ps1`
+      accepts `-FoundryResourceGroup` and `-FoundryAccountName`, chooses the Application Insights
+      component the gateway's `hackgw-appinsights` logger writes to, and refuses a resource group
+      with no VNet unless `-CreateNetwork` is given. `-CreateNetwork` creates only a liteAPIM VNet
+      (outside 10.61.0.0/16), a delegated Container Apps subnet, a private-endpoint subnet, the
+      vault's private endpoint and the vault's private DNS zone and link, and prints each billable
+      resource. No runner VM or NAT gateway is created. The installer refuses to repoint an app
+      registration that serves another app unless `-TakeOverRegistration` is given. Each change
+      has a test that failed first and a mutant it catches. Live on `apim-hackgwfl4s7jvpxekno`:
+      the existing `/v1` and `/claude` APIs and named values are unchanged; liteAPIM answers
+      `/healthz`; the Standard v2 registration's redirect URIs are unchanged; a short-lived key
+      gets 200 on a granted model and 403 on another; a product key gets 200 on `/poc/claude`;
+      usage appears; the automation job succeeds against the private vault. INSTALL.md has an
+      "Existing Basic v2 gateway" path; an ADR records the opt-in network and the cross-group
+      Foundry.
+      *Why:* requested 2026-10-26: "can you test this setup on basic v2 existing apim".
+
 - [x] **P62** Installation guide for a novice administrator
       *Acceptance:* the guide distinguishes an existing gateway environment from a new test
       stack; identifies the Azure, tenant, permission, model metadata, quota and cost prerequisites;

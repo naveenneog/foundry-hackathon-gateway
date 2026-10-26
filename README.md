@@ -79,7 +79,13 @@ which steps can be skipped. The guide also lists required Azure permissions, exp
 verification, troubleshooting and removal steps. Its PowerShell examples define the values they
 use instead of asking readers to run placeholder commands.
 The final web-app step uses [`scripts/Deploy-Console.ps1`](scripts/Deploy-Console.ps1); it adopts
-the APIM, vault, VNet and workspace created or selected by the earlier steps.
+the APIM, vault, VNet and workspace created or selected by the earlier steps. For an existing
+Basic v2 gateway, which has no VNet, the guide's
+[Existing Basic v2 gateway](docs/INSTALL.md#existing-basic-v2-gateway) path takes the Foundry from
+another resource group and, with `-CreateNetwork`, creates a VNet used only by liteAPIM to reach
+the private vault ([ADR-0021](docs/adr/0021-liteapim-own-network-and-cross-group-foundry.md)).
+That Foundry needs public network access, because a Basic v2 gateway cannot reach a private
+endpoint.
 
 ### Use it
 

@@ -58,11 +58,28 @@ pwsh scripts/Deploy-Console.ps1 -Subscription <subscription> -ResourceGroup <rg>
 # Alternate path: App Service web app and Function App on one plan.
 pwsh scripts/Deploy-Console.ps1 -Subscription <subscription> -ResourceGroup <rg> `
     -Hosting AppService
+
+# Basic v2 gateway with no VNet, Foundry in another resource group (P63, ADR-0021).
+pwsh scripts/Deploy-Console.ps1 -Subscription <subscription> -ResourceGroup <rg> `
+    -FoundryResourceGroup <foundry-rg> -FoundryAccountName <foundry> `
+    -AppRegistrationName hackgw-key-console-basicv2 -CreateNetwork
 ```
+
+Each install uses its own app registration. The script stops if the registration named by
+`-AppRegistrationName` already has a redirect URI for another app, because it replaces the
+registration's redirect URIs; `-TakeOverRegistration` moves the registration and ends sign-in on
+the other app. With no VNet in the resource group the script stops unless `-CreateNetwork` is
+given; that switch (Container Apps only) creates `vnet-console-<suffix>` with `snet-console`, a
+private-endpoint subnet, the vault's private endpoint and the `privatelink.vaultcore.azure.net`
+zone, and prints the billable ones first. Steps for that path are in
+[INSTALL.md](INSTALL.md#existing-basic-v2-gateway).
 
 The script, in order:
 
-1. Finds the APIM instance, the vault and the VNet in the resource group.
+1. Finds the APIM instance, the vault and the VNet in the resource group, the Foundry (in the
+   resource group, or as named by `-FoundryResourceGroup` and `-FoundryAccountName`), and the
+   workspace of the Application Insights component that the gateway's `hackgw-appinsights`
+   logger writes to.
 2. Creates or updates the app registration `hackgw-key-console`, ensures the admin role, and
    sets "assignment required". The legacy `Console.User` role grants no dashboard access.
 3. Assigns the signed-in operator `Console.Admin` and each `-Admins` entry `Console.Admin`.

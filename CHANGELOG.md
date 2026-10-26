@@ -5,6 +5,24 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · [Semantic Ve
 
 ## [Unreleased]
 
+### Added
+- **liteAPIM on an existing Basic v2 gateway (P63).** `Deploy-Poc.ps1 -FoundryResourceGroup` and
+  `Deploy-Console.ps1 -FoundryResourceGroup -FoundryAccountName` take a Foundry from another
+  resource group. With no VNet in the resource group, `Deploy-Console.ps1 -CreateNetwork`
+  (Container Apps) creates a VNet used only by liteAPIM, with the private vault's endpoint and
+  DNS zone, and prints each billable resource first; without the switch it stops. The vault stays
+  private and no runner VM or NAT gateway is created. INSTALL.md has an "Existing Basic v2
+  gateway" path. ADR-0021.
+
+### Changed
+- `Deploy-Console.ps1` stops if the app registration it would use already signs in another app,
+  unless `-TakeOverRegistration` is given: it replaces the registration's redirect URIs, so a
+  second install with the default name would have ended sign-in on the first.
+- `Deploy-Console.ps1` reads usage from the Application Insights component that the gateway's
+  `hackgw-appinsights` logger writes to, instead of the first component in the resource group.
+- Container Apps environment and job names are capped at 32 characters. Shorter names, as on
+  existing installs, are unchanged.
+
 ### Changed
 - **Install guide reviewed from a first-time admin's perspective (P62).** It now distinguishes
   existing gateway infrastructure from a new test stack, defines the Azure deployment inputs,

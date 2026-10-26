@@ -27,6 +27,7 @@ Day-to-day use: [CONSOLE.md](CONSOLE.md).
 | Starting point | What you need | Follow |
 |---|---|---|
 | An existing API Management gateway | APIM, Foundry, VNet, workspace and the product-key setup with a private Key Vault in the same resource group | Set the resource variables below. If the gateway routes and product-key setup already work, continue at [4. liteAPIM](#4-liteapim). Otherwise run the missing [2. Gateway](#2-gateway) or [3. Product routes and Key Vault](#3-product-routes-and-key-vault) step |
+| An existing Basic v2 gateway (no VNet) | A Basic v2 APIM with its gateway workspace, and a Foundry with public network access, possibly in another resource group | [Existing Basic v2 gateway](#existing-basic-v2-gateway), then [5. First sign-in](#5-first-sign-in) and [6. Issue and use a key](#6-issue-and-use-a-key) |
 | A new test environment | A subscription with enough quota, and an existing Claude deployment whose provider metadata can be read | Run [1. Network, Foundry and API Management](#1-network-foundry-and-api-management), then continue through steps 2–6 |
 
 The new test environment creates billable APIM Standard v2 capacity, model deployments, private
@@ -142,6 +143,136 @@ Check the displayed subscription and tenant before continuing. On a shared machi
 Azure CLI profile before `az login`; see [Azure CLI configuration](https://learn.microsoft.com/cli/azure/azure-cli-configuration).
 The deployment script refuses to continue when the active tenant does not match the selected
 subscription.
+
+## Existing Basic v2 gateway
+
+This path installs the product routes, the private vault and liteAPIM beside an API Management
+Basic v2 instance that has no VNet ([ADR-0021](adr/0021-liteapim-own-network-and-cross-group-foundry.md)).
+It was run on 2026-10-27 against this project's Basic v2 instance; the results are in
+[STATUS, P63](STATUS.md).
+
+How it differs from the other paths:
+
+- **Foundry.** Basic v2 has no outbound virtual network option, so the gateway cannot reach a
+  Foundry whose public network access is Disabled ([PRIVATE-ENDPOINT.md](PRIVATE-ENDPOINT.md)).
+  This path needs a Foundry with public network access, which APIM calls with its managed
+  identity (Cognitive Services User on the account). The Foundry can be in another resource
+  group.
+- **Vault.** The product-key vault is still created with public network access Disabled. With
+  `-CreateNetwork`, the liteAPIM installer creates a VNet used only by liteAPIM, with the vault's
+  private endpoint and its private DNS zone. liteAPIM and its automation job reach the vault
+  through it. No runner VM or NAT gateway is created, so the runner-based POC scripts
+  (`Invoke-PocRunner.ps1`) have no path to the vault here; keys are issued and rotated in
+  liteAPIM.
+- **App registration.** Each install needs its own app registration. The installer replaces the
+  registration's redirect URI, and it stops if the registration already signs in another app.
+- **Limits.** Basic v2 allows 200 products, 15,000 subscriptions and 5,000 named values per
+  instance, against 500, 25,000 and 10,000 on Standard v2
+  ([Azure subscription and service limits](https://learn.microsoft.com/azure/azure-resource-manager/management/azure-subscription-service-limits);
+  [U56](UNKNOWNS.md)). liteAPIM creates one product per model set and one subscription per
+  product key.
+
+**Inputs and checks.** Run from the repository root in PowerShell 7:
+
+```powershell
+$subscriptionId = Read-Host 'Subscription ID'
+$resourceGroup = Read-Host 'Resource group of the Basic v2 API Management instance'
+$apimName = Read-Host 'API Management instance name'
+$foundryResourceGroup = Read-Host 'Resource group of the Foundry account'
+$foundryAccountName = Read-Host 'Foundry account name'
+$registrationName = Read-Host 'App registration name for this liteAPIM, for example hackgw-key-console-basicv2'
+az account set --subscription $subscriptionId
+az apim show --resource-group $resourceGroup --name $apimName --query '{sku:sku.name,network:virtualNetworkType}' -o table
+az cognitiveservices account show --resource-group $foundryResourceGroup --name $foundryAccountName --query properties.publicNetworkAccess -o tsv
+$apimPrincipalId = az apim show --resource-group $resourceGroup --name $apimName --query identity.principalId -o tsv
+$foundryId = az cognitiveservices account show --resource-group $foundryResourceGroup --name $foundryAccountName --query id -o tsv
+az role assignment list --assignee $apimPrincipalId --scope $foundryId --query '[].roleDefinitionName' -o tsv
+az network vnet list --resource-group $resourceGroup --query '[].name' -o tsv
+```
+
+Expected: `BasicV2` and `None`; `Enabled`; `Cognitive Services User`; no VNet listed. If the role
+is missing, `scripts/Connect-Foundry.ps1` grants it (step 6). If the gateway routes `/v1` and
+`/claude` are missing, run [2. Gateway](#2-gateway) first.
+
+**Product routes and vault.** `-FoundryResourceGroup` names the Foundry's resource group. Do not
+run the runner's `Deploy` step on this path:
+
+```powershell
+pwsh .\poc\products-keyvault\scripts\Deploy-Poc.ps1 -Subscription $subscriptionId -ResourceGroup $resourceGroup -ApimName $apimName -FoundryAccountName $foundryAccountName -FoundryResourceGroup $foundryResourceGroup
+```
+
+Expected: the vault name `kv-poc-…` and the URLs of `/poc/claude`, `/poc/v1` and
+`/poc/probe/whoami`. It adds the APIs `poc-claude`, `poc-openai` and `poc-probe` and the products
+`poc-claude-pack`, `poc-deepseek-pack` and `poc-tiny-pack`; existing APIs, products and named
+values are not changed.
+
+**liteAPIM, with its own network:**
+
+```powershell
+pwsh .\scripts\Deploy-Console.ps1 -Subscription $subscriptionId -ResourceGroup $resourceGroup -FoundryResourceGroup $foundryResourceGroup -FoundryAccountName $foundryAccountName -AppRegistrationName $registrationName -CreateNetwork
+```
+
+Without `-CreateNetwork`, the installer stops with "has no virtual network". With it, the
+installer prints the billable resources before it creates them:
+
+```text
+Creating liteAPIM's network vnet-console-<suffix> (10.65.0.0/24). Billable resources:
+  billable: VNet vnet-console-<suffix> with subnets snet-console and snet-pe: no charge
+  billable: private endpoint pe-kv-poc-<id> for the vault: per hour, plus per GB processed
+  billable: private DNS zone privatelink.vaultcore.azure.net: per zone per month, plus per million queries
+```
+
+The last line is `liteAPIM (ContainerApps): https://ca-console-<suffix>.<environment>.<region>.azurecontainerapps.io`.
+`-NetworkPrefix` sets another address space (a private IPv4 `/16` to `/26` outside
+`10.61.0.0/16`); the default `10.65.0.0/24` gives `snet-console` `10.65.0.0/27` (a
+workload-profiles Container Apps environment needs a delegated `/27` at least,
+[U58](UNKNOWNS.md)) and `snet-pe` `10.65.0.32/28`. If the resource group already holds a
+`privatelink.vaultcore.azure.net` zone, it is reused.
+
+Resources this path creates, with list prices in East US 2 from the Azure Retail Prices API
+(read 2026-10-26; usage-based items depend on traffic):
+
+| Resource | Price |
+|---|---|
+| Private endpoint for the vault | USD 0.01 per hour (about USD 7.30 per 730-hour month), plus USD 0.01 per GB processed |
+| Private DNS zone `privatelink.vaultcore.azure.net` | USD 0.50 per zone per month, plus USD 0.40 per million queries |
+| Container registry, Basic | USD 0.1666 per day (about USD 5.07 per month) |
+| Container Apps environment (Consumption profile only), app and job | No environment charge without a Dedicated profile. Active vCPU USD 0.000024 per second, memory USD 0.000003 per GiB-second, USD 0.40 per million requests, after the monthly free grant of 180,000 vCPU-seconds, 360,000 GiB-seconds and 2 million requests per subscription ([Container Apps billing](https://learn.microsoft.com/azure/container-apps/billing)) |
+| Key Vault, Standard | USD 0.03 per 10,000 operations |
+| Log Analytics workspace `log-ca-console-<suffix>` | USD 2.76 per GB ingested after the first 5 GB per month |
+| VNet and subnets | No charge |
+
+Then continue at [5. First sign-in](#5-first-sign-in).
+
+**Remove this path's liteAPIM.** These commands delete only what the liteAPIM installer created
+here, in dependency order. The product routes, the vault and its keys stay;
+`Remove-Poc.ps1` removes those. Delete the DNS zone only if this install created it:
+
+```powershell
+$suffix = ($apimName -split '-')[-1]
+$job = "job-ca-console-$suffix"; if ($job.Length -gt 32) { $job = $job.Substring(0, 32) }
+$environment = "cae-ca-console-$suffix"; if ($environment.Length -gt 32) { $environment = $environment.Substring(0, 32) }
+$vaultName = az keyvault list --resource-group $resourceGroup --query '[].name' -o json | ConvertFrom-Json | Where-Object { $_ -like 'kv-poc-*' } | Select-Object -First 1
+az containerapp delete --resource-group $resourceGroup --name "ca-console-$suffix" --yes
+az containerapp job delete --resource-group $resourceGroup --name $job --yes
+az containerapp env delete --resource-group $resourceGroup --name $environment --yes
+az network private-endpoint delete --resource-group $resourceGroup --name "pe-$vaultName"
+az network private-dns link vnet delete --resource-group $resourceGroup --zone-name privatelink.vaultcore.azure.net --name "link-vnet-console-$suffix" --yes
+az network private-dns zone delete --resource-group $resourceGroup --name privatelink.vaultcore.azure.net --yes
+az network vnet delete --resource-group $resourceGroup --name "vnet-console-$suffix"
+az acr delete --resource-group $resourceGroup --name "crconsole$suffix" --yes
+az identity delete --resource-group $resourceGroup --name "id-ca-console-$suffix-pull"
+az monitor log-analytics workspace delete --resource-group $resourceGroup --workspace-name "log-ca-console-$suffix" --yes
+$appId = az ad app list --display-name $registrationName --query '[0].appId' -o tsv
+az ad app delete --id $appId
+```
+
+Expected: each command returns without an error. The role assignments of the deleted identities
+remain listed as "Identity not found" until removed under **Access control (IAM)**, including
+the subscription-level Foundry metadata discovery assignment. Remove them before installing
+liteAPIM again under the same names: a new install's assignments have the same names, and ARM
+refuses them with `RoleAssignmentUpdateNotPermitted` while the old ones exist (measured
+2026-10-27; ROADMAP P65).
 
 ## 1. Network, Foundry and API Management
 
@@ -450,6 +581,9 @@ short-lived keys. The two key types are not interchangeable.
 | An account's deployments show an access error | liteAPIM's identity lacks account/deployment metadata-read permission. The installer reports whether its discovery role was granted; no account-key access is needed. |
 | Attached backend test reports DNS failure | The account's public hostname may CNAME into a linked private DNS zone that has no record for that account. Use the optional private-endpoint setup command and test again; do not relax the account's firewall. |
 | A product key returns 401 right after issue or rotation | APIM applies key changes within about 20 seconds (16 s measured). |
+| `Deploy-Console.ps1` stops: "already signs in another app" | The app registration named by `-AppRegistrationName` serves another liteAPIM install, and the installer would replace its redirect URI. Pass a registration name of this install's own. `-TakeOverRegistration` moves the registration and ends sign-in on the other install. |
+| `Deploy-Console.ps1` stops: "has no virtual network" | The gateway has no VNet (Basic v2). Follow [Existing Basic v2 gateway](#existing-basic-v2-gateway) and add `-CreateNetwork`. |
+| Deployment fails with `RoleAssignmentUpdateNotPermitted` | liteAPIM's app or job was deleted and is being created again; the old identities' role assignments still hold the names. Remove the assignments listed as "Identity not found" on the vault, APIM, the gateway workspace and the Foundry, then rerun. |
 
 ## Remove
 

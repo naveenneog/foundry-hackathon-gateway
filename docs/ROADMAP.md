@@ -251,7 +251,26 @@ Key Vault. Nothing here changes the gateway on `main`.
       image referenced once, PNG, alt text and names free of identifiers, provenance note) and
       the 28 document tests pass.
 
-- [ ] **P63** liteAPIM on an existing Basic v2 API Management with no virtual network
+- [ ] **P65** Reinstalling liteAPIM after its app or job was deleted
+      *Acceptance:* `Deploy-Console.ps1` succeeds when the container app, the job or the web app
+      were deleted and are being created again under the same names. Today their role
+      assignments are named from the resource id (`guid(scope, app.id, role)`), so the stale
+      assignments of the deleted identities keep those names and ARM refuses the new ones with
+      `RoleAssignmentUpdateNotPermitted`. Either the installer removes only assignments of the
+      same name whose principal no longer exists, with a test that it never removes a live one,
+      or the guide's removal steps delete the assignments first and a test pins that order.
+      *Why:* measured on 2026-10-27 in P63: the second install on the Basic v2 instance failed on
+      seven such assignments until they were deleted.
+
+- [ ] **P64** Revoking a short-lived key also archives its vault record
+      *Acceptance:* revoking a short-lived key issued with a label and a Foundry connection
+      succeeds end to end: the `jti` is in `hackgw-revoked-keys` and the vault record says
+      revoked and archived. The fix stays within Key Vault's tag limit (cite the limit) and a
+      test with the fake vault enforcing that limit fails first. U61 is closed.
+      *Why:* measured on 2026-10-27 in P63 (U61): the revoke returned 502 after the `jti` reached
+      the revocation list, so the gateway refuses the key but liteAPIM still lists it as active.
+
+- [x] **P63** liteAPIM on an existing Basic v2 API Management with no virtual network
       *Acceptance:* `Deploy-Poc.ps1 -FoundryResourceGroup` deploys the product routes and the
       private vault onto an APIM whose Foundry is in another resource group; without the
       parameter the deployment parameters and resources are unchanged. `Deploy-Console.ps1`
@@ -270,6 +289,9 @@ Key Vault. Nothing here changes the gateway on `main`.
       "Existing Basic v2 gateway" path; an ADR records the opt-in network and the cross-group
       Foundry.
       *Why:* requested 2026-10-26: "can you test this setup on basic v2 existing apim".
+      *Verified 2026-10-27:* 815 tests pass (21 new); 20 of 20 mutants caught; live on the
+      Basic v2 instance as listed in STATUS (P63). Found and filed: P64 (revoke) and P65
+      (reinstall).
 
 - [x] **P62** Installation guide for a novice administrator
       *Acceptance:* the guide distinguishes an existing gateway environment from a new test

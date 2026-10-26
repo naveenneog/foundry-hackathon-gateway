@@ -65,19 +65,32 @@ assumption is only closed if it names its blast radius and the detector that wou
 | U52 | Does API Management keep answering on its default `azure-api.net` hostname after a custom gateway domain is added? | RESOLVED |
 | U53 | Does the Logs query API take an absolute start/end window, and in which literal does KQL take an instant? | RESOLVED |
 | U54 | Can a Key Vault secret be deleted and then created again under the same name? | RESOLVED |
-| U55 | Do `llm-token-limit` and `llm-emit-token-metric` in a product-scope policy work on Basic v2? | OPEN |
+| U55 | Do `llm-token-limit` and `llm-emit-token-metric` in a product-scope policy work on Basic v2? | RESOLVED |
 | U56 | Do Basic v2 limits on products, subscriptions, APIs or named values affect liteAPIM? | RESOLVED |
-| U57 | Do a liteAPIM-only VNet and the vault's private endpoint let the app and the automation job reach the private vault by managed identity? | OPEN |
+| U57 | Do a liteAPIM-only VNet and the vault's private endpoint let the app and the automation job reach the private vault by managed identity? | RESOLVED |
 | U58 | Which subnet does a Container Apps workload-profiles environment need, compared with consumption-only? | RESOLVED |
 | U59 | How long may Container Apps environment and job names be? | ASSUMED |
 | U60 | How does a resource-group Bicep deployment reference a Foundry, and assign a role on it, in another resource group? | RESOLVED |
+| U61 | Why does revoking a short-lived key fail at the vault tag update? | OPEN |
 
 ---
 
 
 ## Open
 
-### U55 — Product-scope token policies on Basic v2 — OPEN
+### U61 — Revoking a short-lived key fails at the vault tag update — OPEN
+
+Measured on 2026-10-27 on the Basic v2 install: `POST /api/keys/jwt-k-8534d4cae293d3a1/revoke`
+returned 502 with Key Vault's `400 BadParameter Property has invalid value` on the secret's tag
+update. The key's `jti` had already been added to `hackgw-revoked-keys`, so the gateway refuses
+the key; the vault record still says `revoked: false`. The secret had 13 tags, and revocation
+adds four. Hypothesis, not yet confirmed from Learn: Key Vault limits the tags per secret, and
+17 exceeds it. The code path is the same on the Standard v2 install. Filed as P64; not fixed in
+P63, which does not change key handling.
+
+---
+
+### U55 — Product-scope token policies on Basic v2 — RESOLVED
 
 U41 measured `llm-emit-token-metric` at product scope on Standard v2 only. The product policy
 also uses `llm-token-limit` twice. Researched 2026-10-26: `llm-token-limit` "APPLIES TO:
@@ -87,12 +100,28 @@ in API Management v2 tiers"
 ([llm-token-limit](https://learn.microsoft.com/azure/api-management/llm-token-limit-policy),
 updated 2026-06-26). `llm-emit-token-metric` applies to "All API Management tiers" with the same
 scopes ([llm-emit-token-metric](https://learn.microsoft.com/azure/api-management/llm-emit-token-metric-policy),
-updated 2026-09-17). To be measured live on the Basic v2 instance in P63.
+updated 2026-09-17).
 
-### U57 — Private vault from a liteAPIM-only VNet — OPEN
+**Measured on 2026-10-27 on `apim-hackgwfl4s7jvpxekno` (Basic v2):** API Management accepted
+the product policy on `poc-claude-pack`, `poc-deepseek-pack`, `poc-tiny-pack` and liteAPIM's
+`pk-bffbcfcdcba7`. A product key with a 20,000-token monthly budget got 200 on `/poc/claude` twice,
+and `x-budget-remaining` went 19,985 then 19,970; an ungranted model got 403
+`model_not_allowed`. liteAPIM's usage view showed 30 tokens over 2 requests for that key.
+
+### U57 — Private vault from a liteAPIM-only VNet — RESOLVED
 
 U39 and U44 were measured in the Standard v2 gateway's VNet, which already linked the vault's
-private DNS zone. A new VNet with only the vault's private endpoint is not yet measured.
+private DNS zone. **Measured on 2026-10-27** with `vnet-console-hackgwfl4s7jvpxekno`
+(`10.65.0.0/24`), its link to `privatelink.vaultcore.azure.net` and `pe-kv-poc-ccaia767ovtdk`,
+with the vault's public network access Disabled:
+
+- liteAPIM's `/api/signing` read the vault (`vault:false`), **Migrate from API Management**
+  wrote the signing secret, and `/api/signing` then reported `inSync:true`;
+- liteAPIM issued, revealed, suspended and archived keys in the vault;
+- `az containerapp job start` on `job-ca-console-hackgwfl4s7jvpxek` ended `Succeeded` in about
+  40 s, and the job logged `{"action":"sweep",…,"failed":[]}`. An earlier scheduled run, while
+  the job's role assignments were missing, logged `403 Forbidden` from the vault, which also
+  shows that the vault's private address resolved and answered.
 
 ### U56 — Basic v2 limits — RESOLVED
 
@@ -140,7 +169,9 @@ it did not show the limit. Assumption: jobs and environments follow the containe
 rule. `console.bicep` therefore truncates the environment and job names to 32 characters with
 `take()`. Names that are 32 characters or shorter, as on the Standard v2 install (28), are
 unchanged. Blast radius if wrong: none for correctness (a shorter name is valid under any
-limit). Detector: the live P63 deployment creates both resources.
+limit). Detector: the live P63 deployment creates both resources. On 2026-10-27 it created
+`cae-ca-console-hackgwfl4s7jvpxek` and `job-ca-console-hackgwfl4s7jvpxek` (32 characters each);
+the 34-character names were not tried.
 
 ### U60 — A Foundry in another resource group, in Bicep — RESOLVED
 

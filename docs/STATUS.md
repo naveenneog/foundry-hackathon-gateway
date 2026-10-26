@@ -1,9 +1,10 @@
 # Status
 
-**Active packet:** P63 — liteAPIM on an existing Basic v2 API Management with no virtual
-network (ROADMAP). P60 and the preceding P59 and P58 changes are published on
-`release/key-dashboard` and deployed to the live app. P60's release commit is `08dc5ee`. P61
-(narrow-screen layout on Foundry & models and the top bar) remains open.
+**Active packet:** none. P63 (liteAPIM on an existing Basic v2 gateway) is committed locally on
+`release/key-dashboard` and not pushed; its liteAPIM runs beside the Basic v2 instance. P60 and
+the preceding P59 and P58 changes are published and deployed to the Standard v2 app (P60's
+release commit is `08dc5ee`). Next candidates: P64 (revoke), P65 (reinstall), P61 (narrow
+screens).
 
 P55 (release branch) and P49–P54 are published on `release/key-dashboard`, not merged to `main`.
 Design: ADR-0015; owner amendment:
@@ -11,40 +12,125 @@ ADR-0016. App Service quota in eastus2 is 0 (U40), so Container Apps is the live
 Service template builds; ARM validate/what-if is blocked by the zero quota. The live dashboard has no IP restriction; Entra
 sign-in and the admin role remain required.
 
-### P63 — liteAPIM on an existing Basic v2 API Management — IN PROGRESS
+### P63 — liteAPIM on an existing Basic v2 API Management — DONE
 
 The owner asked on 2026-10-26: "can you test this setup on basic v2 existing apim". Target: the
 project's own Basic v2 instance `apim-hackgwfl4s7jvpxekno` (`rg-hackathon-gateway`, no virtual
 network, system-assigned identity, routes `deepseek-gateway` and `claude-gateway` from P19), with
-Foundry `ai-contosohub530569751908` in a different resource group, `rg-contosohub`, which has
-public network access Enabled.
+Foundry `ai-contosohub530569751908` in another resource group, `rg-contosohub`, which has public
+network access Enabled. Design: ADR-0021.
 
-Plan (2026-10-26):
-- Read-only probes on 2026-10-26 found these blockers, beyond the four the owner listed:
-  - the resource group holds two Application Insights components (`appi-hackgwfl4s7jvpxekno` and
-    the unrelated `appi-aum-aum-naveen`). `Deploy-Console.ps1` takes the first one listed, so it
-    could read usage from the wrong workspace;
-  - for this instance the derived Container Apps job name `job-ca-console-hackgwfl4s7jvpxekno` is
-    34 characters long, and the environment name `cae-ca-console-hackgwfl4s7jvpxekno` is also 34
-    (U59).
-- `poc.bicep` and `Deploy-Poc.ps1` take the Foundry from another resource group
-  (`-FoundryResourceGroup`, default the APIM's). Same-resource-group deployments keep the same
-  parameters and resources.
-- `Deploy-Console.ps1` takes `-FoundryResourceGroup` and `-FoundryAccountName`, falling back to
-  the current discovery. `console.bicep` and `console-appservice.bicep` keep the same-group
-  Reader role assignment unchanged and use a module for a Foundry in another group (U60).
-- With no VNet in the resource group, `Deploy-Console.ps1` refuses unless `-CreateNetwork` is
-  given. `-CreateNetwork` (Container Apps only) creates a liteAPIM-only VNet, a Container Apps
-  subnet, a private-endpoint subnet, the vault's private endpoint and the
-  `privatelink.vaultcore.azure.net` zone with its link (reused if the zone already exists), and
-  prints each billable resource. The vault stays public network access Disabled.
-- `Deploy-Console.ps1` refuses to repoint an app registration whose redirect URI belongs to
-  another app, unless `-TakeOverRegistration` is given. Without this guard, a second install
-  with the default `-AppRegistrationName` would replace the Standard v2 dashboard's redirect URI.
-- Unknowns U55–U60 are logged before implementation.
-- Live: `Deploy-Poc.ps1` and then `Deploy-Console.ps1 -AppRegistrationName
-  hackgw-key-console-basicv2 -CreateNetwork` on the Basic v2 instance. The APIM API list, named
-  values and the Standard v2 registration's redirect URIs are recorded before and after.
+Blockers, each verified on 2026-10-26 by read-only probes and then fixed test-first:
+- `poc.bicep` read the Foundry only from the APIM's resource group, and `Deploy-Poc.ps1` had no
+  way to name another. Now `-FoundryResourceGroup`; the parameter is passed only when it
+  differs, so same-group deployments pass the same parameters.
+- `Deploy-Console.ps1` required a VNet, the vault, an AIServices account and an App Insights
+  component in the resource group, and took the first component listed. That resource group
+  also holds the unrelated `appi-aum-aum-naveen`. Now:
+  - `-FoundryResourceGroup` and `-FoundryAccountName`, falling back to discovery;
+  - the workspace of the component the `hackgw-appinsights` logger writes to; with no logger,
+    the only component, otherwise a refusal;
+  - with no VNet, a refusal unless `-CreateNetwork`.
+- `console.bicep` and `console-appservice.bicep` scoped the Foundry Reader assignment to an
+  account in their own resource group. A cross-group scope does not compile (`BCP139`, U60). The
+  same-group assignment is kept, with the same name, under a condition; a Foundry elsewhere gets
+  it from `infra/console-foundry-reader.bicep`.
+- `-CreateNetwork` (Container Apps only) deploys `infra/console-network.bicep`:
+  `vnet-console-<suffix>`, default `10.65.0.0/24` (no VNet in the subscription used 10.65 on
+  2026-10-26; outside the Standard v2 gateway's `10.61.0.0/16`, so the two could be peered),
+  `snet-console` (`/27`, delegated to `Microsoft.App/environments`, the workload-profiles minimum,
+  U58), `snet-pe` (`/28`), `pe-<vault>` and a link to `privatelink.vaultcore.azure.net`, created
+  unless the resource group already has it. It prints each billable resource first. No VM or NAT
+  gateway. `-NetworkPrefix` must be private IPv4, `/16` to `/26`, aligned, outside
+  `10.61.0.0/16` and `172.30.0.0/15`. `-CreateNetwork` beside a gateway VNet is refused.
+  `GATEWAY_VNET_NAME` is empty for this network (`gatewayVnetName`), because the gateway cannot
+  use it for a private Foundry.
+- `Deploy-Console.ps1` replaces the registration's redirect URIs. It now refuses, before any
+  Entra change and again just before the update, when a redirect URI's host is not this app's,
+  unless `-TakeOverRegistration` is given.
+- For this instance, the derived environment and job names were 34 characters; they are now
+  capped at 32 with `take()` (U59), which leaves 28-character names such as the Standard v2
+  install's unchanged.
+
+**Standard v2 unchanged.** A what-if on 2026-10-26 against `rg-hackgw-pe-test`, with the
+parameters of its last deployments, gave the same result for the old and the new templates:
+`console.bicep` 13 Modify and 2 NoChange, no Create (same 15 resource ids, including the eight
+role assignments); `poc.bicep` 6 Create, 13 Modify and 6 NoChange for both (drift since
+2026-10-11, identical for both). On that install the `hackgw-appinsights` logger points to its
+only component, `appi-hackgwrv6pom6njwpfm`. The Standard v2 dashboard was not redeployed.
+
+**Live on the Basic v2 instance, 2026-10-27:**
+
+| Check | Result |
+|---|---|
+| `Deploy-Poc.ps1 -FoundryResourceGroup rg-contosohub` | Vault `kv-poc-ccaia767ovtdk` (public network access Disabled, RBAC); `poc-claude`, `poc-openai`, `poc-probe`; three `poc-*` products. The `poc-*` service URLs equal the existing routes' (same Foundry) |
+| APIM before and after, by name and SHA-256 of path, service URL, policy and operations | `claude-gateway` and `deepseek-gateway` unchanged; global policy unchanged; 22 named values with the same names and values, except `hackgw-revoked-keys`, which changed only when the test key was revoked; `hackgw-claude-model-map` back to its original value after the test pin was removed |
+| `Deploy-Console.ps1 … -AppRegistrationName hackgw-key-console-basicv2 -CreateNetwork` | Printed the billable resources; created the network, registry, environment, app and job. Second network deploy on a VNet in use (redeploy): succeeded, `snet-console` kept |
+| Same command with the default registration `hackgw-key-console`, writes blocked by a wrapper | Refused: "App registration hackgw-key-console already signs in another app (ca-console-rv6pom6njwpfm…)"; 0 write commands attempted |
+| `/healthz` | 200 `{"ok":true}`; `/api/me` without sign-in: 302 |
+| Standard v2 registration redirect URIs | Unchanged before, during and after (one URI, `ca-console-rv6pom6njwpfm…`) |
+| Standard v2 dashboard sign-in (debug Edge) | Account picker with the Standard v2 `redirect_uri`, then `/api/me` 200, role admin |
+| Basic v2 liteAPIM sign-in (debug Edge) | `/api/me` 200, role admin |
+| Signing secret | `/api/signing` `vault:false`; Migrate 200 `migrated:true`; then `inSync:true` |
+| Pin `haiku-4-5` → `claude-haiku-4-5` (removed after the test) | 200 |
+| Short-lived key for `haiku-4-5` | `/claude/v1/messages` 200 "ok"; `sonnet-5` 403 `model_not_permitted` |
+| Product key for `claude-haiku-4-5` (product `pk-bffbcfcdcba7`, 20,000 tokens a month) | `/poc/claude` with `x-api-key` 200 "ok", twice; `x-budget-remaining` 19,985 then 19,970; `claude-sonnet-5` 403 `model_not_allowed` (U55) |
+| Usage in liteAPIM (`log-hackgwfl4s7jvpxekno`) | Short-lived 15 tokens, 1 request; product 30 tokens, 2 requests; per key the same |
+| Automation job, started once | `Succeeded` in about 40 s; logged `failed: []` (U57) |
+| Test keys | Product key suspended and archived. Short-lived key: its `jti` is in `hackgw-revoked-keys`, but the vault tag update returned 400, so liteAPIM still lists it as active (U61, P64); it expires 2 hours after issue |
+
+Found during the live run:
+- The first install named the VNet `vnet-liteapim-<suffix>`, which broke the guides' single
+  spelling of liteAPIM and the `console` naming of the other resources. It is now
+  `vnet-console-<suffix>`. The first environment, app, job, endpoint, link and VNet were deleted;
+  the zone was kept, so the second install exercised the reuse path.
+- Installing again under the same names failed with `RoleAssignmentUpdateNotPermitted` on seven
+  role assignments of the deleted identities (their names come from the resource ids). They and
+  the old identity's subscription-level discovery assignment were deleted, and the install was
+  rerun. One scheduled job run in that window logged `403 Forbidden` from the vault. Filed as
+  P65; INSTALL.md's removal steps and troubleshooting say to remove those assignments.
+- Revoking a short-lived key fails at the vault tag update (U61, filed as P64). Not P63's code
+  path; the same on Standard v2.
+
+**liteAPIM (Basic v2):** https://ca-console-hackgwfl4s7jvpxekno.ashysand-04919649.eastus2.azurecontainerapps.io,
+app registration `hackgw-key-console-basicv2`, left running.
+
+Created in `rg-hackathon-gateway`, with East US 2 list prices from the Azure Retail Prices API
+(read 2026-10-26):
+
+| Resource | Monthly cost driver |
+|---|---|
+| `pe-kv-poc-ccaia767ovtdk` (private endpoint) | USD 0.01 per hour, about USD 7.30 per 730 hours, plus USD 0.01 per GB |
+| `privatelink.vaultcore.azure.net` (private DNS zone) | USD 0.50 per month, plus USD 0.40 per million queries |
+| `crconsolehackgwfl4s7jvpxekno` (Container Registry Basic) | USD 0.1666 per day, about USD 5.07 per month |
+| `cae-ca-console-hackgwfl4s7jvpxek`, `ca-console-hackgwfl4s7jvpxekno`, `job-ca-console-hackgwfl4s7jvpxek` | No environment charge without a Dedicated profile; active vCPU USD 0.000024 per second, memory USD 0.000003 per GiB-second, after the monthly free grant |
+| `kv-poc-ccaia767ovtdk` (Key Vault Standard) | USD 0.03 per 10,000 operations |
+| `log-ca-console-hackgwfl4s7jvpxekno` | USD 2.76 per GB after 5 GB a month |
+| `vnet-console-hackgwfl4s7jvpxekno`, `id-ca-console-hackgwfl4s7jvpxekno-pull` | No charge |
+
+Fixed cost about USD 12.87 a month (endpoint, zone, registry), plus usage. Not created: runner VM,
+NAT gateway, public IP.
+
+Verified: `npm test` 815/815 (794 before; 21 new in `tests/basicv2-poc.test.mjs`,
+`tests/basicv2-templates.test.mjs` and `tests/basicv2-deploy-console.test.mjs`). Each failed
+first for the missing behaviour. 20 mutants, all caught: 3 in `Deploy-Poc.ps1`, 4 in
+`console.bicep` and 13 in `Deploy-Console.ps1`. The detector tests reject a Foundry pinned to the
+APIM's group, a lost or renamed same-group assignment, an unscoped module, a VM, a NAT gateway,
+public vault access, a missing delegation, a forced zone and an overlapping prefix. Two existing
+pins moved to the renamed symbols with the same strength: `scope: foundryInGroup` for the Reader
+assignment, and `value: gatewayVnetName` with `param gatewayVnetName string = vnetName` for
+`GATEWAY_VNET_NAME` in `console.bicep`. All 17 PowerShell blocks in INSTALL.md parse.
+
+Council: Architect PASS (opt-in network and cross-group Foundry recorded in ADR-0021; the
+Standard v2 templates give the same what-if; no new dependency; the network is a separate
+template that never touches the vault's public access). Coder PASS (discovery split into small
+functions with unit tests; same-group parameters unchanged and pinned by a test; names capped
+without changing existing ones). QA PASS-WITH-NOTES (tests first, 20 mutants caught, live
+evidence table above; the reinstall failure and the revoke failure are filed as P65 and P64, not
+fixed here). UX PASS (refusals name the switch to use and the billable resources come before
+creation; INSTALL.md has a runnable path with expected output, costs and removal). Security PASS
+(vault stays private; the registration guard stopped a live takeover attempt with no write;
+no key, token or secret printed; test keys suspended, archived or revoked at the gateway).
 
 ### P62 — Installation guide for a novice administrator — DONE
 

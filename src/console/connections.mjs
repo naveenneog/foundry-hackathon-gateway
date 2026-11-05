@@ -2,6 +2,7 @@
 import { createHash } from "node:crypto";
 import { InputError } from "./validate.mjs";
 import { ACCOUNT_ID } from "./azure-foundries.mjs";
+import { compactPolicy as compactShared } from "../policy-compact.mjs";
 
 /** A connection's id: "default" for the gateway's own account, else f and 12 hex digits of the account's id. */
 export const connectionIdOf = (accountId, legacy = false) =>
@@ -47,12 +48,8 @@ const suffix = { openai: "v1", claude: "claude", productOpenai: "poc/v1", produc
 const INCOMPLETE_POLICY = '<policies><inbound><return-response><set-status code="403" reason="Forbidden" /><set-body>attachment_incomplete</set-body></return-response></inbound><backend><base /></backend><outbound><base /></outbound><on-error><base /></on-error></policies>';
 
 function compactPolicy(xml) {
-  // The APIM policy PUT measured a 16 KiB payload limit. Remove only comments and formatting,
-  // not governance statements; the source templates remain readable and unchanged.
-  const compact = xml.replace(/<!--[\s\S]*?-->/g, "").replace(/\r\n/g, "\n")
-    .replace(/^[ \t]*\/\/[^\n]*$/gm, "").split("\n").map((s) => s.trim()).filter(Boolean).join("\n");
-  if (Buffer.byteLength(compact) > 16 * 1024) throw new Error("Connection policy exceeds APIM's 16 KiB limit after removing formatting.");
-  return compact;
+  // The APIM policy PUT measured a 16 KiB payload limit (src/policy-compact.mjs).
+  try { return compactShared(xml); } catch { throw new Error("Connection policy exceeds APIM's 16 KiB limit after removing formatting."); }
 }
 
 export async function provisionConnection(arm, connection, account, templates) {

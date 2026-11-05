@@ -1,0 +1,249 @@
+<policies>
+<inbound>
+<base />
+<validate-jwt
+header-name="Authorization"
+require-scheme="Bearer"
+require-expiration-time="true"
+require-signed-tokens="true"
+clock-skew="60"
+failed-validation-httpcode="401"
+failed-validation-error-message="Your access key is invalid, not yet active, or has expired. Ask an organiser for a new key."
+output-token-variable-name="jwt">
+<issuer-signing-keys>
+<key>{{hackgw-signing-key}}</key>
+</issuer-signing-keys>
+<audiences>
+<audience>hackathon-gateway</audience>
+</audiences>
+<issuers>
+<issuer>foundry-hackathon-gateway</issuer>
+</issuers>
+</validate-jwt>
+<set-variable name="sub" value="@(((Jwt)context.Variables["jwt"]).Claims.GetValueOrDefault("sub", "unknown"))" />
+<set-variable name="jti" value="@(((Jwt)context.Variables["jwt"]).Claims.GetValueOrDefault("jti", "none"))" />
+<set-variable name="grantedModels" value="@(((Jwt)context.Variables["jwt"]).Claims.GetValueOrDefault("models", ""))" />
+<set-variable name="budget" value="@{
+var raw = ((Jwt)context.Variables["jwt"]).Claims.GetValueOrDefault("budget", "0");
+long b; return long.TryParse(raw, out b) ? b : 0L;
+}" />
+<choose>
+<when condition="@(("{{hackgw-revoked-keys}}").Contains("," + (string)context.Variables["jti"] + ","))">
+<return-response>
+<set-status code="403" reason="Forbidden" />
+<set-header name="Content-Type" exists-action="override">
+<value>application/json</value>
+</set-header>
+<set-body>{"error":{"code":"revoked","type":"permission_error","message":"This key has been revoked. Ask an organiser if you think this is a mistake."}}</set-body>
+</return-response>
+</when>
+</choose>
+<choose>
+<when condition="@(context.Request.Method == "GET" && context.Request.Url.Path.EndsWith("/models"))">
+<return-response>
+<set-status code="200" reason="OK" />
+<set-header name="Content-Type" exists-action="override">
+<value>application/json</value>
+</set-header>
+<set-body>@{
+var granted = ((string)context.Variables["grantedModels"])
+.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
+var created = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+var data = new JArray();
+foreach (var m in granted) {
+data.Add(new JObject(
+new JProperty("id", m.Trim()),
+new JProperty("object", "model"),
+new JProperty("created", created),
+new JProperty("owned_by", "foundry-hackathon-gateway")
+));
+}
+return new JObject(
+new JProperty("object", "list"),
+new JProperty("data", data)
+).ToString();
+}</set-body>
+</return-response>
+</when>
+</choose>
+<set-variable name="requestedModel" value="@{
+try {
+var fromBody = context.Request.Body.As<JObject>(preserveContent: true)["model"]?.ToString();
+if (!string.IsNullOrEmpty(fromBody)) { return fromBody.Trim().ToLowerInvariant(); }
+} catch { }
+return "";
+}" />
+<choose>
+<when condition="@{
+var wanted = (string)context.Variables["requestedModel"];
+if (string.IsNullOrEmpty(wanted)) { return true; }
+var granted = "," + ((string)context.Variables["grantedModels"]).ToLowerInvariant() + ",";
+return !granted.Contains("," + wanted + ",");
+}">
+<return-response>
+<set-status code="403" reason="Forbidden" />
+<set-header name="Content-Type" exists-action="override">
+<value>application/json</value>
+</set-header>
+<set-body>@{
+return new JObject(
+new JProperty("error", new JObject(
+new JProperty("code", "model_not_permitted"),
+new JProperty("type", "permission_error"),
+new JProperty("message", "The model '" + (string)context.Variables["requestedModel"] + "' is not included in your key. Yours: " + (string)context.Variables["grantedModels"] + ".")
+))
+).ToString();
+}</set-body>
+</return-response>
+</when>
+</choose>
+<choose>
+<when condition="@{
+if ((string)context.Variables["requestedModel"] != "pro") { return false; }
+try { return context.Request.Body.As<JObject>(preserveContent: true)["tools"] != null; }
+catch { return false; }
+}">
+<set-variable name="modelHint" value="pro-with-tools" />
+</when>
+<otherwise>
+<set-variable name="modelHint" value="none" />
+</otherwise>
+</choose>
+<set-variable name="deployment" value="@{
+var alias = (string)context.Variables["requestedModel"];
+foreach (var entry in "{{hackgw-model-map}}".Split(';')) {
+var idx = entry.IndexOf('=');
+if (idx <= 0) { continue; }
+var key = entry.Substring(0, idx).Trim().ToLowerInvariant();
+var val = entry.Substring(idx + 1).Trim();
+if (key == alias && val.Length > 0) { return val; }
+}
+return "";
+}" />
+<choose>
+<when condition="@(((string)context.Variables["deployment"]).Length == 0)">
+<return-response>
+<set-status code="403" reason="Forbidden" />
+<set-header name="Content-Type" exists-action="override">
+<value>application/json</value>
+</set-header>
+<set-body>@{
+return new JObject(
+new JProperty("error", new JObject(
+new JProperty("code", "model_not_configured"),
+new JProperty("type", "invalid_request_error"),
+new JProperty("message", "The model '" + (string)context.Variables["requestedModel"] + "' is granted by your key but is not configured on this gateway. Tell an organiser - this is a gateway configuration problem, not a problem with your key.")
+))
+).ToString();
+}</set-body>
+</return-response>
+</when>
+</choose>
+<cache-lookup-value
+key="@("used-" + (string)context.Variables["sub"])"
+variable-name="usedTokens"
+default-value="unknown" />
+<choose>
+<when condition="@{
+long used;
+if (!long.TryParse((string)context.Variables["usedTokens"], out used)) { return false; }
+return used >= (long)context.Variables["budget"];
+}">
+<return-response>
+<set-status code="403" reason="Forbidden" />
+<set-header name="Content-Type" exists-action="override">
+<value>application/json</value>
+</set-header>
+<set-header name="x-budget-remaining" exists-action="override">
+<value>0</value>
+</set-header>
+<set-header name="x-budget-exhausted" exists-action="override">
+<value>true</value>
+</set-header>
+<set-body>{"error":{"code":"budget_exhausted","type":"insufficient_quota","message":"Your token budget is fully spent. This is NOT an invalid key - the budget is one-time and does not reset. Retrying will not help. Ask an organiser for a new key."}}</set-body>
+</return-response>
+</when>
+</choose>
+<llm-token-limit
+counter-key="@((string)context.Variables["sub"])"
+tokens-per-minute="{{hackgw-tpm-per-key}}"
+estimate-prompt-tokens="false"
+retry-after-header-name="Retry-After"
+remaining-tokens-header-name="x-ratelimit-remaining-tokens"
+tokens-consumed-variable-name="consumedTokens" />
+<llm-token-limit
+counter-key="@((string)context.Variables["sub"] + ":lifetime")"
+token-quota="@((long)context.Variables["budget"])"
+token-quota-period="Yearly"
+estimate-prompt-tokens="false"
+remaining-quota-tokens-header-name="x-budget-remaining" />
+<rate-limit-by-key
+calls="{{hackgw-calls-per-minute}}"
+renewal-period="60"
+counter-key="@((string)context.Variables["sub"])"
+retry-after-header-name="Retry-After" />
+<llm-emit-token-metric namespace="hackathongw">
+<dimension name="Participant" value="@((string)context.Variables["sub"])" />
+<dimension name="KeyId" value="@((string)context.Variables["jti"])" />
+<dimension name="Model" value="@((string)context.Variables["requestedModel"])" />
+</llm-emit-token-metric>
+<authentication-managed-identity
+resource="https://ai.azure.com"
+output-token-variable-name="msi-token"
+ignore-error="false" />
+<set-header name="Authorization" exists-action="override">
+<value>@("Bearer " + (string)context.Variables["msi-token"])</value>
+</set-header>
+<set-header name="api-key" exists-action="delete" />
+<set-body>@{
+var body = context.Request.Body.As<JObject>(preserveContent: true);
+body["model"] = (string)context.Variables["deployment"];
+var cap = int.Parse("{{hackgw-max-output-tokens}}");
+foreach (var field in new[] { "max_tokens", "max_completion_tokens" }) {
+int requested;
+if (body[field] == null
+|| !int.TryParse(body[field].ToString(), out requested)
+|| requested <= 0
+|| requested > cap) {
+body[field] = cap;
+}
+}
+body["n"] = 1;
+return body.ToString();
+}</set-body>
+<set-header name="x-gateway-participant" exists-action="override">
+<value>@((string)context.Variables["sub"])</value>
+</set-header>
+</inbound>
+<backend>
+<forward-request timeout="600" buffer-request-body="false" />
+</backend>
+<outbound>
+<base />
+<set-variable name="newUsed" value="@{
+long used; long.TryParse((string)context.Variables["usedTokens"], out used);
+long spent = 0;
+try { spent = Convert.ToInt64(context.Variables["consumedTokens"]); } catch { }
+return (used + spent).ToString();
+}" />
+<cache-store-value
+key="@("used-" + (string)context.Variables["sub"])"
+value="@((string)context.Variables["newUsed"])"
+duration="31536000" />
+<set-header name="x-governed-by" exists-action="override">
+<value>foundry-hackathon-gateway</value>
+</set-header>
+<set-header name="x-budget-used" exists-action="override">
+<value>@((string)context.Variables["newUsed"])</value>
+</set-header>
+<set-header name="x-budget-total" exists-action="override">
+<value>@(((long)context.Variables["budget"]).ToString())</value>
+</set-header>
+</outbound>
+<on-error>
+<base />
+<set-header name="x-gateway-error" exists-action="override">
+<value>@(context.LastError?.Reason ?? "unknown")</value>
+</set-header>
+</on-error>
+</policies>

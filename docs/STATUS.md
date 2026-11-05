@@ -6,6 +6,41 @@ the preceding P59 and P58 changes are published and deployed to the Standard v2 
 release commit is `08dc5ee`). Next candidates: P64 (revoke), P65 (reinstall), P61 (narrow
 screens).
 
+### P66 — the gateway deploy stays under API Management's 16 KiB policy limit — DONE
+
+An owner deployment on 2026-11-05 (`admin.ps1` option 1, a new Basic v2 instance) failed with
+**Policy size exceeds allowed limit of 16 KB** on both gateway APIs. `infra/main.bicep` loaded
+`infra/policy.xml` (21,056 bytes) and `infra/policy-claude.xml` (24,174 bytes) as written.
+API Management v2 has refused policy documents over 16 KiB since 2026-10-23 (U47); the earlier
+gateway deployments predate that. liteAPIM already compacted its own copies (P56).
+
+- `src/policy-compact.mjs` holds the compaction liteAPIM used: XML comments, whole-line `//`
+  comments in policy expressions and indentation are removed, and a result over 16 KiB is
+  refused. `src/console/connections.mjs` now imports it.
+- `scripts/compact-policies.mjs` writes `infra/policy.min.xml` (9,013 bytes) and
+  `infra/policy-claude.min.xml` (11,118 bytes); `main.bicep` loads those. The sources stay
+  commented. `.gitattributes` keeps the generated files LF, so they compare byte for byte.
+- `Deploy-Console.ps1` copies `src/policy-compact.mjs` into the liteAPIM image.
+
+Tests: `tests/policy-size.test.mjs` (main.bicep loads only the compacted files; each equals the
+compaction of its source and fits 16 KiB; compaction changes no element or attribute; every XML
+file a Bicep template deploys fits 16 KiB) and `tests/console-package.test.mjs` (every `src`
+module liteAPIM's server imports is in the image). Each failed first. Negative tests: a stale
+compacted file, `main.bicep` loading a source, a compaction that drops `<base />` or an
+attribute, an oversized product-route policy and a module missing from the image each fail a
+named test. `npm test`: 823 pass, 1 skipped (Bicep is absent in the isolated CLI profile, as
+before). The compiled template holds 9,013 and 11,118 bytes of policy text and no comments.
+
+Not measured live: the Azure CLI sign-in had expired, so the probe (a temporary API receiving the
+source policy, expected 400, and the compacted one, expected 200) did not run and created
+nothing. The owner's next `admin.ps1` run is the live check.
+
+Council: Architect PASS (one compaction function in `src`, used by liteAPIM and the generator;
+the `src` → `scripts` boundary holds). Coder PASS (sources unchanged; generated files checked
+against them). QA PASS (tests first, six negative tests, element-level equality). UX PASS (no UI
+change; the deploy no longer fails). Security PASS (validate-jwt, model, budget and revocation
+statements unchanged; the element comparison covers every attribute).
+
 P55 (release branch) and P49–P54 are published on `release/key-dashboard`, not merged to `main`.
 Design: ADR-0015; owner amendment:
 ADR-0016. App Service quota in eastus2 is 0 (U40), so Container Apps is the live path. The App

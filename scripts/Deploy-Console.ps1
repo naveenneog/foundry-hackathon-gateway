@@ -331,7 +331,7 @@ function New-AppContext([string]$Name) {
     $dir = Join-Path $root ".$Name-$suffix"
     Remove-Item $dir -Recurse -Force -ErrorAction SilentlyContinue
     New-Item -ItemType Directory -Path (Join-Path $dir 'src') | Out-Null
-    foreach ($f in 'keys.mjs', 'foundry.mjs', 'models.mjs') { Copy-Item (Join-Path $root "src/$f") (Join-Path $dir 'src') }
+    foreach ($f in 'keys.mjs', 'foundry.mjs', 'models.mjs', 'policy-compact.mjs') { Copy-Item (Join-Path $root "src/$f") (Join-Path $dir 'src') }
     Copy-Item (Join-Path $root 'src/console') (Join-Path $dir 'src') -Recurse
     $tpl = Join-Path $dir 'poc/products-keyvault/infra'
     New-Item -ItemType Directory -Path $tpl | Out-Null

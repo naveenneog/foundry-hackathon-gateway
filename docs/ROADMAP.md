@@ -251,6 +251,15 @@ Key Vault. Nothing here changes the gateway on `main`.
       image referenced once, PNG, alt text and names free of identifiers, provenance note) and
       the 28 document tests pass.
 
+- [x] **P66** The gateway deploy stays under API Management's 16 KiB policy limit
+      *Acceptance:* `infra/main.bicep` deploys compacted copies of `policy.xml` and
+      `policy-claude.xml`, each at most 16 KiB, generated from the commented sources by the
+      compaction liteAPIM uses; a test fails if a copy is stale or any deployed policy is over
+      16 KiB; liteAPIM's image contains every `src` module its server imports.
+      *Why:* reported 2026-11-05: `admin.ps1` option 1 failed with "Policy size exceeds
+      allowed limit of 16 KB" on a new Basic v2 instance.
+      *Verified 2026-11-05:* see P66 in STATUS. Not yet measured live.
+
 - [ ] **P65** Reinstalling liteAPIM after its app or job was deleted
       *Acceptance:* `Deploy-Console.ps1` succeeds when the container app, the job or the web app
       were deleted and are being created again under the same names. Today their role

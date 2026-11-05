@@ -287,7 +287,7 @@ resource apiPolicy 'Microsoft.ApiManagement/service/apis/policies@2024-05-01' = 
   name: 'policy'
   properties: {
     format: 'rawxml'
-    value: loadTextContent('policy.xml')
+    value: loadTextContent('policy.min.xml')
   }
   dependsOn: [
     apimNamedValues
@@ -379,7 +379,7 @@ resource claudePolicy 'Microsoft.ApiManagement/service/apis/policies@2024-05-01'
   name: 'policy'
   properties: {
     format: 'rawxml'
-    value: loadTextContent('policy-claude.xml')
+    value: loadTextContent('policy-claude.min.xml')
   }
   dependsOn: [
     apimNamedValues

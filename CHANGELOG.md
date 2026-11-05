@@ -5,6 +5,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · [Semantic Ve
 
 ## [Unreleased]
 
+### Fixed
+- **Gateway deploy refused by API Management (P66).** `admin.ps1` option 1 failed with "Policy
+  size exceeds allowed limit of 16 KB": API Management v2 refuses policy documents over 16 KiB,
+  and the gateway policies were 21 KB and 24 KB with comments. The deploy now sends compacted
+  copies (9 KB and 11 KB) with the same statements; the commented sources are unchanged. After a
+  policy edit, `node scripts/compact-policies.mjs` regenerates the copies.
+
 ### Added
 - **liteAPIM on an existing Basic v2 gateway (P63).** `Deploy-Poc.ps1 -FoundryResourceGroup` and
   `Deploy-Console.ps1 -FoundryResourceGroup -FoundryAccountName` take a Foundry from another
